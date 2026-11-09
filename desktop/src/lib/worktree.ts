@@ -49,10 +49,17 @@ export function issueBranchContext(
   return { branch, ctx }
 }
 
-/** origin 어느 브랜치에도 없는 HEAD 커밋 수 (삭제 확인·변경 탭 "미push" 공용). 실패 시 0 */
-export async function countUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promise<number> {
+/** origin 어느 브랜치에도 없는 HEAD 커밋 수. git 실패 시 null(개수 불명) */
+async function tryCountUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promise<number | null> {
   const r = await gitRun(['-C', cwd, 'rev-list', '--count', 'HEAD', '--not', '--remotes=origin'])
-  return r.code === 0 ? Number.parseInt(r.stdout.trim(), 10) || 0 : 0
+  if (r.code !== 0) return null
+  const n = Number.parseInt(r.stdout.trim(), 10)
+  return Number.isNaN(n) ? null : n
+}
+
+/** 변경 탭 "미push" 표시용. 실패 시 0 — 삭제 판단에는 쓰지 않는다(inspect 는 실패를 null 로 구분) */
+export async function countUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promise<number> {
+  return (await tryCountUnpushed(gitRun, cwd)) ?? 0
 }
 
 export interface WorktreePathStore {
@@ -106,7 +113,8 @@ export type OpenIssueResult = {
   script: ScriptOutcome
 }
 
-export type DeleteCheck = { uncommitted: number; unpushed: number }
+/** 삭제 전 검사. null = git 실패로 개수 불명 → 데이터 손실 방지를 위해 확인을 요구한다(EC-15) */
+export type DeleteCheck = { uncommitted: number | null; unpushed: number | null }
 export type DeleteResult = { status: 'deleted' } | ({ status: 'needs_confirmation' } & DeleteCheck)
 
 export interface WorktreeDeps {
@@ -128,6 +136,11 @@ export interface WorktreeService {
   rerunScript(t: IssueTarget): Promise<ScriptOutcome>
   inspect(t: IssueTarget): Promise<DeleteCheck>
   deleteWorktree(t: IssueTarget, opts?: { confirmed?: boolean }): Promise<DeleteResult>
+}
+
+/** 미커밋·미push 가 있거나 개수를 확인하지 못했으면 사용자 확인이 필요하다 */
+export function needsConfirmation(c: DeleteCheck): boolean {
+  return c.uncommitted === null || c.unpushed === null || c.uncommitted > 0 || c.unpushed > 0
 }
 
 /** worktreePathMap 키 */
@@ -426,9 +439,10 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     // 읽기 전용 git 두 개 — 서로 독립이라 병렬
     const [st, unpushed] = await Promise.all([
       tauri.gitRun(['-C', entry.path, 'status', '--porcelain']),
-      countUnpushed(tauri.gitRun, entry.path),
+      tryCountUnpushed(tauri.gitRun, entry.path),
     ])
-    const uncommitted = st.code === 0 ? st.stdout.split(/\r?\n/).filter((l) => l.trim() !== '').length : 0
+    // 실패를 0 으로 보면 경고 없이 --force 삭제로 이어진다 → null(불명)로 구분
+    const uncommitted = st.code === 0 ? st.stdout.split(/\r?\n/).filter((l) => l.trim() !== '').length : null
     return { uncommitted, unpushed }
   }
 
@@ -469,7 +483,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
 
       if (!opts?.confirmed) {
         const check = await inspect(t)
-        if (check.uncommitted > 0 || check.unpushed > 0) return { status: 'needs_confirmation', ...check }
+        if (needsConfirmation(check)) return { status: 'needs_confirmation', ...check }
       }
 
       // 해당 경로를 cwd 로 쓰는 스크립트·PTY 를 먼저 종료 (Windows 파일 잠금 방지)

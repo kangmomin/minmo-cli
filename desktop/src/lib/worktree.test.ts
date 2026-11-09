@@ -619,3 +619,47 @@ describe('deleteWorktree (AC-14, EC-15, EC-16, EC-24, PTY 선종료)', () => {
     await opening
   })
 })
+
+describe('F-4 EC-15 삭제 전 검사 실패 → 개수 불명으로 확인 요구 (데이터 손실 방지)', () => {
+  const P = '/home/u/custom/MyOrg/Repo-A/issue--42-add-login'
+
+  /** 지정한 git 하위 명령만 실패시키고 나머지는 시뮬레이터로 */
+  function setupFailing(failing: 'status' | 'rev-list') {
+    const t = setup({
+      mainExists: true,
+      sim: { worktrees: new Map([[P, BR42]]), local: new Set([BR42]) },
+      entries: [[ID42, { path: P, branch: BR42 }]],
+    })
+    t.sim.existing.add(P)
+    const sim = t.sim
+    t.tauri.gitRun.mockImplementation(async (args, opts) => {
+      const [a] = normalize(args, opts)
+      if (a[0] === failing) return fail('fatal: unable to read index', 128)
+      return simGit(sim, args, opts)
+    })
+    return t
+  }
+
+  it.each(['status', 'rev-list'] as const)('git %s 실패 → inspect 는 해당 개수를 null(불명)로 돌려준다', async (failing) => {
+    const t = setupFailing(failing)
+    const check = await t.svc.inspect(ISSUE42)
+    if (failing === 'status') expect(check).toEqual({ uncommitted: null, unpushed: 0 })
+    else expect(check).toEqual({ uncommitted: 0, unpushed: null })
+  })
+
+  it.each(['status', 'rev-list'] as const)('git %s 실패 → 확인 전에는 --force remove·branch -D 없이 needs_confirmation', async (failing) => {
+    const t = setupFailing(failing)
+    const res = await t.svc.deleteWorktree(ISSUE42)
+    expect(res.status).toBe('needs_confirmation')
+    expect(t.find(t.isRemove)).toHaveLength(0)
+    expect(t.find((a) => a[0] === 'branch' && (a.includes('-d') || a.includes('-D')))).toHaveLength(0)
+    expect(t.tauri.ptyKillByCwd).not.toHaveBeenCalled()
+    expect(t.pathStore.delete).not.toHaveBeenCalled()
+  })
+
+  it('확인(confirmed) 후에는 검사 실패와 무관하게 진행', async () => {
+    const t = setupFailing('status')
+    await expect(t.svc.deleteWorktree(ISSUE42, { confirmed: true })).resolves.toEqual({ status: 'deleted' })
+    expect(t.find(t.isRemove)[0]).toContain(P)
+  })
+})
