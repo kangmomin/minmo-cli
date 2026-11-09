@@ -31,6 +31,7 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
     () => Object.entries(open).flatMap(([issueId, s]) => (s.phase === 'ready' ? [{ issueId, cwd: s.path }] : [])),
     [open],
   )
+  const hasSession = sessions.some((s) => s.issueId === id)
 
   return (
     <Tabs value={tab} onValueChange={(v) => setTab(v as WorkTab)} className="min-h-0 flex-1 gap-0">
@@ -43,8 +44,15 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
       </TabsList>
       <div className="relative min-h-0 flex-1">
         {/* forceMount 는 Radix 가 hidden 을 풀어 버리므로 직접 토글한다 */}
-        {/* 패널 안에 포커스 가능한 요소가 있으면 패널 자체는 Tab 정지점에서 뺀다 — 보이지 않는 정지점 방지(AX-19) */}
-        <TabsContent value="terminal" forceMount hidden={tab !== 'terminal'} tabIndex={-1} className="absolute inset-0">
+        {/* 패널 안에 포커스 가능한 요소가 있으면 패널 자체는 Tab 정지점에서 뺀다 — 보이지 않는 정지점 방지(AX-19).
+            세션이 없으면(안내 문구뿐) 0 을 유지하고(AX-37), 터미널 배경이 패널의 inset ring 을 덮으므로 ::after 오버레이로 링을 그린다 */}
+        <TabsContent
+          value="terminal"
+          forceMount
+          hidden={tab !== 'terminal'}
+          tabIndex={hasSession ? -1 : 0}
+          className="absolute inset-0 after:pointer-events-none after:absolute after:inset-0 focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring"
+        >
           <TerminalTab
             sessions={sessions}
             activeId={id}
@@ -70,6 +78,7 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
             <p className="p-4 text-sm text-muted-foreground">worktree 가 준비되면 변경 내역을 볼 수 있습니다.</p>
           )}
         </TabsContent>
+        {/* 메모는 로딩·비활성 시 NotesTab 이 자체 Tab 정지점을 두므로 패널은 -1 (CR-20) */}
         <TabsContent value="notes" tabIndex={-1} className="absolute inset-0">
           <NotesTab key={id} owner={target.owner} repo={target.repo} issueKey={target.key} />
         </TabsContent>

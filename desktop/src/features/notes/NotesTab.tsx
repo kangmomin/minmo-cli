@@ -33,7 +33,12 @@ export function NotesTab({ owner, repo, issueKey }: NotesTabProps) {
   const save = n.saveState
 
   return (
-    <div className="flex h-full flex-col gap-2 p-3">
+    // textarea 가 없거나(불러오는 중) disabled(서버 연결 필요)면 포커스 가능한 내용이 없으므로 이 영역이 Tab 정지점이 된다.
+    // 편집 가능해지면 -1 로 두어 이미 이 영역에 있던 포커스가 사라지지 않게 한다(CR-20)
+    <div
+      tabIndex={n.disabled ? 0 : -1}
+      className="flex h-full flex-col gap-2 p-3 outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring"
+    >
       <div className="flex items-center justify-between">
         <label htmlFor={id} className="text-sm font-medium">
           메모

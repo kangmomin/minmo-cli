@@ -41,9 +41,23 @@ describe('AX-22 포커스 스타일에 반투명(/50) ring·outline 을 쓰지 �
     expect(css).not.toMatch(/outline-ring\/\d+/)
   })
 
-  it.each(['./components/ui/button.tsx', './components/ui/tabs.tsx', './components/ui/radio-group.tsx'])('%s 의 focus-visible ring', (file) => {
+  it.each([
+    './components/ui/button.tsx',
+    './components/ui/tabs.tsx',
+    './components/ui/radio-group.tsx',
+    './components/ui/input.tsx',
+    './components/ui/textarea.tsx',
+  ])('%s 의 focus-visible ring', (file) => {
     const src = read(file)
     expect(src).toContain('focus-visible:ring-ring')
     expect(src).not.toMatch(/focus-visible:ring-ring\/\d+/)
+  })
+
+  // 메뉴 항목은 배경(accent)만으로 강조하면 대비가 부족하다 — 불투명 ring 을 함께 쓴다(AX-38)
+  it('./components/ui/context-menu.tsx 의 ContextMenuItem 포커스 강조는 불투명 ring', () => {
+    const src = read('./components/ui/context-menu.tsx')
+    expect(src).toContain('focus:ring-2')
+    expect(src).toContain('focus:ring-ring')
+    expect(src).not.toMatch(/focus:ring-ring\/\d+/)
   })
 })

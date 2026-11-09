@@ -20,6 +20,7 @@ import { WorktreeProvider } from './useWorktree'
 const xterm = vi.hoisted(() => ({ handlers: [] as ((e: KeyboardEvent) => boolean)[] }))
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
+    static strings = { promptLabel: '', tooMuchOutput: '' }
     cols = 80
     rows = 24
     loadAddon() {}
@@ -112,6 +113,30 @@ describe('AX-19 포커스 가능한 내용이 있는 패널은 Tab 정지점이 
     const panel = screen.getByRole('tabpanel', { name: '변경' })
     expect(panel).toHaveAttribute('tabindex', '0')
     expect(panel.className).toContain('focus-visible:ring-ring')
+  })
+})
+
+describe('AX-37 세션이 없으면 터미널 패널은 Tab 정지점(tabIndex=0)을 유지한다', () => {
+  it('worktree 준비 전(세션 없음) 0 + 포커스 링 오버레이 클래스, 준비되면 -1', () => {
+    useSetupStore.setState({ open: { [ID]: { phase: 'opening' } } })
+    renderWithDeps(
+      <TooltipProvider>
+        <WorktreeProvider>
+          <WorkTabs target={T} state={useSetupStore.getState().open[ID]} />
+        </WorktreeProvider>
+      </TooltipProvider>,
+      makeDeps({ api: createFakeApi({ getNotes: async () => ({ body: '', updatedAt: null }) }) }),
+    )
+    const panel = screen.getByRole('tabpanel', { name: '터미널' })
+    expect(within(panel).getByText(/worktree 가 준비되면 터미널을/)).toBeInTheDocument()
+    expect(panel).toHaveAttribute('tabindex', '0')
+    // 터미널 배경이 패널의 inset ring 을 덮으므로 ::after 오버레이로 링을 그린다
+    expect(panel.className).toContain('focus-visible:after:ring-ring')
+
+    act(() => {
+      useSetupStore.setState({ open: { [ID]: { phase: 'ready', path: '/w/42', branch: 'b', pathChanged: false } } })
+    })
+    expect(screen.getByRole('tabpanel', { name: '터미널' })).toHaveAttribute('tabindex', '-1')
   })
 })
 

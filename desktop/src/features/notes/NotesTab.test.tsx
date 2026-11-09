@@ -6,6 +6,7 @@
 // data-state = idle|saving|saved|failed, 409 모달 문구 /다른 기기에서 수정됨/(dialog·alertdialog 무관),
 // 버튼 "서버 내용 불러오기" / "내 내용으로 덮어쓰기".
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ApiClient, Me, Notes, NotesInput } from '@minmo/api-client'
@@ -338,5 +339,45 @@ describe('AX 저장 상태 live region (AX-20 / AX-27)', () => {
     })
     await waitFor(() => expect(status()).toHaveAttribute('data-state', 'saved'))
     expect(screen.queryByText('저장 중…')).toBeNull()
+  })
+})
+
+describe('CR-20 / AX-37 편집할 수 없는 상태에서는 안내 영역이 Tab 정지점', () => {
+  it('불러오는 중에는 영역이 tabIndex=0 으로 Tab 으로 닿고, 편집 가능해지면 -1 (포커스는 유지)', async () => {
+    const pending = deferred<Notes>()
+    const api = createFakeApi({ getNotes: () => pending.promise })
+    renderWithDeps(<NotesTab owner="MyOrg" repo="Repo-A" issueKey="42" />, makeDeps({ api }), makeQueryClient())
+    const area = screen.getByText('불러오는 중…').closest('[tabindex]') as HTMLElement
+    expect(area).toHaveAttribute('tabindex', '0')
+    expect(area.className).toContain('focus-visible:ring-ring')
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await user.tab()
+    expect(area).toHaveFocus()
+
+    await act(async () => {
+      pending.resolve({ body: '', updatedAt: null })
+    })
+    const el = await editor()
+    expect(area).toHaveAttribute('tabindex', '-1')
+    expect(area).toHaveFocus()
+    await user.tab()
+    expect(el).toHaveFocus()
+  })
+
+  it('서버 미연결로 에디터가 비활성이면 영역이 tabIndex=0', async () => {
+    useSessionStore.setState({ status: 'offline' })
+    setup({ notes: { body: 'cached', updatedAt: T0 } })
+    const el = await editor()
+    await waitFor(() => expect(el).toHaveValue('cached'))
+    expect(el).toBeDisabled()
+    expect(el.closest('[tabindex]')).toHaveAttribute('tabindex', '0')
+  })
+
+  it('편집 가능한 상태에서는 영역이 Tab 정지점이 아니다(-1)', async () => {
+    setup()
+    const el = await editor()
+    await waitFor(() => expect(el).toBeEnabled())
+    expect(el.closest('[tabindex]')).toHaveAttribute('tabindex', '-1')
   })
 })
