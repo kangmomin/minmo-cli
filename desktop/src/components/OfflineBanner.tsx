@@ -1,6 +1,57 @@
+import { useQueryClient } from '@tanstack/react-query'
+import { WifiOffIcon } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+import { useDeps } from '../app/deps'
+import { useSessionStore } from '../store/session'
+import { Button } from './ui/button'
+
 export const HEALTHZ_POLL_MS = 10_000
 
-// STUB (Phase 6.1 Red) — status 'offline' 일 때 배너 + [다시 연결], healthz 10초 폴링
+/** status 'offline' 일 때 배너 + [다시 연결], healthz 10초 폴링 (CT-33, EC-17) */
 export function OfflineBanner() {
-  return null
+  const { api } = useDeps()
+  const queryClient = useQueryClient()
+  const status = useSessionStore((s) => s.status)
+  const setStatus = useSessionStore((s) => s.setStatus)
+  const [checking, setChecking] = useState(false)
+  const inFlight = useRef(false)
+
+  const check = useCallback(async () => {
+    if (inFlight.current) return
+    inFlight.current = true
+    setChecking(true)
+    try {
+      await api.healthz()
+      setStatus('online')
+      // 오프라인 동안 실패한 읽기를 다시 불러온다
+      void queryClient.invalidateQueries()
+    } catch {
+      // 계속 offline — 다음 폴링에서 재확인
+    } finally {
+      inFlight.current = false
+      setChecking(false)
+    }
+  }, [api, queryClient, setStatus])
+
+  useEffect(() => {
+    if (status !== 'offline') return
+    const timer = setInterval(() => void check(), HEALTHZ_POLL_MS)
+    return () => clearInterval(timer)
+  }, [status, check])
+
+  if (status !== 'offline') return null
+  return (
+    <div
+      data-testid="offline-banner"
+      role="status"
+      className="flex items-center gap-3 border-t bg-amber-100 px-4 py-2 text-sm text-amber-950"
+    >
+      <WifiOffIcon className="size-4" />
+      <span className="flex-1">서버에 연결할 수 없습니다 — 메모·설정 편집이 비활성화되고 마지막으로 불러온 내용을 표시합니다.</span>
+      <Button size="sm" variant="outline" onClick={() => void check()} disabled={checking}>
+        다시 연결
+      </Button>
+    </div>
+  )
 }
