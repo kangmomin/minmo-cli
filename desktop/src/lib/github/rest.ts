@@ -66,7 +66,8 @@ export function createRestTransport(deps: RestDeps): GitHubTransport {
     if (limited) throw limited
     const message = await messageOf(res)
     if (res.status === 403) throw new GitHubError('forbidden', { status: 403, message })
-    if (res.status === 404) throw new GitHubError('not_found', { status: 404, message })
+    // 410 = 삭제된 이슈 — 404 와 같이 취급(PF-01)
+    if (res.status === 404 || res.status === 410) throw new GitHubError('not_found', { status: res.status, message })
     throw new GitHubError('unknown', { status: res.status, message })
   }
 

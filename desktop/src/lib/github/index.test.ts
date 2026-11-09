@@ -193,3 +193,44 @@ describe('이슈 목록 — state=all · per_page=100 · ≤5페이지 · PR 제
     expect(singles.map((c) => new URL(c.url).pathname)).toEqual(['/repos/o/r/issues/777'])
   })
 })
+
+describe('PF-01 개별 보충 중 삭제·이전된 이슈(404/410) → 그 번호만 건너뜀', () => {
+  it.each([404, 410])('REST %i → 나머지 목록 성공, onUnauthorized 없음', async (status) => {
+    const t = setup({
+      route: (u) => {
+        if (u.pathname === '/repos/o/r/issues/777') return json({ message: 'gone' }, { status })
+        if (u.pathname === '/repos/o/r/issues/888') return json(issue(888, 'closed'))
+        return json([issue(1)])
+      },
+    })
+    const list = await t.gh.listIssues('o', 'r', { ensureNumbers: [777, 888] })
+    expect(list.map((i) => i.number).sort((a, b) => a - b)).toEqual([1, 888])
+    expect(t.onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['HTTP 404', 'gh: Not Found (HTTP 404)'],
+    ['HTTP 410', 'gh: This issue was deleted (HTTP 410)'],
+  ])('gh stderr %s → not_found 로 건너뛰고 REST 재조회 없음', async (_l, stderr) => {
+    const ghRun = vi.fn<TauriApi['ghRun']>(async (args) => {
+      const path = args[args.length - 1]
+      if (path === 'repos/o/r/issues/777') return fail(stderr)
+      if (path === 'repos/o/r/issues/888') return ok(JSON.stringify(issue(888, 'closed')))
+      return ok(JSON.stringify([issue(1)]))
+    })
+    const t = setup({ ghAvailable: true, ghRun })
+    const list = await t.gh.listIssues('o', 'r', { ensureNumbers: [777, 888] })
+    expect(list.map((i) => i.number).sort((a, b) => a - b)).toEqual([1, 888])
+    expect(t.rest.fn).not.toHaveBeenCalled()
+    expect(t.onUnauthorized).not.toHaveBeenCalled()
+    await expect(t.gh.source()).resolves.toBe('gh')
+  })
+
+  it('gh 404 는 목록 조회 자체에서도 not_found(GitHubError) — REST 폴백하지 않음', async () => {
+    const t = setup({ ghAvailable: true, ghRun: async () => fail('gh: Not Found (HTTP 404)') })
+    const err = await t.gh.defaultBranch('o', 'missing').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(GitHubError)
+    expect((err as GitHubError).code).toBe('not_found')
+    expect(t.rest.fn).not.toHaveBeenCalled()
+  })
+})

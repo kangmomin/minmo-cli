@@ -24,6 +24,9 @@ export function createGhTransport(tauri: Pick<TauriApi, 'ghRun'>): GitHubTranspo
       if (/rate limit/i.test(res.stderr)) {
         throw new GitHubError('rate_limited', { message: res.stderr.trim(), retryAt: null })
       }
+      // PF-01: 삭제·이전된 리소스(404/410)는 REST 로 다시 물어도 같다 → 폴백하지 않고 not_found
+      const gone = /\bHTTP (404|410)\b/.exec(res.stderr)
+      if (gone) throw new GitHubError('not_found', { status: Number(gone[1]), message: res.stderr.trim() })
       throw new GhFailure(res.stderr)
     }
     const text = res.stdout.trim()
