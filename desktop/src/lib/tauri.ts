@@ -2,6 +2,8 @@
 // 실제 구현(invoke)과 tauri.mock.ts(dev·Playwright) 를 getTauri() 로 고른다.
 import type { Platform } from '@minmo/api-client'
 
+import { createTauriMock } from './tauri.mock'
+
 export type { Platform }
 
 export type CmdResult = { code: number; stdout: string; stderr: string }
@@ -57,17 +59,83 @@ export interface TauriApi {
   onDeepLink(cb: (urls: string[]) => void): Promise<Unlisten>
 }
 
-const notImplemented = (): never => {
-  throw new Error('not implemented')
-}
+// Rust command 이름(src-tauri/src/commands/*.rs)과 1:1. 인자 키는 camelCase → Rust snake_case 로 자동 변환된다.
+export const TAURI_COMMANDS = {
+  gitRun: 'git_run',
+  ghRun: 'gh_run',
+  ghAvailable: 'gh_available',
+  ptySpawn: 'pty_spawn',
+  ptyWrite: 'pty_write',
+  ptyResize: 'pty_resize',
+  ptyKill: 'pty_kill',
+  ptyKillByCwd: 'pty_kill_by_cwd',
+  scriptRun: 'script_run',
+  scriptCancel: 'script_cancel',
+  keychainGet: 'keychain_get',
+  keychainSet: 'keychain_set',
+  keychainDelete: 'keychain_delete',
+  homeDir: 'home_dir',
+  platform: 'os_platform',
+  pathExists: 'path_exists',
+  removeDir: 'remove_dir',
+} as const
 
-// STUB (Phase 6.1 Red)
+export const TAURI_EVENTS = { ptyData: 'pty-data', scriptLog: 'script-log' } as const
+
 /** @tauri-apps/api invoke 기반 실제 구현 */
 export function createTauriApi(): TauriApi {
-  return notImplemented()
+  // 플러그인·core 모듈은 Tauri 런타임에서만 의미가 있으므로 지연 import 한다(웹 mock 번들 분리)
+  const core = () => import('@tauri-apps/api/core')
+  const event = () => import('@tauri-apps/api/event')
+  const call = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => (await core()).invoke<T>(cmd, args)
+  const C = TAURI_COMMANDS
+
+  return {
+    gitRun: (args, opts) => call(C.gitRun, { args, cwd: opts?.cwd ?? null, env: opts?.env ?? null }),
+    ghRun: (args, opts) => call(C.ghRun, { args, cwd: opts?.cwd ?? null, env: opts?.env ?? null, stdin: opts?.stdin ?? null }),
+    ghAvailable: () => call(C.ghAvailable),
+
+    ptySpawn: (req) => call(C.ptySpawn, { cwd: req.cwd, cols: req.cols, rows: req.rows }),
+    ptyWrite: (id, data) => call(C.ptyWrite, { id, data }),
+    ptyResize: (id, cols, rows) => call(C.ptyResize, { id, cols, rows }),
+    ptyKill: (id) => call(C.ptyKill, { id }),
+    ptyKillByCwd: (path) => call(C.ptyKillByCwd, { path }),
+    onPtyData: async (cb) => (await event()).listen<PtyDataEvent>(TAURI_EVENTS.ptyData, (e) => cb(e.payload)),
+
+    scriptRun: (req) => call(C.scriptRun, { runId: req.runId, cwd: req.cwd, script: req.script, env: req.env }),
+    scriptCancel: (runId) => call(C.scriptCancel, { runId }),
+    onScriptLog: async (cb) => (await event()).listen<ScriptLogEvent>(TAURI_EVENTS.scriptLog, (e) => cb(e.payload)),
+
+    keychainGet: (key) => call(C.keychainGet, { key }),
+    keychainSet: (key, value) => call(C.keychainSet, { key, value }),
+    keychainDelete: (key) => call(C.keychainDelete, { key }),
+
+    homeDir: () => call(C.homeDir),
+    platform: () => call(C.platform),
+    pathExists: (path) => call(C.pathExists, { path }),
+    removeDir: (path) => call(C.removeDir, { path }),
+
+    openUrl: async (url) => (await import('@tauri-apps/plugin-opener')).openUrl(url),
+    onDeepLink: async (cb) => {
+      const dl = await import('@tauri-apps/plugin-deep-link')
+      const unlisten = await dl.onOpenUrl(cb)
+      // 콜드 스타트: 앱이 딥링크로 실행되었으면 그 URL 도 전달한다(pendingLogin 이 없으므로 안내만 뜬다)
+      const initial = await dl.getCurrent().catch(() => null)
+      if (initial && initial.length > 0) cb(initial)
+      return unlisten
+    },
+  }
 }
 
-/** `__TAURI_INTERNALS__` 가 없으면 tauri.mock.ts 의 인메모리 가짜를 돌려준다 */
+function hasTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+let instance: TauriApi | null = null
+
+/** `__TAURI_INTERNALS__` 가 없으면(또는 VITE_TAURI_MOCK=1) tauri.mock.ts 의 인메모리 가짜를 돌려준다 */
 export function getTauri(): TauriApi {
-  return notImplemented()
+  if (instance) return instance
+  instance = hasTauriRuntime() && import.meta.env.VITE_TAURI_MOCK !== '1' ? createTauriApi() : createTauriMock()
+  return instance
 }

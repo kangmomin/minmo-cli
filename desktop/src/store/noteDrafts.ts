@@ -12,10 +12,27 @@ export interface NoteDraftState {
   discardOtherUsers(userId: string): void
 }
 
-// STUB (Phase 6.1 Red)
-export const useNoteDraftStore = create<NoteDraftState>()(() => ({
+const SEP = '\u0000'
+// owner/repo 는 서버 저장 키와 같이 대소문자를 무시한다
+const keyOf = (k: DraftKey) => [k.userId, k.owner.toLowerCase(), k.repo.toLowerCase(), k.key].join(SEP)
+
+// 메모리 전용(영속 저장 안 함 — Plan 기각 항목 "오프라인 draft 영속화")
+export const useNoteDraftStore = create<NoteDraftState>()((set, get) => ({
   drafts: {},
-  save: () => {},
-  take: () => null,
-  discardOtherUsers: () => {},
+  save: (k, body) => set((s) => ({ drafts: { ...s.drafts, [keyOf(k)]: body } })),
+  take: (k) => {
+    const id = keyOf(k)
+    const body = get().drafts[id]
+    if (body === undefined) return null
+    set((s) => {
+      const next = { ...s.drafts }
+      delete next[id]
+      return { drafts: next }
+    })
+    return body
+  },
+  discardOtherUsers: (userId) =>
+    set((s) => ({
+      drafts: Object.fromEntries(Object.entries(s.drafts).filter(([id]) => id.split(SEP)[0] === userId)),
+    })),
 }))

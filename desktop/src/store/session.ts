@@ -29,8 +29,8 @@ export interface SessionState {
   setNotice(n: string | null): void
 }
 
-// STUB (Phase 6.1 Red): 상태 모양만 고정, 액션은 no-op — 6.2 에서 구현
-export const useSessionStore = create<SessionState>()(() => ({
+// 세션 토큰은 메모리에만 둔다(영속은 OS 키체인 — useAuth 담당). persist 미들웨어를 쓰지 않는다.
+export const useSessionStore = create<SessionState>()((set) => ({
   token: null,
   me: null,
   status: 'online',
@@ -38,11 +38,12 @@ export const useSessionStore = create<SessionState>()(() => ({
   restoring: false,
   authError: null,
   notice: null,
-  setSession: () => {},
-  clearSession: () => {},
-  setPendingLogin: () => {},
-  setStatus: () => {},
-  setRestoring: () => {},
-  setAuthError: () => {},
-  setNotice: () => {},
+  setSession: (token, me) => set({ token, me, authError: null, pendingLogin: null }),
+  // 연결 상태(status)는 세션과 무관하므로 유지한다
+  clearSession: () => set({ token: null, me: null }),
+  setPendingLogin: (pendingLogin) => set({ pendingLogin }),
+  setStatus: (status) => set({ status }),
+  setRestoring: (restoring) => set({ restoring }),
+  setAuthError: (authError) => set({ authError }),
+  setNotice: (notice) => set({ notice }),
 }))

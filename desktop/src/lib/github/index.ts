@@ -1,5 +1,9 @@
 // GitHubClient — gh(우선) / REST(폴백). 서버 캐시 없음(D-22).
 import type { TauriApi } from '../tauri'
+import { GhFailure, createGhTransport } from './ghCli'
+import { createRestTransport } from './rest'
+import type { GitHubTransport } from './transport'
+import { GitHubError } from './types'
 import type { CreatePrInput, GitHubIssue, GitHubOwner, GitHubPr, GitHubRepo } from './types'
 
 export * from './types'
@@ -31,18 +35,133 @@ export interface GitHubClient {
   createPr(input: CreatePrInput): Promise<GitHubPr>
 }
 
-// STUB (Phase 6.1 Red)
-export function createGitHubClient(_deps: GitHubClientDeps): GitHubClient {
-  const notImplemented = async (): Promise<never> => {
-    throw new Error('not implemented')
+type RawOwner = { login: string; avatar_url?: string | null }
+type RawRepo = { name: string; owner: { login: string }; default_branch: string }
+type RawIssue = { number: number; title: string; state: string; html_url: string; pull_request?: unknown }
+type RawPr = { number: number; html_url: string }
+
+const enc = encodeURIComponent
+
+const toIssue = (r: RawIssue): GitHubIssue => ({
+  number: r.number,
+  title: r.title,
+  state: r.state === 'closed' ? 'closed' : 'open',
+  htmlUrl: r.html_url,
+})
+
+const toRepo = (r: RawRepo): GitHubRepo => ({ owner: r.owner.login, name: r.name, defaultBranch: r.default_branch })
+
+export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
+  const gh = createGhTransport(deps.tauri)
+  const rest = createRestTransport({
+    fetch: deps.fetch,
+    getToken: deps.getToken,
+    onUnauthorized: deps.onUnauthorized,
+    apiBase: deps.apiBase ?? GITHUB_API_BASE,
+  })
+
+  let ghAvailable: Promise<boolean> | null = null
+  /** gh 인증 실패를 한 번 보면 이후 REST 로 고정 (EC-01) */
+  let ghBroken = false
+
+  const checkGh = () => {
+    ghAvailable ??= deps.tauri.ghAvailable().catch(() => false)
+    return ghAvailable
   }
+
+  async function source(): Promise<'gh' | 'rest'> {
+    return !ghBroken && (await checkGh()) ? 'gh' : 'rest'
+  }
+
+  /** gh 로 시도하고, gh 가 실패(rate limit 제외)하면 같은 동작을 REST 로 다시 수행 */
+  async function withTransport<T>(fn: (t: GitHubTransport) => Promise<T>): Promise<T> {
+    if ((await source()) === 'gh') {
+      try {
+        return await fn(gh)
+      } catch (e) {
+        if (!(e instanceof GhFailure)) throw e
+        if (e.auth) ghBroken = true
+      }
+    }
+    return fn(rest)
+  }
+
+  /** per_page=100, 최대 5페이지 */
+  async function paged<T>(t: GitHubTransport, path: string): Promise<T[]> {
+    const out: T[] = []
+    const sep = path.includes('?') ? '&' : '?'
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await t.get(`${path}${sep}per_page=${PER_PAGE}&page=${page}`)
+      const items = Array.isArray(res.data) ? (res.data as T[]) : []
+      out.push(...items)
+      const more = res.hasNext ?? items.length >= PER_PAGE
+      if (!more) break
+    }
+    return out
+  }
+
   return {
-    source: notImplemented,
-    listOwners: notImplemented,
-    listRepos: notImplemented,
-    listIssues: notImplemented,
-    defaultBranch: notImplemented,
-    openPrForBranch: notImplemented,
-    createPr: notImplemented,
+    source,
+
+    listOwners: () =>
+      withTransport(async (t) => {
+        const user = (await t.get('user')).data as RawOwner
+        const orgs = await paged<RawOwner>(t, 'user/orgs')
+        return [
+          { login: user.login, kind: 'user' as const, avatarUrl: user.avatar_url ?? null },
+          ...orgs.map((o) => ({ login: o.login, kind: 'org' as const, avatarUrl: o.avatar_url ?? null })),
+        ]
+      }),
+
+    listRepos: (owner) =>
+      withTransport(async (t) => {
+        const path =
+          owner.kind === 'user' ? 'user/repos?affiliation=owner&sort=full_name' : `orgs/${enc(owner.login)}/repos?type=all&sort=full_name`
+        return (await paged<RawRepo>(t, path)).map(toRepo)
+      }),
+
+    listIssues: (owner, repo, opts) =>
+      withTransport(async (t) => {
+        const raw = await paged<RawIssue>(t, `repos/${enc(owner)}/${enc(repo)}/issues?state=all`)
+        const seen = new Set(raw.map((r) => r.number))
+        const issues = raw.filter((r) => r.pull_request === undefined).map(toIssue)
+        // AC-03: worktree 가 있는 이슈는 상한 밖·closed 여도 보이도록 개별 보충
+        for (const n of opts?.ensureNumbers ?? []) {
+          if (seen.has(n)) continue
+          seen.add(n)
+          try {
+            const r = (await t.get(`repos/${enc(owner)}/${enc(repo)}/issues/${n}`)).data as RawIssue
+            if (r && r.pull_request === undefined) issues.push(toIssue(r))
+          } catch (e) {
+            if (e instanceof GitHubError && e.code === 'not_found') continue
+            throw e
+          }
+        }
+        return issues
+      }),
+
+    defaultBranch: (owner, repo) =>
+      withTransport(async (t) => ((await t.get(`repos/${enc(owner)}/${enc(repo)}`)).data as RawRepo).default_branch),
+
+    openPrForBranch: (owner, repo, branch) =>
+      withTransport(async (t) => {
+        const head = enc(`${owner}:${branch}`)
+        const res = await t.get(`repos/${enc(owner)}/${enc(repo)}/pulls?state=open&head=${head}&per_page=1`)
+        const list = Array.isArray(res.data) ? (res.data as RawPr[]) : []
+        return list.length > 0 ? { number: list[0].number, url: list[0].html_url } : null
+      }),
+
+    createPr: (input) =>
+      withTransport(async (t) => {
+        const res = await t.post(`repos/${enc(input.owner)}/${enc(input.repo)}/pulls`, {
+          title: input.title,
+          body: input.body,
+          head: input.head,
+          base: input.base,
+          draft: input.draft,
+        })
+        const pr = res.data as RawPr
+        return { number: pr.number, url: pr.html_url }
+      }),
   }
 }
