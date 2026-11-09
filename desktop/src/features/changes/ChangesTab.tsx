@@ -73,6 +73,13 @@ export function ChangesTab({ target }: ChangesTabProps) {
   const selUntracked = selectedChange?.untracked ?? false
   const selStaged = selectedChange?.staged ?? false
   const selUnstaged = selectedChange?.unstaged ?? false
+  // 커밋 등으로 선택 파일이 목록에서 사라지면 선택·diff 를 해제한다 — 옛 diff 가 남지 않도록(CR-09)
+  useEffect(() => {
+    if (diffPath !== null && !selPresent) {
+      setDiffPath(null)
+      setDiff('')
+    }
+  }, [diffPath, selPresent])
   useEffect(() => {
     if (!diffPath || !selPresent) return
     let cancelled = false

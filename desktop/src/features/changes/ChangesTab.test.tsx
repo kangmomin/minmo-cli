@@ -57,6 +57,29 @@ describe('CR-04 선택 파일 diff 는 그 파일의 상태가 바뀔 때만 다
   })
 })
 
+describe('CR-09 선택 파일이 목록에서 사라지면 diff 도 해제', () => {
+  it('커밋 등으로 파일이 사라지면 옛 diff 를 지우고 안내 문구로 돌아간다(다시 나타나도 자동 선택 없음)', async () => {
+    const git = { status: [line('.M', 'src/a.ts'), line('.M', 'src/b.ts')] }
+    const t = setup(git)
+    fireEvent.click(await screen.findByRole('button', { name: 'src/a.ts' }))
+    await waitFor(() => expect(screen.getByLabelText('diff')).toHaveTextContent('diff of src/a.ts'))
+
+    git.status = [line('.M', 'src/b.ts')]
+    fireEvent.click(screen.getByRole('button', { name: '변경 새로고침' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'src/a.ts' })).toBeNull())
+    await waitFor(() => expect(screen.getByLabelText('diff')).toHaveTextContent('파일을 선택하면 diff 를 표시합니다'))
+    expect(screen.getByLabelText('diff')).not.toHaveTextContent('diff of src/a.ts')
+
+    const before = t.diffCalls().length
+    git.status = [line('.M', 'src/a.ts'), line('.M', 'src/b.ts')]
+    fireEvent.click(screen.getByRole('button', { name: '변경 새로고침' }))
+    await screen.findByRole('button', { name: 'src/a.ts' })
+    await flush()
+    expect(t.diffCalls()).toHaveLength(before)
+    expect(screen.getByLabelText('diff')).toHaveTextContent('파일을 선택하면 diff 를 표시합니다')
+  })
+})
+
 describe('AX 변경 탭 피드백 live region', () => {
   it('실패 피드백은 role=alert', async () => {
     setup({ status: [line('.M', 'src/a.ts')], push: async () => fail('! [rejected] non-fast-forward', 1) })
