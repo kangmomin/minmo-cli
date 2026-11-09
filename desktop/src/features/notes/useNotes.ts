@@ -97,7 +97,8 @@ export function useNotes(
 
   const saveDraft = useCallback(() => {
     const { owner: o, repo: rp, key: k } = ctx.current
-    if (r.userId && r.dirty) useNoteDraftStore.getState().save({ userId: r.userId, owner: o, repo: rp, key: k }, r.body)
+    if (r.userId && r.dirty)
+      useNoteDraftStore.getState().save({ userId: r.userId, owner: o, repo: rp, key: k }, { body: r.body, baseUpdatedAt: r.base })
   }, [r])
 
   const clearTimer = useCallback(() => {
@@ -112,23 +113,25 @@ export function useNotes(
         return
       }
       const { api: a, queryClient: qc, owner: o, repo: rp, key: k } = ctx.current
+      // 서버에 sent 가 저장됨 → 다음 PUT 의 base 갱신, 그 사이 편집이 없으면 clean
+      const markSaved = (updatedAt: string | null) => {
+        r.base = updatedAt
+        if (r.body === sent) r.dirty = false
+        setSaveState({ kind: 'saved', updatedAt })
+      }
       r.inFlight = true
       setSaveState({ kind: 'saving' })
       a.putNotes(o, rp, k, { body: sent, baseUpdatedAt: r.base })
         .then((res) => {
-          r.base = res.updatedAt
-          if (r.body === sent) r.dirty = false
+          markSaved(res.updatedAt)
           qc.setQueryData(queryKeys.notes(o, rp, k), res)
-          setSaveState({ kind: 'saved', updatedAt: res.updatedAt })
         })
         .catch((e: unknown) => {
           if (e instanceof ApiError && e.code === 'conflict' && e.current) {
             const current = e.current
             if (current.body === sent) {
               // 자기 409(같은 본문이 이미 저장됨) 흡수
-              r.base = current.updatedAt
-              if (r.body === sent) r.dirty = false
-              setSaveState({ kind: 'saved', updatedAt: current.updatedAt })
+              markSaved(current.updatedAt)
             } else {
               r.conflict = true
               r.queued = null
@@ -187,8 +190,11 @@ export function useNotes(
       const uid = useSessionStore.getState().me?.id
       if (uid) {
         const draft = useNoteDraftStore.getState().take({ userId: uid, owner, repo, key })
-        if (draft !== null && draft !== data.body) {
-          initial = draft
+        if (draft !== null && draft.body !== data.body) {
+          // 방금 GET 한 updatedAt 이 아니라 초안 작성 당시의 base 로 저장해야
+          // 그 사이 다른 기기의 수정을 덮어쓰지 않고 409 모달로 드러낸다(RF-01, CT-15)
+          initial = draft.body
+          r.base = draft.baseUpdatedAt
           r.dirty = true
           schedule()
         }
