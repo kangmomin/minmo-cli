@@ -1,9 +1,8 @@
-// Package settings 는 전역→조직→프로젝트 3단계 설정의 모델·검증·병합을 담당한다.
-//
-// Phase 6.1 Red 스텁: 타입·시그니처만 고정한다. 실제 구현은 Phase 6.2.
+// Package settings 는 전역→조직→프로젝트 3단계 설정의 모델·검증·병합·저장을 담당한다.
 package settings
 
 // Scope 는 설정 저장 단위이자 effective 의 출처 값이다.
+// 값 집합의 정본: migrations/0001_init.up.sql settings.scope CHECK 제약 · 계약 Effective.sources.
 type Scope string
 
 const (
@@ -30,6 +29,12 @@ type Input struct {
 	PostCreateScript *string `json:"postCreateScript"`
 }
 
+// Record 는 저장된 설정 행이다. 행이 없으면 모든 필드 nil · UpdatedAt nil.
+type Record struct {
+	Input
+	UpdatedAt *int64 // epoch ms
+}
+
 // Sources 는 effective 의 필드별 출처. 5키가 항상 존재한다.
 type Sources struct {
 	BranchTemplate   Scope `json:"branchTemplate"`
@@ -45,7 +50,13 @@ type Effective struct {
 	Sources Sources `json:"sources"`
 }
 
-// Defaults 는 신규 사용자 전역 설정 기본값을 반환한다.
+// Defaults 는 신규 사용자 전역 설정 기본값을 반환한다(계약 "전역 기본값").
 func Defaults() Values {
-	return Values{}
+	return Values{
+		BranchTemplate:   "issue/{number}-{slug}",
+		EtcBranchName:    "etc",
+		WorktreePath:     "~/minmo-workspaces/{owner}/{repo}/{branch}",
+		MainClonePath:    "~/minmo-workspaces/{owner}/{repo}/_main",
+		PostCreateScript: "",
+	}
 }
