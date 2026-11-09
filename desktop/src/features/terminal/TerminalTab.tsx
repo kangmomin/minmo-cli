@@ -59,7 +59,7 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
       )}
       <div className="relative min-h-0 flex-1">
         {sessions.filter((s) => started.has(s.issueId)).map((s) => (
-          <TerminalSession key={`${s.issueId}|${s.cwd}`} spec={s} active={visible && s.issueId === activeId} onExit={onExit} />
+          <TerminalSession key={`${s.issueId}|${s.cwd}`} spec={s} active={visible && s.issueId === activeId} hintId={hintId} onExit={onExit} />
         ))}
         {visible && !activeHasSession && (
           <p className="p-4 text-sm text-neutral-400">worktree 가 준비되면 터미널을 사용할 수 있습니다.</p>
@@ -71,15 +71,19 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
 
 type TermState = { t: Terminal; fit: FitAddon; ptyId: string | null; ended: boolean; end(): void }
 
-function TerminalSession({ spec, active, onExit }: { spec: TerminalSessionSpec; active: boolean; onExit?: () => void }) {
+function TerminalSession({ spec, active, hintId, onExit }: { spec: TerminalSessionSpec; active: boolean; hintId: string; onExit?: () => void }) {
   const { tauri } = useDeps()
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<TermState | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // PTY 가 이미 종료돼 write/resize 가 reject 되면 true — [다시 시작] 으로 gen 을 올려 xterm·PTY 를 새로 만든다(CR-08)
+  // PTY 가 이미 종료돼 write 가 reject 되면 true — [다시 시작] 으로 gen 을 올려 xterm·PTY 를 새로 만든다(CR-08).
+  // resize reject 는 살아 있는 PTY 의 일시 오류일 수 있어 종료로 보지 않는다(CR-19)
   const [ended, setEnded] = useState(false)
   const [gen, setGen] = useState(0)
   const focusAfterRestart = useRef(false)
+  const restartButton = useRef<HTMLButtonElement>(null)
+  // 종료 시점에 포커스가 이 터미널 안에 있었는지 — 있었다면 [다시 시작] 으로 포커스를 옮긴다(AX-34)
+  const focusRestartButton = useRef(false)
   // 키 핸들러는 마운트 때 1회 연결하므로 최신 onExit 를 ref 로 읽는다
   const onExitRef = useRef(onExit)
   useEffect(() => {
@@ -102,7 +106,11 @@ function TerminalSession({ spec, active, onExit }: { spec: TerminalSessionSpec; 
     t.attachCustomKeyEventHandler(createTerminalKeyHandler(() => onExitRef.current?.()))
     const fit = new FitAddon()
     t.loadAddon(fit)
+    // xterm 입력 textarea 의 aria-label 은 open() 때 정해지므로 그 전에 한국어로 바꾼다(전역 설정, AX-39)
+    Terminal.strings.promptLabel = '터미널 입력'
     t.open(el)
+    // 입력 textarea 에도 탈출 안내를 연결한다 — region 에만 있으면 입력에 포커스를 둔 사용자는 듣지 못한다(AX-39)
+    t.textarea?.setAttribute('aria-describedby', hintId)
     // [다시 시작] 버튼이 사라지며 포커스를 잃으므로, 사용자가 시작한 재시작에 한해 새 터미널로 포커스를 옮긴다(자동 포커스 금지 AX-02 의 예외)
     if (focusAfterRestart.current) {
       focusAfterRestart.current = false
@@ -116,6 +124,7 @@ function TerminalSession({ spec, active, onExit }: { spec: TerminalSessionSpec; 
       end: () => {
         if (disposed || state.ended) return
         state.ended = true
+        focusRestartButton.current = el.contains(document.activeElement)
         setEnded(true)
       },
     }
@@ -186,7 +195,14 @@ function TerminalSession({ spec, active, onExit }: { spec: TerminalSessionSpec; 
       t.dispose()
       term.current = null
     }
-  }, [tauri, spec.cwd, spec.issueId, gen])
+  }, [tauri, spec.cwd, spec.issueId, hintId, gen])
+
+  // 사용자가 이 터미널을 쓰던 중 세션이 끝났을 때만 포커스를 옮긴다 — 다른 탭·이슈에 포커스가 있으면 자동 포커스 금지(AX-02) 유지
+  useEffect(() => {
+    if (!ended || !focusRestartButton.current) return
+    focusRestartButton.current = false
+    restartButton.current?.focus()
+  }, [ended])
 
   // 표시·리사이즈 시 크기 맞추고 PTY 에 전달. 포커스는 옮기지 않는다 — 탭·이슈 전환 시 포커스 강탈 금지(AX-02)
   useEffect(() => {
@@ -200,7 +216,8 @@ function TerminalSession({ spec, active, onExit }: { spec: TerminalSessionSpec; 
       } catch {
         return
       }
-      if (cur.ptyId && !cur.ended) tauri.ptyResize(cur.ptyId, cur.t.cols, cur.t.rows).catch(cur.end)
+      // reject 는 무시한다 — 종료 판정은 write reject 만(CR-19)
+      if (cur.ptyId && !cur.ended) tauri.ptyResize(cur.ptyId, cur.t.cols, cur.t.rows).catch(() => undefined)
     }
     resize()
     const ro = new ResizeObserver(resize)
@@ -215,22 +232,31 @@ function TerminalSession({ spec, active, onExit }: { spec: TerminalSessionSpec; 
     setGen((g) => g + 1)
   }
 
+  // 안내·버튼은 xterm host 보다 앞에 둔다 — host 는 Tab 을 셸로 보내므로 뒤에 있으면 키보드로 닿기 어렵다(AX-34).
+  // role=alert 는 문구에만 두고 버튼은 형제로 분리한다(AX-35)
   return (
     <div className={active ? 'absolute inset-0 p-2' : 'hidden'}>
       {error && (
-        <p role="alert" className="p-2 text-sm text-red-400">
-          터미널을 시작할 수 없습니다: {error}
-        </p>
-      )}
-      <div key={gen} ref={host} className="size-full" />
-      {ended && (
-        <div role="alert" className="absolute inset-x-2 bottom-2 z-10 flex items-center gap-3 rounded bg-neutral-800 px-3 py-2 text-sm text-neutral-100">
-          <span className="flex-1">터미널 세션이 종료되었습니다</span>
+        <div className="flex items-center gap-3 p-2 text-sm text-red-400">
+          <p role="alert" className="flex-1">
+            터미널을 시작할 수 없습니다: {error}
+          </p>
           <Button size="sm" variant="secondary" onClick={restart}>
+            다시 시도
+          </Button>
+        </div>
+      )}
+      {ended && (
+        <div className="absolute inset-x-2 bottom-2 z-10 flex items-center gap-3 rounded bg-neutral-800 px-3 py-2 text-sm text-neutral-100">
+          <p role="alert" className="flex-1">
+            터미널 세션이 종료되었습니다
+          </p>
+          <Button ref={restartButton} size="sm" variant="secondary" onClick={restart}>
             다시 시작
           </Button>
         </div>
       )}
+      <div key={gen} ref={host} className="size-full" />
     </div>
   )
 }
