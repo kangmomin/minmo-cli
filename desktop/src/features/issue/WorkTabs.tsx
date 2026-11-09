@@ -43,7 +43,8 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
       </TabsList>
       <div className="relative min-h-0 flex-1">
         {/* forceMount 는 Radix 가 hidden 을 풀어 버리므로 직접 토글한다 */}
-        <TabsContent value="terminal" forceMount hidden={tab !== 'terminal'} className="absolute inset-0">
+        {/* 패널 안에 포커스 가능한 요소가 있으면 패널 자체는 Tab 정지점에서 뺀다 — 보이지 않는 정지점 방지(AX-19) */}
+        <TabsContent value="terminal" forceMount hidden={tab !== 'terminal'} tabIndex={-1} className="absolute inset-0">
           <TerminalTab
             sessions={sessions}
             activeId={id}
@@ -52,7 +53,8 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
             onExit={() => terminalTrigger.current?.focus()}
           />
         </TabsContent>
-        <TabsContent value="changes" className="absolute inset-0">
+        {/* 준비 전(안내 문구뿐)에는 포커스 가능한 내용이 없으므로 패널이 tabIndex 0 을 유지한다(tabs.tsx 가 포커스 링을 그린다) */}
+        <TabsContent value="changes" tabIndex={state?.phase === 'ready' ? -1 : 0} className="absolute inset-0">
           {state?.phase === 'ready' ? (
             <ChangesTab
               key={id}
@@ -68,7 +70,7 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
             <p className="p-4 text-sm text-muted-foreground">worktree 가 준비되면 변경 내역을 볼 수 있습니다.</p>
           )}
         </TabsContent>
-        <TabsContent value="notes" className="absolute inset-0">
+        <TabsContent value="notes" tabIndex={-1} className="absolute inset-0">
           <NotesTab key={id} owner={target.owner} repo={target.repo} issueKey={target.key} />
         </TabsContent>
       </div>

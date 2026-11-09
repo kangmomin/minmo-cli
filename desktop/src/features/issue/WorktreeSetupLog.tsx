@@ -1,9 +1,11 @@
+import { ChevronDownIcon, ChevronRightIcon } from 'lucide-react'
 import { memo, useEffect, useId, useRef, useState } from 'react'
 
 import { Button } from '../../components/ui/button'
 import { worktreeId } from '../../lib/worktree'
 import type { IssueTarget, SetupLogEvent, SetupStep } from '../../lib/worktree'
 import { useSetupStore } from '../../store/setup'
+import type { SetupLogEntry } from '../../store/setup'
 import { useIssueActions } from './useWorktree'
 
 const STEP_LABEL: Record<SetupStep, string> = {
@@ -16,7 +18,7 @@ const STEP_LABEL: Record<SetupStep, string> = {
   script: '스크립트',
 }
 
-const EMPTY: SetupLogEvent[] = []
+const EMPTY: SetupLogEntry[] = []
 
 function line(e: SetupLogEvent): string {
   if (e.status === 'log') return e.message ?? ''
@@ -25,12 +27,15 @@ function line(e: SetupLogEvent): string {
   return `[${label}] ${status}${e.message ? ` — ${e.message}` : ''}`
 }
 
-// 로그 줄마다 store 가 갱신되므로 기존 줄(이벤트 객체 동일)은 다시 그리지 않는다
+// 로그 줄마다 store 가 갱신되므로 기존 줄(항목 객체 동일)은 다시 그리지 않는다. key=seq 라 상한 slice 후에도 유지된다(CR-12)
 const LogLine = memo(function LogLine({ e }: { e: SetupLogEvent }) {
   return <div className={e.status === 'error' ? 'whitespace-pre-wrap text-destructive' : 'whitespace-pre-wrap'}>{line(e)}</div>
 })
 
-/** worktree 준비 단계·생성 후 스크립트 로그 패널 (F-09, AC-16, EC-19, EC-21) */
+/**
+ * worktree 준비 단계·생성 후 스크립트 로그 패널 (F-09, AC-16, EC-19, EC-21).
+ * 접힘 상태가 이슈 간에 이어지지 않도록 호출 쪽에서 key={이슈 id} 를 준다(CR-13).
+ */
 export interface WorktreeSetupLogProps {
   target: IssueTarget
 }
@@ -45,9 +50,10 @@ export function WorktreeSetupLog({ target }: WorktreeSetupLogProps) {
   const bottom = useRef<HTMLDivElement>(null)
   const bodyId = useId()
 
+  // 새 줄이 오거나 다시 펼칠 때 맨 아래로(접힌 동안은 bottom 이 없다) (CR-13)
   useEffect(() => {
     bottom.current?.scrollIntoView?.({ block: 'end' })
-  }, [logs])
+  }, [logs, collapsed])
 
   const running = script?.status === 'running'
   const visible = open?.phase === 'opening' || open?.phase === 'error' || script !== undefined
@@ -70,15 +76,20 @@ export function WorktreeSetupLog({ target }: WorktreeSetupLogProps) {
   else if (script?.status === 'failed') summary = `생성 후 스크립트 실패${script.exitCode !== null ? `(종료 코드 ${script.exitCode})` : ''}`
   else if (script?.status === 'cancelled') summary = '생성 후 스크립트 취소됨'
 
-  // 요약은 live region: 진행은 polite(status), 실패는 즉시(alert) (AX-08)
+  // 요약 live region: status 컨테이너는 항상 두고 진행·완료만 담는다. 실패는 role 을 바꾸지 않고 새 alert 노드를 삽입해 즉시 알린다(AX-08, AX-20)
   const failed = open?.phase === 'error' || script?.status === 'failed'
 
   return (
     <section className="border-b bg-muted/40" aria-label="준비 로그" data-testid="setup-log">
       <div className="flex items-center gap-2 px-4 py-1.5 text-sm">
-        <span role={failed ? 'alert' : 'status'} className={failed ? 'flex-1 font-medium text-destructive' : 'flex-1 font-medium'}>
-          {summary}
-        </span>
+        <div className="flex-1 font-medium">
+          <div role="status">{failed ? null : summary}</div>
+          {failed && (
+            <div role="alert" className="text-destructive">
+              {summary}
+            </div>
+          )}
+        </div>
         {running && (
           <Button size="sm" variant="outline" onClick={() => void actions.cancelSetup(target)}>
             취소
@@ -89,14 +100,16 @@ export function WorktreeSetupLog({ target }: WorktreeSetupLogProps) {
             다시 실행
           </Button>
         )}
+        {/* 버튼 이름은 고정, 펼침 상태는 aria-expanded 로만 전달한다(AX-31) */}
         <Button size="sm" variant="ghost" aria-expanded={!collapsed} aria-controls={bodyId} onClick={() => setCollapsed((c) => !c)}>
-          {collapsed ? '로그 보기' : '접기'}
+          {collapsed ? <ChevronRightIcon aria-hidden="true" /> : <ChevronDownIcon aria-hidden="true" />}
+          준비 로그
         </Button>
       </div>
       {!collapsed && (
         <div id={bodyId} className="max-h-48 overflow-auto px-4 pb-2 font-mono text-xs">
-          {logs.map((e, i) => (
-            <LogLine key={i} e={e} />
+          {logs.map((e) => (
+            <LogLine key={e.seq} e={e} />
           ))}
           {open?.phase === 'error' && <div className="whitespace-pre-wrap text-destructive">{open.message}</div>}
           <div ref={bottom} />

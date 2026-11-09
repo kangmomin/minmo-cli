@@ -76,7 +76,8 @@ export function Workspace() {
           {target ? (
             <>
               <IssueHeader target={target} state={openState} />
-              <WorktreeSetupLog target={target} />
+              {/* key: 접힘 상태가 다른 이슈로 이어지지 않게 이슈마다 새로 마운트한다(CR-13) */}
+              <WorktreeSetupLog key={selectedId} target={target} />
               <WorkTabs target={target} state={openState} />
             </>
           ) : (
