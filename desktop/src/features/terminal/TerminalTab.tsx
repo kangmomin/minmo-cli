@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { useDeps } from '../../app/deps'
 import { useUiStore } from '../../store/ui'
+import { TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 
 export type TerminalSessionSpec = { issueId: string; cwd: string }
 
@@ -15,9 +16,11 @@ export interface TerminalTabProps {
   activeId: string | null
   /** 터미널 탭이 선택되어 있는가 */
   visible: boolean
+  /** Ctrl+Shift+M — 터미널 밖(탭 목록)으로 포커스를 옮긴다 */
+  onExit?: () => void
 }
 
-export function TerminalTab({ sessions, activeId, visible }: TerminalTabProps) {
+export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTabProps) {
   const activeHasSession = sessions.some((s) => s.issueId === activeId)
   // PTY 는 터미널 탭에서 처음 볼 때 만들고, 이후에는 이슈를 전환해도 유지한다
   const [started, setStarted] = useState<ReadonlySet<string>>(() => new Set())
@@ -25,10 +28,25 @@ export function TerminalTab({ sessions, activeId, visible }: TerminalTabProps) {
     if (visible && activeId && activeHasSession && !started.has(activeId)) setStarted((s) => new Set(s).add(activeId))
   }, [visible, activeId, activeHasSession, started])
 
+  // 세션이 사라지면(worktree 삭제 등) started 에서도 뺀다 — 다시 나타나도 탭을 볼 때까지 PTY 를 만들지 않도록
+  const sessionIds = sessions.map((s) => s.issueId).join('\n')
+  useEffect(() => {
+    const present = new Set(sessionIds.split('\n'))
+    setStarted((s) => {
+      const next = new Set([...s].filter((id) => present.has(id)))
+      return next.size === s.size ? s : next
+    })
+  }, [sessionIds])
+
   return (
-    <div className={visible ? 'absolute inset-0 bg-[#1e1e1e]' : 'hidden'} data-testid="terminal-tab">
+    <div
+      className={visible ? 'absolute inset-0 bg-[#1e1e1e]' : 'hidden'}
+      data-testid="terminal-tab"
+      role="region"
+      aria-label={`터미널 (${TERMINAL_EXIT_HINT} 으로 나가기)`}
+    >
       {sessions.filter((s) => started.has(s.issueId)).map((s) => (
-        <TerminalSession key={`${s.issueId}|${s.cwd}`} spec={s} active={visible && s.issueId === activeId} />
+        <TerminalSession key={`${s.issueId}|${s.cwd}`} spec={s} active={visible && s.issueId === activeId} onExit={onExit} />
       ))}
       {visible && !activeHasSession && (
         <p className="p-4 text-sm text-neutral-400">worktree 가 준비되면 터미널을 사용할 수 있습니다.</p>
@@ -37,11 +55,16 @@ export function TerminalTab({ sessions, activeId, visible }: TerminalTabProps) {
   )
 }
 
-function TerminalSession({ spec, active }: { spec: TerminalSessionSpec; active: boolean }) {
+function TerminalSession({ spec, active, onExit }: { spec: TerminalSessionSpec; active: boolean; onExit?: () => void }) {
   const { tauri } = useDeps()
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<{ t: Terminal; fit: FitAddon; ptyId: string | null } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 키 핸들러는 마운트 때 1회 연결하므로 최신 onExit 를 ref 로 읽는다
+  const onExitRef = useRef(onExit)
+  useEffect(() => {
+    onExitRef.current = onExit
+  }, [onExit])
 
   // 세션 생성: 마운트 1회. 언마운트(이슈의 worktree 삭제 등) 시 PTY 종료
   useEffect(() => {
@@ -53,7 +76,10 @@ function TerminalSession({ spec, active }: { spec: TerminalSessionSpec; active: 
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       fontSize: 13,
       theme: { background: '#1e1e1e' },
+      // 출력을 스크린 리더가 읽을 수 있는 접근성 트리로도 내보낸다
+      screenReaderMode: true,
     })
+    t.attachCustomKeyEventHandler(createTerminalKeyHandler(() => onExitRef.current?.()))
     const fit = new FitAddon()
     t.loadAddon(fit)
     t.open(el)
@@ -66,6 +92,11 @@ function TerminalSession({ spec, active }: { spec: TerminalSessionSpec; active: 
         const unlisten = await tauri.onPtyData((e) => {
           if (e.id === state.ptyId) t.write(e.data)
         })
+        // 구독이 끝나기 전에 언마운트됐으면 cleanup 이 이미 돌았다 → 여기서 바로 해제(CR-01)
+        if (disposed) {
+          unlisten()
+          return
+        }
         cleanups.push(unlisten)
         try {
           fit.fit()
@@ -82,7 +113,7 @@ function TerminalSession({ spec, active }: { spec: TerminalSessionSpec; active: 
         const sub = t.onData((d) => void tauri.ptyWrite(id, d))
         cleanups.push(() => sub.dispose())
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        if (!disposed) setError(e instanceof Error ? e.message : String(e))
       }
     })()
 
@@ -100,7 +131,7 @@ function TerminalSession({ spec, active }: { spec: TerminalSessionSpec; active: 
     }
   }, [tauri, spec.cwd, spec.issueId])
 
-  // 표시·리사이즈 시 크기 맞추고 PTY 에 전달
+  // 표시·리사이즈 시 크기 맞추고 PTY 에 전달. 포커스는 옮기지 않는다 — 탭·이슈 전환 시 포커스 강탈 금지(AX-02)
   useEffect(() => {
     const el = host.current
     if (!active || !el) return
@@ -115,7 +146,6 @@ function TerminalSession({ spec, active }: { spec: TerminalSessionSpec; active: 
       if (cur.ptyId) void tauri.ptyResize(cur.ptyId, cur.t.cols, cur.t.rows)
     }
     resize()
-    term.current?.t.focus()
     const ro = new ResizeObserver(resize)
     ro.observe(el)
     return () => ro.disconnect()
@@ -123,7 +153,11 @@ function TerminalSession({ spec, active }: { spec: TerminalSessionSpec; active: 
 
   return (
     <div className={active ? 'absolute inset-0 p-2' : 'hidden'}>
-      {error && <p className="p-2 text-sm text-red-400">터미널을 시작할 수 없습니다: {error}</p>}
+      {error && (
+        <p role="alert" className="p-2 text-sm text-red-400">
+          터미널을 시작할 수 없습니다: {error}
+        </p>
+      )}
       <div ref={host} className="size-full" />
     </div>
   )

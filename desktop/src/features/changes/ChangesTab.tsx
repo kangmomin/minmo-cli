@@ -67,23 +67,27 @@ export function ChangesTab({ target }: ChangesTabProps) {
     })
   }, [paths])
 
+  // 선택 파일의 상태값만 의존한다 — 5초 폴링·다른 파일 변화로 목록 배열이 바뀌어도 diff 를 다시 부르지 않는다(CR-04)
+  const selectedChange = diffPath ? git.changes.find((c) => c.path === diffPath) : undefined
+  const selPresent = selectedChange !== undefined
+  const selUntracked = selectedChange?.untracked ?? false
+  const selStaged = selectedChange?.staged ?? false
+  const selUnstaged = selectedChange?.unstaged ?? false
   useEffect(() => {
-    if (!diffPath) return
-    const change = git.changes.find((c) => c.path === diffPath)
-    if (!change) return
+    if (!diffPath || !selPresent) return
     let cancelled = false
     // 이전 파일의 diff 가 새 경로 아래 남아 보이지 않도록 로딩 표시부터
     setDiff('불러오는 중…')
-    const load = change.untracked
+    const load = selUntracked
       ? Promise.resolve('(새 파일 — 커밋하면 추가됩니다)')
-      : git.ops.diff(target.cwd, diffPath, { staged: change.staged && !change.unstaged })
+      : git.ops.diff(target.cwd, diffPath, { staged: selStaged && !selUnstaged })
     void load
       .then((d) => !cancelled && setDiff(d || '(차이 없음)'))
       .catch((e: unknown) => !cancelled && setDiff(e instanceof Error ? e.message : String(e)))
     return () => {
       cancelled = true
     }
-  }, [diffPath, git.changes, git.ops, target.cwd])
+  }, [diffPath, selPresent, selUntracked, selStaged, selUnstaged, git.ops, target.cwd])
 
   const refreshGit = () => queryClient.invalidateQueries({ queryKey: queryKeys.gitAll })
 
@@ -137,8 +141,12 @@ export function ChangesTab({ target }: ChangesTabProps) {
         </Button>
       </div>
 
-      {feedback && (
-        <div className={cn('rounded p-2 text-sm', feedback.kind === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-emerald-50 text-emerald-800')}>
+      {/* 성공은 polite(status) — 컨테이너를 항상 두어야 스크린 리더가 내용 변화를 읽는다. 실패는 즉시(alert) */}
+      <div role="status" className="empty:sr-only">
+        {feedback?.kind === 'ok' && <div className="rounded bg-emerald-50 p-2 text-sm text-emerald-800">{feedback.text}</div>}
+      </div>
+      {feedback?.kind === 'error' && (
+        <div role="alert" className="rounded bg-destructive/10 p-2 text-sm text-destructive">
           {feedback.text}
           {feedback.detail && <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-xs">{feedback.detail}</pre>}
         </div>
