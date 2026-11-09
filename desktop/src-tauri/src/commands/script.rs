@@ -134,18 +134,10 @@ fn pump<R: std::io::Read + Send + 'static>(
 }
 
 fn kill_tree(pid: u32) {
-    if cfg!(windows) {
-        let mut c = Command::new("taskkill");
-        c.args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            c.creation_flags(super::CREATE_NO_WINDOW);
-        }
-        let _ = c.status();
-    } else {
+    #[cfg(windows)]
+    super::taskkill_tree(pid);
+    #[cfg(not(windows))]
+    {
         let group = format!("-{pid}");
         let _ = Command::new("kill").args(["-TERM", "--", &group]).status();
         std::thread::spawn(move || {

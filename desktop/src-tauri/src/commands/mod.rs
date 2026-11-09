@@ -26,3 +26,16 @@ pub(crate) fn is_same_or_inside(child: &str, parent: &str) -> bool {
 /// Windows 에서 GUI 앱이 자식 프로세스를 띄울 때 콘솔 창이 깜빡이지 않도록 하는 플래그
 #[cfg(windows)]
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// pid 와 그 자손 프로세스를 모두 강제 종료하고 taskkill 이 끝날 때까지 기다린다
+#[cfg(windows)]
+pub(crate) fn taskkill_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+}
