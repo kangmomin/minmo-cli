@@ -56,7 +56,7 @@ func Lookup(ctx context.Context, db *sql.DB, token string, now time.Time) (strin
 	if err != nil {
 		return "", fmt.Errorf("세션 조회 실패: %w", err)
 	}
-	// [Assumption] 만료 행은 조회 시 판정만 하고 삭제하지 않는다(정리 작업은 Phase 1 범위 밖)
+	// 만료 행은 조회 시 판정만 하고 삭제하지 않는다(정리 작업은 Phase 1 범위 밖)
 	if now.UnixMilli() >= expiresAt {
 		return "", ErrInvalidSession
 	}

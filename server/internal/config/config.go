@@ -79,7 +79,7 @@ func Load(getenv func(string) string) (Config, error) {
 }
 
 // parseTokenKey 는 base64(표준·URL-safe, 패딩 유무 무관) 32바이트 키를 해석한다.
-// [Assumption] 계약은 "base64 32B"만 정한다 — 키 생성 도구 차이를 흡수하려고 4가지 인코딩을 모두 수용.
+// 계약은 "base64 32B"만 정한다 — 키 생성 도구 차이를 흡수하려고 4가지 인코딩을 모두 수용.
 func parseTokenKey(v string) ([]byte, error) {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -101,7 +101,7 @@ func isLoopback(listen string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("MINMO_LISTEN=%q 형식 오류: %w", listen, err)
 	}
-	// [Assumption] 호스트명 localhost 도 loopback 으로 본다(IP 리터럴만 검사하면 기본 사용 예가 거부됨)
+	// 호스트명 localhost 도 loopback 으로 본다(IP 리터럴만 검사하면 기본 사용 예가 거부됨)
 	if strings.EqualFold(host, "localhost") {
 		return true, nil
 	}

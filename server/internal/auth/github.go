@@ -81,7 +81,7 @@ func (c *GitHubClient) Exchange(ctx context.Context, code, verifier string) (str
 	case body.Error == "bad_verification_code":
 		return "", ErrBadCode
 	case body.Error != "" || body.AccessToken == "":
-		// [Assumption] 계약은 bad_verification_code 외 GitHub 오류(client 자격 불일치 등)를 별도 코드로 두지 않아 github_unavailable 로 분류
+		// 계약은 bad_verification_code 외 GitHub 오류(client 자격 불일치 등)를 별도 코드로 두지 않아 github_unavailable 로 분류
 		return "", fmt.Errorf("%w: 토큰 교환 오류 %q", ErrGitHubUnavailable, body.Error)
 	}
 	return body.AccessToken, nil
@@ -114,7 +114,7 @@ func (c *GitHubClient) doJSON(req *http.Request, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		// [Assumption] 계약은 네트워크·5xx 만 github_unavailable 로 명시 — /user 401 등 그 외 비200도 같은 502 로 분류
+		// 계약은 네트워크·5xx 만 github_unavailable 로 명시 — /user 401 등 그 외 비200도 같은 502 로 분류
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxGitHubResponse))
 		return fmt.Errorf("%w: %s %s → %d", ErrGitHubUnavailable, req.Method, req.URL.Path, resp.StatusCode)
 	}

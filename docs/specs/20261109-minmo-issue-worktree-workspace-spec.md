@@ -27,7 +27,7 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 | 1 (이번) | Go 서버(로컬) + Tauri 데스크탑: 로그인·트리·worktree·터미널·git·PR·메모·3단계 설정 | 이 Spec |
 | 2 | 클라우드 배포, 서버 측 GitHub REST 동기화(모바일용), 멀티 디바이스 세션 | 서버 캐시 전략 재결정 필요 |
 | 3 | RN 모바일: 조회 + 메타데이터 편집(메모·설정) + 데스크탑 원격 제어(터미널·git 중계) | 데스크탑 ↔ 서버 ↔ 모바일 실시간 채널 |
-| 후속 | 반복 명령 단축어 실행, AI 에이전트 세션, worktree 자동 정리 | [Assumption] A-11 단축어는 Phase 1 선택에 포함되지 않아 후속으로 배치 |
+| 후속 | 반복 명령 단축어 실행, AI 에이전트 세션, worktree 자동 정리 | A-11 단축어는 Phase 1 선택에 포함되지 않아 후속으로 배치 |
 
 ## 현재 상황 (As-Is)
 | 파일 | 역할 | 수정 필요 |
@@ -41,7 +41,7 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 ```
 minmo-cli/
 ├─ server/                 Go 1.22+, net/http(or chi), SQLite(modernc.org/sqlite), golang-migrate
-│  ├─ cmd/minmo-server/    진입점, 기본 http://127.0.0.1:8787  [Assumption A-03]
+│  ├─ cmd/minmo-server/    진입점, 기본 http://127.0.0.1:8787  (A-03)
 │  ├─ internal/auth/       GitHub OAuth(PKCE) 교환, 세션 발급
 │  ├─ internal/settings/   전역/조직/프로젝트 3단계 설정 + effective 병합
 │  ├─ internal/note/       이슈별 메모
@@ -267,22 +267,22 @@ minmo-cli/
 | D-30 | 상속 규칙 | 하위 값 null → 상위 값 사용, 전역은 앱 기본값으로 항상 채워짐 | R10(수정 1) |
 
 ## Assumption
-- [Assumption] A-01 데스크탑 프론트는 React + TypeScript(Vite) — RN과 `packages/` 공유를 위해. 근거: D-14
-- [Assumption] A-02 터미널은 Tauri Rust 측 `portable-pty` + 프론트 `xterm.js`. 근거: D-15, Tauri 선택
-- [Assumption] A-03 서버 기본 주소 `http://127.0.0.1:8787`, 딥링크 스킴 `minmo://`. 근거: 로컬 실행(D-26)
-- [Assumption] A-04 서버가 GitHub 토큰을 암호화 보관하고 `/me/github-token`으로 데스크탑에 전달, 데스크탑은 OS keychain 저장. 근거: D-22 REST 폴백에 토큰 필요
-- [Assumption] A-05 전역 기본 경로 `~/minmo-workspaces/{owner}/{repo}/{branch}`, 메인 clone `~/minmo-workspaces/{owner}/{repo}/_main`. 근거: D-18
-- [Assumption] A-06 브랜치명의 `/`는 worktree 디렉터리명에서 `--`로 치환. 근거: 중첩 디렉터리 회피
-- [Assumption] A-07 PR은 기본 draft(토글 가능). 근거: 사용자의 common:commit-pr 기본값이 draft
-- [Assumption] A-08 커밋 메시지는 사용자가 직접 작성(자동 생성은 범위 외). 근거: R3 "git 보조" 상세 미지정
-- [Assumption] A-09 메모는 이슈당 마크다운 문서 1개(여러 노트 아님). 근거: D-23 단순화
-- [Assumption] A-10 트리에 closed 이슈는 로컬 worktree가 있는 것만 표시. 근거: D-24 "표시만"
-- [Assumption] A-11 단축어 실행 기능은 Phase 1 선택에 없어 로드맵 후속으로 배치. 근거: D-06 vs D-17
-- [Assumption] A-12 메인 clone 위치도 설정 항목(mainClonePath)으로 분리 — worktreePath만으로는 `_main` 위치를 정할 수 없음. 근거: D-18
-- [Assumption] A-13 스크립트 셸 = 플랫폼 기본(Windows powershell / 그 외 sh), 셸 선택 설정은 두지 않음. 근거: D-28
-- [Assumption] A-14 스크립트는 worktree 생성 시 1회 자동 실행, 재실행은 수동. 근거: D-28
-- [Assumption] A-15 스크립트 자동 타임아웃 없음(취소 버튼만). 근거: D-28
-- [Assumption] A-16 EC-24의 "경로 변경됨" 배지를 위해 데스크탑 로컬에 `이슈 key → 생성 당시 경로` 맵을 보관. 근거: D-29(경로가 설정 변경으로 달라질 수 있음)
+- A-01 데스크탑 프론트는 React + TypeScript(Vite) — RN과 `packages/` 공유를 위해. 근거: D-14
+- A-02 터미널은 Tauri Rust 측 `portable-pty` + 프론트 `xterm.js`. 근거: D-15, Tauri 선택
+- A-03 서버 기본 주소 `http://127.0.0.1:8787`, 딥링크 스킴 `minmo://`. 근거: 로컬 실행(D-26)
+- A-04 서버가 GitHub 토큰을 암호화 보관하고 `/me/github-token`으로 데스크탑에 전달, 데스크탑은 OS keychain 저장. 근거: D-22 REST 폴백에 토큰 필요
+- A-05 전역 기본 경로 `~/minmo-workspaces/{owner}/{repo}/{branch}`, 메인 clone `~/minmo-workspaces/{owner}/{repo}/_main`. 근거: D-18
+- A-06 브랜치명의 `/`는 worktree 디렉터리명에서 `--`로 치환. 근거: 중첩 디렉터리 회피
+- A-07 PR은 기본 draft(토글 가능). 근거: 사용자의 common:commit-pr 기본값이 draft
+- A-08 커밋 메시지는 사용자가 직접 작성(자동 생성은 범위 외). 근거: R3 "git 보조" 상세 미지정
+- A-09 메모는 이슈당 마크다운 문서 1개(여러 노트 아님). 근거: D-23 단순화
+- A-10 트리에 closed 이슈는 로컬 worktree가 있는 것만 표시. 근거: D-24 "표시만"
+- A-11 단축어 실행 기능은 Phase 1 선택에 없어 로드맵 후속으로 배치. 근거: D-06 vs D-17
+- A-12 메인 clone 위치도 설정 항목(mainClonePath)으로 분리 — worktreePath만으로는 `_main` 위치를 정할 수 없음. 근거: D-18
+- A-13 스크립트 셸 = 플랫폼 기본(Windows powershell / 그 외 sh), 셸 선택 설정은 두지 않음. 근거: D-28
+- A-14 스크립트는 worktree 생성 시 1회 자동 실행, 재실행은 수동. 근거: D-28
+- A-15 스크립트 자동 타임아웃 없음(취소 버튼만). 근거: D-28
+- A-16 EC-24의 "경로 변경됨" 배지를 위해 데스크탑 로컬에 `이슈 key → 생성 당시 경로` 맵을 보관. 근거: D-29(경로가 설정 변경으로 달라질 수 있음)
 
 ## 미결
 - 없음

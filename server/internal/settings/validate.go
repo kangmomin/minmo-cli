@@ -107,7 +107,7 @@ func checkPostCreateScript(v string) string {
 }
 
 // parseTokens 는 `{name}` 토큰 이름 목록을 반환한다. 닫히지 않은 `{` 가 있으면 ok=false.
-// [Assumption] 홀로 닫는 `}` 는 허용한다 — 계약은 닫히지 않은 `{`·미지 토큰만 금지한다.
+// 홀로 닫는 `}` 는 허용한다 — 계약은 닫히지 않은 `{`·미지 토큰만 금지한다.
 func parseTokens(s string) (tokens []string, ok bool) {
 	for {
 		open := strings.IndexByte(s, '{')

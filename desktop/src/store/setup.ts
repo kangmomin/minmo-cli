@@ -26,7 +26,7 @@ export interface SetupState {
   clearLog(id: string): void
 }
 
-/** [Assumption] 이슈별 로그 상한 2000줄 — 긴 npm ci 출력이 메모리를 잡아먹지 않도록 최근 것만 */
+/** 이슈별 로그 상한 2000줄 — 긴 npm ci 출력이 메모리를 잡아먹지 않도록 최근 것만 */
 export const MAX_LOG_LINES = 2000
 
 // 이슈·clearLog 와 무관하게 앱 수명 동안 증가 — key 가 재사용되지 않는다

@@ -203,7 +203,7 @@ export function useGit(target: UseGitTarget): {
   const status = useQuery({
     queryKey: queryKeys.gitStatus(target.cwd),
     queryFn: () => ops.status(target.cwd),
-    // 로컬 명령이라 서버 retry 정책과 무관. [Assumption] 터미널에서 바꾼 파일을 반영하도록 5초 주기 갱신
+    // 로컬 명령이라 서버 retry 정책과 무관. 터미널에서 바꾼 파일을 반영하도록 5초 주기 갱신
     refetchInterval: 5000,
     retry: false,
   })

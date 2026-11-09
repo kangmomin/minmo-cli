@@ -31,7 +31,7 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
           const st = useSetupStore.getState()
           st.appendLog(e)
           if (e.step === 'script' && e.status === 'start') st.setScript(e.issueId, { status: 'running' })
-          // [Assumption] worktree 가 만들어지면 스크립트 완료를 기다리지 않고 이슈를 연다(터미널·메모 사용 가능)
+          // worktree 가 만들어지면 스크립트 완료를 기다리지 않고 이슈를 연다(터미널·메모 사용 가능)
           if (e.step === 'worktree' && e.status === 'ok') {
             const entry = useUiStore.getState().worktreePathMap[e.issueId]
             if (entry) st.setOpen(e.issueId, { phase: 'ready', path: entry.path, branch: entry.branch, pathChanged: false })
