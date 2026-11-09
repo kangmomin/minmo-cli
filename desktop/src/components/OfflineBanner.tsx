@@ -40,18 +40,18 @@ export function OfflineBanner() {
     return () => clearInterval(timer)
   }, [status, check])
 
-  if (status !== 'offline') return null
+  // live region 은 내용이 바뀌기 전부터 DOM 에 있어야 스크린 리더가 변화를 읽는다 → 빈 컨테이너를 상시 유지(AX)
   return (
-    <div
-      data-testid="offline-banner"
-      role="status"
-      className="flex items-center gap-3 border-t bg-amber-100 px-4 py-2 text-sm text-amber-950"
-    >
-      <WifiOffIcon className="size-4" />
-      <span className="flex-1">서버에 연결할 수 없습니다 — 메모·설정 편집이 비활성화되고 마지막으로 불러온 내용을 표시합니다.</span>
-      <Button size="sm" variant="outline" onClick={() => void check()} disabled={checking}>
-        다시 연결
-      </Button>
+    <div role="status">
+      {status === 'offline' && (
+        <div data-testid="offline-banner" className="flex items-center gap-3 border-t bg-amber-100 px-4 py-2 text-sm text-amber-950">
+          <WifiOffIcon className="size-4" aria-hidden="true" />
+          <span className="flex-1">서버에 연결할 수 없습니다 — 메모·설정 편집이 비활성화되고 마지막으로 불러온 내용을 표시합니다.</span>
+          <Button size="sm" variant="outline" onClick={() => void check()} disabled={checking}>
+            다시 연결
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

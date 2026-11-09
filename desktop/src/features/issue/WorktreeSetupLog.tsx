@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useId, useRef, useState } from 'react'
 
 import { Button } from '../../components/ui/button'
 import { worktreeId } from '../../lib/worktree'
@@ -43,6 +43,7 @@ export function WorktreeSetupLog({ target }: WorktreeSetupLogProps) {
   const actions = useIssueActions()
   const [collapsed, setCollapsed] = useState(false)
   const bottom = useRef<HTMLDivElement>(null)
+  const bodyId = useId()
 
   useEffect(() => {
     bottom.current?.scrollIntoView?.({ block: 'end' })
@@ -52,7 +53,11 @@ export function WorktreeSetupLog({ target }: WorktreeSetupLogProps) {
   const visible = open?.phase === 'opening' || open?.phase === 'error' || script !== undefined
   if (!visible || logs.length === 0) {
     if (open?.phase === 'error') {
-      return <pre className="m-3 whitespace-pre-wrap rounded bg-destructive/10 p-2 text-xs text-destructive">{open.message}</pre>
+      return (
+        <pre role="alert" className="m-3 whitespace-pre-wrap rounded bg-destructive/10 p-2 text-xs text-destructive">
+          {open.message}
+        </pre>
+      )
     }
     return null
   }
@@ -65,14 +70,13 @@ export function WorktreeSetupLog({ target }: WorktreeSetupLogProps) {
   else if (script?.status === 'failed') summary = `생성 후 스크립트 실패${script.exitCode !== null ? `(종료 코드 ${script.exitCode})` : ''}`
   else if (script?.status === 'cancelled') summary = '생성 후 스크립트 취소됨'
 
+  // 요약은 live region: 진행은 polite(status), 실패는 즉시(alert) (AX-08)
+  const failed = open?.phase === 'error' || script?.status === 'failed'
+
   return (
     <section className="border-b bg-muted/40" aria-label="준비 로그" data-testid="setup-log">
       <div className="flex items-center gap-2 px-4 py-1.5 text-sm">
-        <span
-          className={
-            open?.phase === 'error' || script?.status === 'failed' ? 'flex-1 font-medium text-destructive' : 'flex-1 font-medium'
-          }
-        >
+        <span role={failed ? 'alert' : 'status'} className={failed ? 'flex-1 font-medium text-destructive' : 'flex-1 font-medium'}>
           {summary}
         </span>
         {running && (
@@ -85,12 +89,12 @@ export function WorktreeSetupLog({ target }: WorktreeSetupLogProps) {
             다시 실행
           </Button>
         )}
-        <Button size="sm" variant="ghost" onClick={() => setCollapsed((c) => !c)}>
+        <Button size="sm" variant="ghost" aria-expanded={!collapsed} aria-controls={bodyId} onClick={() => setCollapsed((c) => !c)}>
           {collapsed ? '로그 보기' : '접기'}
         </Button>
       </div>
       {!collapsed && (
-        <div className="max-h-48 overflow-auto px-4 pb-2 font-mono text-xs">
+        <div id={bodyId} className="max-h-48 overflow-auto px-4 pb-2 font-mono text-xs">
           {logs.map((e, i) => (
             <LogLine key={i} e={e} />
           ))}

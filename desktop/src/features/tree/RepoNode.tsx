@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon } from 'lucide-react'
-import { useMemo } from 'react'
+import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, SettingsIcon } from 'lucide-react'
+import { useId, useMemo } from 'react'
 
 import { normalizePath, renderPath } from '@minmo/api-client'
 import type { SettingsScope } from '@minmo/api-client'
@@ -31,6 +31,7 @@ export function RepoNode({ repo, onOpenSettings }: RepoNodeProps) {
   const map = useUiStore((s) => s.worktreePathMap)
   const online = useSessionStore((s) => s.status === 'online')
   const issues = useIssues(repo.owner, repo.name, expanded)
+  const childrenId = useId()
 
   const entries = useMemo(
     () => issues.issues.map((i) => [i, map[worktreeId(repo.owner, repo.name, i.key)]] as const),
@@ -72,53 +73,68 @@ export function RepoNode({ repo, onOpenSettings }: RepoNodeProps) {
   const preview: PreviewIssue = firstIssue
     ? { owner: repo.owner, repo: repo.name, key: firstIssue.key, number: firstIssue.number, title: firstIssue.title }
     : etcPreview
+  const openSettings = () => onOpenSettings({ kind: 'project', owner: repo.owner, repo: repo.name }, preview)
 
   return (
     <div>
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <button
-            type="button"
-            data-testid={`repo-node-${repo.owner}/${repo.name}`}
-            aria-expanded={expanded}
-            onClick={() => setExpanded(nodeId, !expanded)}
-            className="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-sm hover:bg-accent"
-          >
-            {expanded ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
-            <FolderGit2Icon className="size-3.5 text-muted-foreground" />
-            <span className="truncate">{repo.name}</span>
-          </button>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={() => onOpenSettings({ kind: 'project', owner: repo.owner, repo: repo.name }, preview)}>
-            프로젝트 설정
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-      {expanded && (
-        <div className="ml-4 border-l pl-1">
-          {issues.isError && (
-            <div className="flex items-center gap-2 px-2 py-1 text-xs text-destructive">
-              <span className="flex-1">{githubErrorMessage(issues.error)}</span>
-              <Button size="sm" variant="ghost" onClick={() => void issues.refetch()}>
-                재시도
-              </Button>
-            </div>
-          )}
-          {issues.isLoading && <div className="px-2 py-1 text-xs text-muted-foreground">이슈 불러오는 중…</div>}
-          {entries.map(([issue, entry]) => (
-            <IssueRow
-              key={issue.key}
-              owner={repo.owner}
-              repo={repo.name}
-              issue={issue}
-              hasWorktree={entry !== undefined}
-              pathChanged={changed.has(issue.key)}
-              selected={selectedId === worktreeId(repo.owner, repo.name, issue.key)}
-            />
-          ))}
-        </div>
-      )}
+      <div className="group flex items-center">
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <button
+              type="button"
+              data-testid={`repo-node-${repo.owner}/${repo.name}`}
+              aria-expanded={expanded}
+              aria-controls={childrenId}
+              onClick={() => setExpanded(nodeId, !expanded)}
+              className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-1 text-left text-sm hover:bg-accent"
+            >
+              {expanded ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
+              <FolderGit2Icon className="size-3.5 text-muted-foreground" />
+              <span className="truncate">{repo.name}</span>
+            </button>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onSelect={openSettings}>프로젝트 설정</ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+        {/* 우클릭 메뉴는 키보드로 열 수 없다 → 같은 동작의 버튼을 둔다(AX-01, WCAG 2.1.1) */}
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="프로젝트 설정"
+          title="프로젝트 설정"
+          onClick={openSettings}
+          className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          <SettingsIcon className="size-3.5" />
+        </Button>
+      </div>
+      <div id={childrenId} hidden={!expanded}>
+        {expanded && (
+          <div className="ml-4 border-l pl-1">
+            {issues.isError && (
+              <div className="flex items-center gap-2 px-2 py-1 text-xs text-destructive">
+                <span className="flex-1">{githubErrorMessage(issues.error)}</span>
+                <Button size="sm" variant="ghost" onClick={() => void issues.refetch()}>
+                  재시도
+                </Button>
+              </div>
+            )}
+            {issues.isLoading && <div className="px-2 py-1 text-xs text-muted-foreground">이슈 불러오는 중…</div>}
+            {entries.map(([issue, entry]) => (
+              <IssueRow
+                key={issue.key}
+                owner={repo.owner}
+                repo={repo.name}
+                issue={issue}
+                hasWorktree={entry !== undefined}
+                pathChanged={changed.has(issue.key)}
+                selected={selectedId === worktreeId(repo.owner, repo.name, issue.key)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

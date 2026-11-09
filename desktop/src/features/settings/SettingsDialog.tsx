@@ -183,7 +183,11 @@ function SettingsForm(props: {
               onChange={(e) => setText((t) => ({ ...t, [field]: e.target.value }))}
               spellCheck={false}
             />
-            <p id={`${fieldId(field)}-hint`} className={errors[field] ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+            <p
+              id={`${fieldId(field)}-hint`}
+              role={errors[field] ? 'alert' : undefined}
+              className={errors[field] ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
+            >
               {errors[field] ?? hint}
             </p>
           </div>
@@ -228,10 +232,15 @@ function SettingsForm(props: {
                 rows={5}
                 className="font-mono"
                 aria-invalid={errors.postCreateScript ? true : undefined}
+                aria-describedby={fieldId('script-hint')}
                 onChange={(e) => setScript(e.target.value)}
                 spellCheck={false}
               />
-              <p className={errors.postCreateScript ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+              <p
+                id={fieldId('script-hint')}
+                role={errors.postCreateScript ? 'alert' : undefined}
+                className={errors.postCreateScript ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
+              >
                 {errors.postCreateScript ??
                   `worktree 생성 직후 1회 실행 (${platform === 'win32' ? 'PowerShell' : 'sh'}) · env MINMO_OWNER, MINMO_REPO, MINMO_BRANCH, MINMO_WORKTREE …`}
               </p>
@@ -251,7 +260,11 @@ function SettingsForm(props: {
         </div>
       )}
 
-      {formError && <p className="text-sm text-destructive">{formError}</p>}
+      {formError && (
+        <p role="alert" className="text-sm text-destructive">
+          {formError}
+        </p>
+      )}
       {offline && <p className="text-sm text-muted-foreground">서버 미연결 — 설정을 편집할 수 없습니다</p>}
 
       <DialogFooter>

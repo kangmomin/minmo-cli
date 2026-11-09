@@ -1,5 +1,5 @@
 import { StarIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
@@ -20,6 +20,21 @@ export interface IssueRowProps {
   selected: boolean
 }
 
+const PATH_CHANGED_TEXT = '설정의 worktree 경로가 바뀌었습니다. 기존 worktree 는 이동하지 않습니다.'
+
+/** 삭제 확인 문구의 개수. null = git 검사 실패로 개수 불명(F-4) */
+function countText(label: string, n: number | null) {
+  return n === null ? (
+    <>
+      {label} <strong>확인 불가</strong>(git 검사 실패)
+    </>
+  ) : (
+    <>
+      {label} <strong>{n}</strong>개
+    </>
+  )
+}
+
 /** 이슈 행: 클릭 = 열기, ● = 로컬 worktree 있음, 닫힘·경로 변경 배지, 컨텍스트 메뉴 "worktree 삭제" */
 export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selected }: IssueRowProps) {
   const actions = useIssueActions()
@@ -28,6 +43,10 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
   const [confirm, setConfirm] = useState<DeleteCheck | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const pathChangedId = useId()
+  const deleteReasonId = useId()
+  // EC-16: 비활성 사유는 툴팁(마우스 전용)이 아니라 항목 안에 보이고 aria-describedby 로도 읽힌다(AX-04)
+  const deleteDisabledReason = isEtc ? '고정 이슈는 삭제할 수 없음' : !hasWorktree ? 'worktree 가 없습니다' : null
 
   async function remove(confirmed: boolean) {
     setDeleting(true)
@@ -51,6 +70,7 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
             type="button"
             data-testid={`issue-row-${issue.key}`}
             aria-current={selected ? 'true' : undefined}
+            aria-describedby={pathChanged ? pathChangedId : undefined}
             onClick={() => void actions.open(target)}
             className={cn(
               'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-sm hover:bg-accent',
@@ -58,9 +78,16 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
               issue.state === 'closed' && 'text-muted-foreground',
             )}
           >
-            <span className={cn('w-2 text-center text-xs', hasWorktree ? 'text-emerald-600' : 'text-transparent')} aria-label={hasWorktree ? 'worktree 있음' : undefined}>
-              ●
-            </span>
+            {/* ● 기호 자체는 읽지 않고 의미만 이름으로 전달한다(AX-05) */}
+            {hasWorktree ? (
+              <span role="img" aria-label="worktree 있음" className="w-2 text-center text-xs text-emerald-600">
+                ●
+              </span>
+            ) : (
+              <span aria-hidden="true" className="w-2 text-center text-xs text-transparent">
+                ●
+              </span>
+            )}
             {isEtc ? (
               <>
                 <StarIcon className="size-3.5 fill-amber-400 text-amber-500" />
@@ -80,31 +107,32 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
                     경로 변경됨
                   </Badge>
                 </TooltipTrigger>
-                <TooltipContent>설정의 worktree 경로가 바뀌었습니다. 기존 worktree 는 이동하지 않습니다.</TooltipContent>
+                <TooltipContent>{PATH_CHANGED_TEXT}</TooltipContent>
               </Tooltip>
             )}
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onSelect={() => void actions.open(target)}>열기</ContextMenuItem>
-          {isEtc ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <ContextMenuItem disabled variant="destructive">
-                    worktree 삭제
-                  </ContextMenuItem>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>고정 이슈는 삭제할 수 없음</TooltipContent>
-            </Tooltip>
+          {deleteDisabledReason ? (
+            <ContextMenuItem disabled variant="destructive" aria-label="worktree 삭제" aria-describedby={deleteReasonId}>
+              worktree 삭제
+              <span id={deleteReasonId} className="ml-auto pl-3 text-xs">
+                {deleteDisabledReason}
+              </span>
+            </ContextMenuItem>
           ) : (
-            <ContextMenuItem variant="destructive" disabled={!hasWorktree} onSelect={() => void remove(false)}>
+            <ContextMenuItem variant="destructive" onSelect={() => void remove(false)}>
               worktree 삭제
             </ContextMenuItem>
           )}
         </ContextMenuContent>
       </ContextMenu>
+      {pathChanged && (
+        <span id={pathChangedId} className="sr-only">
+          {PATH_CHANGED_TEXT}
+        </span>
+      )}
 
       <Dialog
         open={confirm !== null || deleteError !== null}
@@ -124,8 +152,8 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
           </DialogHeader>
           {confirm && (
             <p className="text-sm">
-              미커밋 변경 <strong>{confirm.uncommitted}</strong>개, 미push 커밋 <strong>{confirm.unpushed}</strong>개가 있습니다. 삭제하면
-              잃게 됩니다. 계속할까요?
+              {countText('미커밋 변경', confirm.uncommitted)}, {countText('미push 커밋', confirm.unpushed)}. 삭제하면 이 변경을 잃게 됩니다.
+              계속할까요?
             </p>
           )}
           {deleteError && <pre className="whitespace-pre-wrap rounded bg-muted p-2 text-xs text-destructive">{deleteError}</pre>}

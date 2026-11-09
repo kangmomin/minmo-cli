@@ -7,7 +7,7 @@ async function openNotes(page: import('@playwright/test').Page) {
   await expandWidgets(page)
   await page.getByTestId('issue-row-42').click()
   await page.getByRole('tab', { name: '메모' }).click()
-  return page.getByLabel('메모')
+  return page.getByRole('textbox', { name: '메모' })
 }
 
 test('입력 후 1초 → PUT(baseUpdatedAt:null) → 저장됨', async ({ page }) => {
@@ -33,7 +33,7 @@ test('409 → "다른 기기에서 수정됨" 모달 → [서버 내용 불러�
   await editor.fill('mine')
   await expect(page.getByText('다른 기기에서 수정됨')).toBeVisible({ timeout: 5000 })
   await page.getByRole('button', { name: '서버 내용 불러오기' }).click()
-  await expect(page.getByLabel('메모')).toHaveValue('server body')
+  await expect(page.getByRole('textbox', { name: '메모' })).toHaveValue('server body')
 })
 
 test('서버 미연결 → OfflineBanner + 메모 편집 비활성', async ({ page }) => {
@@ -46,5 +46,5 @@ test('서버 미연결 → OfflineBanner + 메모 편집 비활성', async ({ pa
   down = true
   await editor.fill('offline edit')
   await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 5000 })
-  await expect(page.getByLabel('메모')).toBeDisabled()
+  await expect(page.getByRole('textbox', { name: '메모' })).toBeDisabled()
 })

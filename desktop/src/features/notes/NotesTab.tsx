@@ -50,6 +50,8 @@ export function NotesTab({ owner, repo, issueKey }: NotesTabProps) {
         <span
           data-testid="notes-status"
           data-state={n.saveState.kind}
+          // 저장 진행·완료는 polite, 실패는 즉시 알린다(AX)
+          role={n.saveState.kind === 'failed' ? 'alert' : 'status'}
           className={n.saveState.kind === 'failed' ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
         >
           {statusText(n.saveState)}

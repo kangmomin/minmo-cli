@@ -286,3 +286,20 @@ describe('UI State "세션 없음/401" — 미전송 본문 보존·같은 사�
     await waitFor(() => expect(el2).toHaveValue('pending'))
   })
 })
+
+describe('AX 저장 상태 live region', () => {
+  it('notes-status 는 role=status, 실패하면 role=alert', async () => {
+    const t = setup({
+      putNotes: async () => {
+        throw apiError(400, 'invalid_issue_key')
+      },
+    })
+    const el = await editor()
+    expect(status()).toHaveAttribute('role', 'status')
+    type(el, 'x')
+    await advance(1100)
+    await waitFor(() => expect(status()).toHaveAttribute('data-state', 'failed'))
+    expect(status()).toHaveAttribute('role', 'alert')
+    expect(t.api.putNotes).toHaveBeenCalled()
+  })
+})

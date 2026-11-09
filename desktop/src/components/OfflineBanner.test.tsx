@@ -2,7 +2,7 @@
 // (network_error·모든 5xx 1회 → offline, healthz 10초 폴링, [다시 연결], healthz 200 → 즉시 해제)
 //
 // 접근성 계약(6.2 구현이 유지): 배너 data-testid="offline-banner", 버튼 "다시 연결".
-import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Health } from '@minmo/api-client'
@@ -130,5 +130,15 @@ describe('CT-33 OfflineBanner', () => {
     await waitFor(() => expect(api.healthz.mock.calls.length).toBeGreaterThan(before))
     await waitFor(() => expect(screen.queryByTestId('offline-banner')).toBeNull())
     expect(useSessionStore.getState().status).toBe('online')
+  })
+})
+
+describe('AX OfflineBanner live region 상시 유지', () => {
+  it('online 이어도 빈 role=status 컨테이너가 있고, offline 이 되면 그 안에 배너가 들어간다', async () => {
+    setup(networkDown)
+    const live = screen.getByRole('status')
+    expect(live).toBeEmptyDOMElement()
+    act(() => handleApiError(apiError(0, 'network_error')))
+    expect(await within(live).findByTestId('offline-banner')).toBeInTheDocument()
   })
 })

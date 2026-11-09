@@ -208,3 +208,49 @@ describe('EC-17 서버 미연결 → 설정 편집 비활성', () => {
     expect(screen.getByRole('button', { name: '저장' })).toBeDisabled()
   })
 })
+
+describe('AX 오류 안내 연결', () => {
+  it('스크립트 내용 textarea 는 안내 문단과 aria-describedby 로 연결, 오류는 role=alert', async () => {
+    const { user } = setup({
+      scope: ORG,
+      put: async () => {
+        throw apiError(400, 'script_too_large', { field: 'postCreateScript' })
+      },
+    })
+    await field('브랜치 템플릿')
+    await user.click(screen.getByRole('radio', { name: '직접 입력' }))
+    const script = await field('스크립트 내용')
+    expect(script).toHaveAccessibleDescription(/worktree 생성 직후 1회 실행/)
+    await replace(user, script, 'echo hi')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(script).toHaveAttribute('aria-invalid', 'true'))
+    const alert = screen.getByRole('alert')
+    expect(script.getAttribute('aria-describedby')).toContain(alert.id)
+  })
+
+  it('field 없는 저장 실패(formError) 는 role=alert', async () => {
+    const { user } = setup({
+      scope: ORG,
+      put: async () => {
+        throw apiError(429, 'http_error')
+      },
+    })
+    await field('브랜치 템플릿')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('저장 실패(http_error)')
+  })
+
+  it('텍스트 필드 오류도 role=alert 로 알린다', async () => {
+    const { user } = setup({
+      scope: ORG,
+      put: async () => {
+        throw apiError(400, 'invalid_template', { field: 'etcBranchName' })
+      },
+    })
+    const etc = await field('기타 브랜치명')
+    await replace(user, etc, 'a b')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    const alert = await screen.findByRole('alert')
+    expect(etc.getAttribute('aria-describedby')).toContain(alert.id)
+  })
+})
