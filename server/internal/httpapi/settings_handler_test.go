@@ -215,3 +215,20 @@ func TestSettings_PathParams_CT32(t *testing.T) {
 		t.Errorf("effective across casing %d %v", status, m)
 	}
 }
+
+// Surface MaxBytes: settings PUT 본문은 1 MiB 초과 시 413 payload_too_large (전역·org)
+func TestSettings_PayloadTooLarge(t *testing.T) {
+	s := testutil.NewTestServer(t)
+	token, _ := s.Login(githubmock.CodeOK)
+	const limit = 1 << 20
+	prefix, suffix := `{"etcBranchName":"`, `"}`
+	// 전체 요청 바이트가 정확히 limit+1 이 되도록 문자열 값을 채운다
+	body := prefix + strings.Repeat("a", limit+1-len(prefix)-len(suffix)) + suffix
+	if len(body) != limit+1 {
+		t.Fatalf("body len %d", len(body))
+	}
+	for _, path := range []string{"/settings", "/orgs/acme/settings"} {
+		status, m := s.DoJSON("PUT", path, token, body)
+		expectErr(t, status, m, 413, "payload_too_large", "")
+	}
+}
