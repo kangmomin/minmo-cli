@@ -30,6 +30,7 @@ func Get(ctx context.Context, db *sql.DB, userID string, scope Scope, owner, rep
 }
 
 // Upsert 는 행 전체를 in 으로 교체(nil 은 NULL 저장)하고 저장된 행을 반환한다. 검증은 호출자 책임.
+// [Assumption] settings updatedAt 은 now 그대로다(단조 +1ms 는 충돌 판정에 쓰는 notes 만 적용).
 func Upsert(ctx context.Context, db *sql.DB, userID string, scope Scope, owner, repo string, in Input, now time.Time) (Record, error) {
 	row := db.QueryRowContext(ctx, `
 		INSERT INTO settings (user_id, scope, owner, repo,

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/kangmomin/minmo-cli/server/internal/settings"
-	"github.com/kangmomin/minmo-cli/server/internal/timefmt"
 )
 
 var reOwnerRepo = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
@@ -44,12 +43,7 @@ type settingsRecordJSON struct {
 }
 
 func toRecordJSON(rec settings.Record) settingsRecordJSON {
-	out := settingsRecordJSON{Input: rec.Input}
-	if rec.UpdatedAt != nil {
-		ts := timefmt.FormatMs(*rec.UpdatedAt)
-		out.UpdatedAt = &ts
-	}
-	return out
+	return settingsRecordJSON{Input: rec.Input, UpdatedAt: formatAt(rec.UpdatedAt)}
 }
 
 // E6 · E8 · E10

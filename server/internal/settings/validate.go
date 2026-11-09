@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -60,7 +61,7 @@ func checkBranchTemplate(v string) string {
 		return codeTemplate
 	}
 	tokens, ok := parseTokens(v)
-	if !ok || !allAllowed(tokens, branchTokens) || !contains(tokens, "number") {
+	if !ok || !allAllowed(tokens, branchTokens) || !slices.Contains(tokens, "number") {
 		return codeTemplate
 	}
 	if !isValidRef(branchSample.Replace(v)) {
@@ -81,7 +82,7 @@ func checkWorktreePath(v string) string {
 		return codePathTemplate
 	}
 	tokens, ok := parseTokens(v)
-	if !ok || !allAllowed(tokens, worktreePathTokens) || !(contains(tokens, "branch") || contains(tokens, "key")) {
+	if !ok || !allAllowed(tokens, worktreePathTokens) || !(slices.Contains(tokens, "branch") || slices.Contains(tokens, "key")) {
 		return codePathTemplate
 	}
 	return ""
@@ -106,6 +107,7 @@ func checkPostCreateScript(v string) string {
 }
 
 // parseTokens 는 `{name}` 토큰 이름 목록을 반환한다. 닫히지 않은 `{` 가 있으면 ok=false.
+// [Assumption] 홀로 닫는 `}` 는 허용한다 — 계약은 닫히지 않은 `{`·미지 토큰만 금지한다.
 func parseTokens(s string) (tokens []string, ok bool) {
 	for {
 		open := strings.IndexByte(s, '{')
@@ -128,15 +130,6 @@ func allAllowed(tokens []string, allowed map[string]bool) bool {
 		}
 	}
 	return true
-}
-
-func contains(tokens []string, name string) bool {
-	for _, t := range tokens {
-		if t == name {
-			return true
-		}
-	}
-	return false
 }
 
 // isValidRef 는 계약의 git ref 규칙표를 만족하는지 판정한다.

@@ -25,6 +25,7 @@ type Config struct {
 }
 
 // defaultGitHubTimeout 은 cfg.HTTPClient 가 없을 때 GitHub 호출 제한 시간이다.
+// [Assumption] 계약에 값이 없어 15초로 둔다 — 콜백 응답이 GitHub 지연에 무기한 묶이지 않게 하려는 상한.
 const defaultGitHubTimeout = 15 * time.Second
 
 type api struct {
