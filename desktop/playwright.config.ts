@@ -4,6 +4,8 @@ import { defineConfig, devices } from '@playwright/test'
 // 서버·GitHub 응답은 각 spec 이 page.route 로 계약 fixture(contracts/fixtures)를 돌려준다.
 export default defineConfig({
   testDir: './e2e',
+  // 실연결 스모크는 실제 서버가 필요하다 → playwright.live.config.ts(npm run e2e:live)로만 실행
+  testIgnore: ['**/live.spec.ts'],
   fullyParallel: false,
   workers: 1,
   retries: 0,
