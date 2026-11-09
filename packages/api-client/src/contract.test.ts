@@ -191,6 +191,26 @@ describe('contract: 에러 → ApiError (CT-21)', () => {
     expect(err).toBeInstanceOf(ApiError)
     expect(err.code).toBe('network_error')
   })
+
+  // v2.5: 미지 코드·비JSON 4xx 는 http_error — server_error(=offline 후보)로 분류하지 않는다
+  it('미지 코드 4xx → http_error (CT-21 v2.5)', async () => {
+    const { api } = client(() => json(400, { error: 'some_future_code' }))
+    const err = (await api.me().catch((e: unknown) => e)) as ApiError
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err).toMatchObject({ status: 400, code: 'http_error' })
+  })
+
+  it('비JSON 4xx(프록시 429 등) → http_error (CT-21 v2.5)', async () => {
+    const { api } = client(() => new Response('<html>too many</html>', { status: 429, headers: { 'content-type': 'text/html' } }))
+    const err = (await api.me().catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 429, code: 'http_error' })
+  })
+
+  it('E1 503 github_oauth_not_configured 는 코드 그대로 전달 (CT-38 전제)', async () => {
+    const { api } = client(() => json(503, { error: 'github_oauth_not_configured' }), null)
+    const err = (await api.startLogin().catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 503, code: 'github_oauth_not_configured' })
+  })
 })
 
 describe('contract: 인증 헤더·토큰 override·무인증 경로', () => {
