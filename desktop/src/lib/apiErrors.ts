@@ -4,9 +4,16 @@ import { ApiError } from '@minmo/api-client'
 
 import { useSessionStore } from '../store/session'
 
-/** network_error / server_error / 모든 5xx(internal 포함) — UI State "서버 미연결" */
+/**
+ * UI State "서버 미연결"(계약 v2.5): offline 판정은 code 가 아닌 status 기준.
+ * network_error 또는 status>=500(internal 포함). 4xx 는 코드와 무관하게 offline 아님.
+ * 예외: 503 github_oauth_not_configured(E1) — 서버는 응답 중이므로 전용 문구만 표시한다(CT-38).
+ */
 export function isOfflineError(err: unknown): boolean {
-  return err instanceof ApiError && (err.code === 'network_error' || err.code === 'server_error' || err.status >= 500)
+  if (!(err instanceof ApiError)) return false
+  if (err.code === 'network_error') return true
+  if (err.status === 503 && err.code === 'github_oauth_not_configured') return false
+  return err.status >= 500
 }
 
 export function isUnauthorized(err: unknown): boolean {
@@ -15,8 +22,8 @@ export function isUnauthorized(err: unknown): boolean {
 
 // 서버 API 오류 공통 처리 (UI State Contract):
 // - 401 unauthorized → 세션 삭제(clearSession) + queryClient 가 있으면 서버 읽기 캐시 삭제
-// - network_error / server_error / 모든 5xx(internal 포함) → status 'offline'
-// - 그 외 4xx → 상태 변화 없음
+// - isOfflineError(network_error / 5xx, E1 503 not_configured 제외) → status 'offline'
+// - 그 외(4xx 전부) → 상태 변화 없음
 export function handleApiError(err: unknown, opts?: { queryClient?: QueryClient }): void {
   if (!(err instanceof ApiError)) return
   if (isUnauthorized(err)) {

@@ -296,3 +296,80 @@ describe('CT-04 세션 없음/401 → 로그인 화면, 세션·서버 읽기 �
     expect(t.result.current.phase).toBe('anonymous')
   })
 })
+
+describe('CT-38(v2.5) E1 503 github_oauth_not_configured 는 offline 아님', () => {
+  it('전용 문구만 표시, status online 유지(배너 없음)', async () => {
+    useSessionStore.setState({ status: 'online' })
+    const t = setup({
+      startLogin: async () => {
+        throw apiError(503, 'github_oauth_not_configured')
+      },
+    })
+    await act(async () => {
+      await t.result.current.startLogin().catch(() => undefined)
+    })
+    await waitFor(() => expect(t.result.current.error?.message).toBe('서버에 GitHub OAuth가 설정되지 않았습니다(MINMO_GITHUB_CLIENT_ID)'))
+    expect(useSessionStore.getState().status).toBe('online')
+  })
+
+  it('E1 의 다른 503(server_error) 은 offline', async () => {
+    useSessionStore.setState({ status: 'online' })
+    const t = setup({
+      startLogin: async () => {
+        throw apiError(503, 'server_error')
+      },
+    })
+    await act(async () => {
+      await t.result.current.startLogin().catch(() => undefined)
+    })
+    await waitFor(() => expect(useSessionStore.getState().status).toBe('offline'))
+  })
+
+  it('E1 미지 4xx(http_error) → online 유지 + 로그인 실패 문구', async () => {
+    useSessionStore.setState({ status: 'online' })
+    const t = setup({
+      startLogin: async () => {
+        throw apiError(429, 'http_error')
+      },
+    })
+    await act(async () => {
+      await t.result.current.startLogin().catch(() => undefined)
+    })
+    await waitFor(() => expect(t.result.current.error?.message).toContain('로그인 실패(http_error)'))
+    expect(useSessionStore.getState().status).toBe('online')
+  })
+})
+
+describe('CT-39(v2.5) 딥링크는 minmo://auth (path 없음 또는 /) 만 처리', () => {
+  it.each([
+    'minmo://evil?session=cand-token&state=s1',
+    'minmo://auth/x?session=cand-token&state=s1',
+    'minmo://AUTHX?session=cand-token&state=s1',
+    'other://auth?session=cand-token&state=s1',
+  ])('%s → 무시(state 가 맞아도), pendingLogin 유지', async (link) => {
+    const t = setup()
+    await startPending(t)
+    act(() => t.fake.emitDeepLink(link))
+    await flush()
+    expect(t.api.me).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().token).toBeNull()
+    expect(useSessionStore.getState().pendingLogin?.state).toBe('s1')
+  })
+
+  it('다른 host 의 error= 도 무시', async () => {
+    const t = setup()
+    await startPending(t)
+    act(() => t.fake.emitDeepLink('minmo://evil?error=access_denied&state=s1'))
+    await flush()
+    expect(t.result.current.error).toBeNull()
+    expect(useSessionStore.getState().pendingLogin?.state).toBe('s1')
+  })
+
+  it('minmo://auth/?session=… (path "/") 는 처리', async () => {
+    const t = setup()
+    await startPending(t)
+    act(() => t.fake.emitDeepLink('minmo://auth/?session=cand-token&state=s1'))
+    await waitFor(() => expect(t.result.current.phase).toBe('authenticated'))
+    expect(t.api.me).toHaveBeenCalledWith({ token: 'cand-token' })
+  })
+})

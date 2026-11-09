@@ -46,6 +46,17 @@ export function deepLinkErrorMessage(code: string): string {
   }
 }
 
+/** 딥링크 계약 `minmo://auth?…` — MINMO_DEEP_LINK 기본값 전제(env 로 바꾸면 여기도 함께 바꿔야 함) */
+function isAuthDeepLink(url: URL): boolean {
+  return (
+    url.protocol === 'minmo:' &&
+    url.host.toLowerCase() === 'auth' &&
+    !url.username &&
+    !url.password &&
+    (url.pathname === '' || url.pathname === '/')
+  )
+}
+
 /** E1 authorizeUrl 은 https 만 연다. loopback http(E2E githubmock)만 예외 */
 function isAllowedAuthorizeUrl(raw: string): boolean {
   try {
@@ -214,7 +225,8 @@ export function useAuthController(): void {
       } catch {
         return
       }
-      if (url.protocol !== 'minmo:') return
+      // CT-39: minmo://auth (path 없음 또는 /) 만 — 다른 host/path 는 session/state 가 맞아도 무시
+      if (!isAuthDeepLink(url)) return
       const params = url.searchParams
       const state = params.get('state')
       const session = params.get('session')

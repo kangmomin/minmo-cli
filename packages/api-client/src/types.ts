@@ -38,7 +38,7 @@ export type ErrorCode =
   | 'body_too_large'
   | 'invalid_base_updated_at'
   | 'conflict'
-export type ApiErrorCode = ErrorCode | 'network_error' | 'server_error'
+export type ApiErrorCode = ErrorCode | 'network_error' | 'server_error' | 'http_error'
 export type DeepLinkError = 'invalid_state' | 'access_denied' | 'invalid_code' | 'missing_code' | 'github_unavailable' | 'internal'
 
 export type SettingsScope =

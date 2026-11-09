@@ -61,13 +61,18 @@ const ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'conflict',
 ])
 
-// body 가 비JSON·미지 코드일 때. 계약은 5xx → server_error 만 정한다. 4xx 는 status 로 추정한다.
-function fallbackCode(status: number): ApiErrorCode {
-  if (status === 401) return 'unauthorized'
-  if (status === 404) return 'not_found'
-  if (status === 405) return 'method_not_allowed'
-  if (status === 413) return 'payload_too_large'
-  return 'server_error'
+// body.error 가 ErrorCode 가 아닐 때(계약 v2.5 ApiError.code 규칙).
+// 코드가 아예 없는(비JSON 등) 401/404/405/413 만 status 로 추정한다 — 세션 만료 판정·라우터 오류용.
+// 5xx → server_error, 나머지 4xx(미지 코드·프록시 429 등) → http_error. offline 판정은 code 가 아닌 status 기준이다.
+function fallbackCode(status: number, hasCode: boolean): ApiErrorCode {
+  if (status >= 500) return 'server_error'
+  if (!hasCode) {
+    if (status === 401) return 'unauthorized'
+    if (status === 404) return 'not_found'
+    if (status === 405) return 'method_not_allowed'
+    if (status === 413) return 'payload_too_large'
+  }
+  return 'http_error'
 }
 
 async function toApiError(res: Response): Promise<ApiError> {
@@ -80,7 +85,7 @@ async function toApiError(res: Response): Promise<ApiError> {
   }
   const obj = body && typeof body === 'object' ? (body as Record<string, unknown>) : undefined
   const raw = typeof obj?.error === 'string' ? obj.error : undefined
-  const code: ApiErrorCode = raw !== undefined && ERROR_CODES.has(raw) ? (raw as ErrorCode) : fallbackCode(res.status)
+  const code: ApiErrorCode = raw !== undefined && ERROR_CODES.has(raw) ? (raw as ErrorCode) : fallbackCode(res.status, raw !== undefined)
   const field = typeof obj?.field === 'string' ? obj.field : undefined
   const message = typeof obj?.message === 'string' ? obj.message : undefined
   let current: Notes | undefined

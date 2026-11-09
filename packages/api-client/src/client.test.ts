@@ -152,6 +152,30 @@ describe('CT-21 비2xx → ApiError 변환 세부', () => {
     expect(err).toMatchObject({ status: 500, code: 'server_error' })
   })
 
+  // v2.5 ApiError.code 규칙: 비JSON 401/404/405/413 은 status 로 추정, 그 외 4xx 는 http_error, 5xx 는 server_error
+  it.each([
+    [401, 'unauthorized'],
+    [404, 'not_found'],
+    [405, 'method_not_allowed'],
+    [413, 'payload_too_large'],
+  ] as const)('비JSON %i → %s 로 추정 (v2.5)', async (status, code) => {
+    const { api } = setup(() => new Response('<html>x</html>', { status, headers: { 'content-type': 'text/html' } }))
+    const err = (await api.me().catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status, code })
+  })
+
+  it.each([400, 403, 409, 422, 429])('미지 코드 JSON %i → http_error (v2.5)', async (status) => {
+    const { api } = setup(() => json(status, { error: 'future_code' }))
+    const err = (await api.me().catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status, code: 'http_error' })
+  })
+
+  it('비JSON 502 → server_error (v2.5)', async () => {
+    const { api } = setup(() => new Response('bad gateway', { status: 502 }))
+    const err = (await api.me().catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 502, code: 'server_error' })
+  })
+
   it('409 conflict 의 current 는 flat body·updatedAt 에서 만든다 (행 없음: "" / null)', async () => {
     const { api } = setup(() => json(409, { error: 'conflict', body: '', updatedAt: null }))
     const err = (await api.putNotes('o', 'r', '1', { body: 'x', baseUpdatedAt: '2026-11-09T12:00:00.000Z' }).catch((e: unknown) => e)) as ApiError
