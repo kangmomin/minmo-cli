@@ -26,7 +26,11 @@ async fn run(
         // 자격 증명 프롬프트로 멈추지 않도록(실패로 끝나게) 한다
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GH_PROMPT_DISABLED", "1")
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -39,10 +43,14 @@ async fn run(
     #[cfg(windows)]
     cmd.creation_flags(super::CREATE_NO_WINDOW);
 
-    let mut child = cmd.spawn().map_err(|e| format!("{program} 실행 실패: {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("{program} 실행 실패: {e}"))?;
     if let Some(input) = stdin {
         if let Some(mut pipe) = child.stdin.take() {
-            pipe.write_all(input.as_bytes()).await.map_err(|e| e.to_string())?;
+            pipe.write_all(input.as_bytes())
+                .await
+                .map_err(|e| e.to_string())?;
             drop(pipe);
         }
     }
@@ -76,8 +84,14 @@ pub async fn gh_run(
 /// gh 설치 + `gh auth status` 성공 여부 (EC-01)
 #[tauri::command]
 pub async fn gh_available() -> bool {
-    run("gh", &["auth".to_string(), "status".to_string()], None, None, None)
-        .await
-        .map(|r| r.code == 0)
-        .unwrap_or(false)
+    run(
+        "gh",
+        &["auth".to_string(), "status".to_string()],
+        None,
+        None,
+        None,
+    )
+    .await
+    .map(|r| r.code == 0)
+    .unwrap_or(false)
 }

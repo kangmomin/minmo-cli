@@ -37,7 +37,11 @@ struct ScriptLog {
 }
 
 fn safe_name(run_id: &str) -> String {
-    run_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(64).collect()
+    run_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(64)
+        .collect()
 }
 
 fn write_script(run_id: &str, script: &str) -> Result<PathBuf, String> {
@@ -65,7 +69,14 @@ fn write_script(run_id: &str, script: &str) -> Result<PathBuf, String> {
 fn build_command(path: &PathBuf, cwd: &str, env: &HashMap<String, String>) -> Command {
     let mut cmd = if cfg!(windows) {
         let mut c = Command::new("powershell.exe");
-        c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]).arg(path);
+        c.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(path);
         c
     } else {
         let mut c = Command::new("sh");
@@ -91,7 +102,12 @@ fn build_command(path: &PathBuf, cwd: &str, env: &HashMap<String, String>) -> Co
     cmd
 }
 
-fn pump<R: std::io::Read + Send + 'static>(app: AppHandle, run_id: String, stream: &'static str, r: R) -> std::thread::JoinHandle<()> {
+fn pump<R: std::io::Read + Send + 'static>(
+    app: AppHandle,
+    run_id: String,
+    stream: &'static str,
+    r: R,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(r);
         let mut buf = Vec::new();
@@ -100,8 +116,17 @@ fn pump<R: std::io::Read + Send + 'static>(app: AppHandle, run_id: String, strea
             match reader.read_until(b'\n', &mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    let line = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
-                    let _ = app.emit("script-log", ScriptLog { run_id: run_id.clone(), stream, line });
+                    let line = String::from_utf8_lossy(&buf)
+                        .trim_end_matches(['\r', '\n'])
+                        .to_string();
+                    let _ = app.emit(
+                        "script-log",
+                        ScriptLog {
+                            run_id: run_id.clone(),
+                            stream,
+                            line,
+                        },
+                    );
                 }
             }
         }
@@ -111,7 +136,9 @@ fn pump<R: std::io::Read + Send + 'static>(app: AppHandle, run_id: String, strea
 fn kill_tree(pid: u32) {
     if cfg!(windows) {
         let mut c = Command::new("taskkill");
-        c.args(["/PID", &pid.to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null());
+        c.args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -123,7 +150,10 @@ fn kill_tree(pid: u32) {
         let _ = Command::new("kill").args(["-TERM", "--", &group]).status();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(3));
-            let _ = Command::new("kill").args(["-KILL", "--", &group]).stderr(Stdio::null()).status();
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", &group])
+                .stderr(Stdio::null())
+                .status();
         });
     }
 }
@@ -137,17 +167,35 @@ pub async fn script_run(
     script: String,
     env: HashMap<String, String>,
 ) -> Result<ScriptRunResult, String> {
-    if state.cancelled.lock().map_err(|e| e.to_string())?.remove(&run_id) {
-        return Ok(ScriptRunResult { exit_code: None, cancelled: true });
+    if state
+        .cancelled
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&run_id)
+    {
+        return Ok(ScriptRunResult {
+            exit_code: None,
+            cancelled: true,
+        });
     }
     let path = write_script(&run_id, &script)?;
     let mut child = build_command(&path, &cwd, &env)
         .spawn()
         .map_err(|e| format!("스크립트 실행 실패: {e}"))?;
-    state.running.lock().map_err(|e| e.to_string())?.insert(run_id.clone(), child.id());
+    state
+        .running
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(run_id.clone(), child.id());
 
-    let out = child.stdout.take().map(|s| pump(app.clone(), run_id.clone(), "stdout", s));
-    let err = child.stderr.take().map(|s| pump(app.clone(), run_id.clone(), "stderr", s));
+    let out = child
+        .stdout
+        .take()
+        .map(|s| pump(app.clone(), run_id.clone(), "stdout", s));
+    let err = child
+        .stderr
+        .take()
+        .map(|s| pump(app.clone(), run_id.clone(), "stderr", s));
 
     let status = tauri::async_runtime::spawn_blocking(move || {
         let st = child.wait();
@@ -163,20 +211,43 @@ pub async fn script_run(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string());
 
-    state.running.lock().map_err(|e| e.to_string())?.remove(&run_id);
+    state
+        .running
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&run_id);
     let _ = std::fs::remove_file(&path);
-    let cancelled = state.cancelled.lock().map_err(|e| e.to_string())?.remove(&run_id);
+    let cancelled = state
+        .cancelled
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&run_id);
     let status = status?;
     if cancelled {
-        return Ok(ScriptRunResult { exit_code: None, cancelled: true });
+        return Ok(ScriptRunResult {
+            exit_code: None,
+            cancelled: true,
+        });
     }
-    Ok(ScriptRunResult { exit_code: Some(status.code().unwrap_or(-1)), cancelled: false })
+    Ok(ScriptRunResult {
+        exit_code: Some(status.code().unwrap_or(-1)),
+        cancelled: false,
+    })
 }
 
 #[tauri::command]
 pub fn script_cancel(state: State<'_, ScriptState>, run_id: String) -> Result<(), String> {
-    state.cancelled.lock().map_err(|e| e.to_string())?.insert(run_id.clone());
-    let pid = state.running.lock().map_err(|e| e.to_string())?.get(&run_id).copied();
+    state
+        .cancelled
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(run_id.clone());
+    let pid = state
+        .running
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&run_id)
+        .copied();
     if let Some(pid) = pid {
         kill_tree(pid);
     }

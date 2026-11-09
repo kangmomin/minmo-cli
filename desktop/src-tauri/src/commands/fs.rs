@@ -36,7 +36,10 @@ pub fn remove_dir(app: AppHandle, path: String) -> Result<(), String> {
     if !p.is_absolute() {
         return Err(format!("절대 경로만 삭제할 수 있습니다: {path}"));
     }
-    let depth = p.components().filter(|c| matches!(c, Component::Normal(_))).count();
+    let depth = p
+        .components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .count();
     if depth < 3 {
         return Err(format!("너무 상위 경로라 삭제하지 않습니다: {path}"));
     }

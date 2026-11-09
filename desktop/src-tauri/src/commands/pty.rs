@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -62,9 +62,20 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 }
 
 #[tauri::command]
-pub fn pty_spawn(app: AppHandle, state: State<'_, PtyState>, cwd: String, cols: u16, rows: u16) -> Result<String, String> {
+pub fn pty_spawn(
+    app: AppHandle,
+    state: State<'_, PtyState>,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+) -> Result<String, String> {
     let pair = native_pty_system()
-        .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(err)?;
     let mut cmd = CommandBuilder::new(default_shell());
     cmd.cwd(&cwd);
@@ -87,35 +98,57 @@ pub fn pty_spawn(app: AppHandle, state: State<'_, PtyState>, cwd: String, cols: 
                     pending.extend_from_slice(&buf[..n]);
                     let text = take_utf8(&mut pending);
                     if !text.is_empty() {
-                        let _ = app.emit("pty-data", PtyData { id: emit_id.clone(), data: text });
+                        let _ = app.emit(
+                            "pty-data",
+                            PtyData {
+                                id: emit_id.clone(),
+                                data: text,
+                            },
+                        );
                     }
                 }
             }
         }
     });
 
-    state
-        .sessions
-        .lock()
-        .map_err(err)?
-        .insert(id.clone(), PtySession { master: pair.master, writer, child, cwd });
+    state.sessions.lock().map_err(err)?.insert(
+        id.clone(),
+        PtySession {
+            master: pair.master,
+            writer,
+            child,
+            cwd,
+        },
+    );
     Ok(id)
 }
 
 #[tauri::command]
 pub fn pty_write(state: State<'_, PtyState>, id: String, data: String) -> Result<(), String> {
     let mut sessions = state.sessions.lock().map_err(err)?;
-    let s = sessions.get_mut(&id).ok_or_else(|| format!("pty {id} 없음"))?;
+    let s = sessions
+        .get_mut(&id)
+        .ok_or_else(|| format!("pty {id} 없음"))?;
     s.writer.write_all(data.as_bytes()).map_err(err)?;
     s.writer.flush().map_err(err)
 }
 
 #[tauri::command]
-pub fn pty_resize(state: State<'_, PtyState>, id: String, cols: u16, rows: u16) -> Result<(), String> {
+pub fn pty_resize(
+    state: State<'_, PtyState>,
+    id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
     let sessions = state.sessions.lock().map_err(err)?;
     let s = sessions.get(&id).ok_or_else(|| format!("pty {id} 없음"))?;
     s.master
-        .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(err)
 }
 
