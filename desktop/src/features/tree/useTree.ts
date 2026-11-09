@@ -1,7 +1,7 @@
 // 트리 데이터 (F-02) — GitHub 목록은 서버 캐시 없이 gh/REST 로 직접 조회(D-22).
 // 자동 재시도 없음(EC-18), 새로고침 버튼으로만 다시 불러온다.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 
 import { isOfflineError } from '../../lib/apiErrors'
 import { useDeps } from '../../app/deps'
@@ -53,12 +53,17 @@ export function useIssues(owner: string, repo: string, enabled: boolean) {
     enabled,
     ...GITHUB_QUERY,
   })
-  const hasWorktree = (key: string) => map[worktreeId(owner, repo, key)] !== undefined
-  const issues: TreeIssue[] = (query.data ?? [])
-    .filter((i: GitHubIssue) => i.state === 'open' || hasWorktree(String(i.number)))
-    .sort((a, b) => b.number - a.number)
-    .map((i) => ({ key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: i.htmlUrl }))
-  return { ...query, issues: [ETC_ISSUE as TreeIssue, ...issues] }
+  // 렌더마다 새 배열을 만들면 RepoNode 의 경로 비교 memo 가 매번 다시 돈다
+  const data = query.data
+  const issues = useMemo(() => {
+    const hasWorktree = (key: string) => map[worktreeId(owner, repo, key)] !== undefined
+    const rows: TreeIssue[] = (data ?? [])
+      .filter((i: GitHubIssue) => i.state === 'open' || hasWorktree(String(i.number)))
+      .sort((a, b) => b.number - a.number)
+      .map((i) => ({ key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: i.htmlUrl }))
+    return [ETC_ISSUE as TreeIssue, ...rows]
+  }, [data, map, owner, repo])
+  return { ...query, issues }
 }
 
 /** AC-04 새로고침: GitHub 목록 재조회 + 로컬 worktree 존재 여부(●) 재확인 */
@@ -73,8 +78,8 @@ export function useRefreshTree() {
         if (!exists) useUiStore.getState().removeWorktree(id)
       }),
     )
-    await queryClient.invalidateQueries({ queryKey: ['github'] })
-    if (useSessionStore.getState().status === 'online') await queryClient.invalidateQueries({ queryKey: ['effective'] })
+    await queryClient.invalidateQueries({ queryKey: queryKeys.githubAll })
+    if (useSessionStore.getState().status === 'online') await queryClient.invalidateQueries({ queryKey: queryKeys.effectiveAll })
   }, [queryClient, tauri])
 }
 

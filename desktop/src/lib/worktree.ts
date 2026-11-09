@@ -1,8 +1,9 @@
 // 이슈 열기(openIssue)·worktree 삭제(deleteWorktree) 도메인 서비스.
 // Frontend Plan "src/lib/worktree.ts" 규칙을 따른다. 모든 OS 접근은 TauriApi 경유.
-import { ApiError, TemplateError, isSameOrInside, normalizePath, renderBranch, renderPath, slug as slugOf } from '@minmo/api-client'
-import type { Effective, Platform, SettingsValues } from '@minmo/api-client'
+import { TemplateError, isSameOrInside, normalizePath, renderBranch, renderPath, slug as slugOf } from '@minmo/api-client'
+import type { Effective, PathContext, Platform, SettingsValues } from '@minmo/api-client'
 
+import { isOfflineError } from './apiErrors'
 import type { CmdResult, ScriptRunResult, TauriApi } from './tauri'
 
 export type IssueTarget = {
@@ -16,6 +17,43 @@ export type IssueTarget = {
 }
 
 export type WorktreeEntry = { path: string; branch: string }
+
+/**
+ * 이슈의 브랜치명 + 경로 템플릿 컨텍스트. openIssue·트리 "경로 변경됨" 배지(EC-24)·설정 미리보기가
+ * 같은 규칙으로 계산해야 서로 어긋나지 않는다. checkEtcConflict 면 기타 브랜치와 충돌 시 TemplateError.
+ */
+export function issueBranchContext(
+  values: Pick<SettingsValues, 'branchTemplate' | 'etcBranchName'>,
+  t: IssueTarget,
+  env: { home: string; platform: Platform },
+  opts: { checkEtcConflict: boolean },
+): { branch: string; ctx: PathContext } {
+  const branch =
+    t.number === null
+      ? values.etcBranchName
+      : renderBranch(
+          values.branchTemplate,
+          { number: t.number, title: t.title },
+          opts.checkEtcConflict ? { etcBranchName: values.etcBranchName } : undefined,
+        )
+  const ctx: PathContext = {
+    owner: t.owner,
+    repo: t.repo,
+    branch,
+    key: t.key,
+    number: t.number,
+    slug: t.number === null ? '' : slugOf(t.title),
+    home: env.home,
+    platform: env.platform,
+  }
+  return { branch, ctx }
+}
+
+/** origin 어느 브랜치에도 없는 HEAD 커밋 수 (삭제 확인·변경 탭 "미push" 공용). 실패 시 0 */
+export async function countUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promise<number> {
+  const r = await gitRun(['-C', cwd, 'rev-list', '--count', 'HEAD', '--not', '--remotes=origin'])
+  return r.code === 0 ? Number.parseInt(r.stdout.trim(), 10) || 0 : 0
+}
 
 export interface WorktreePathStore {
   get(id: string): WorktreeEntry | undefined
@@ -171,7 +209,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       return await deps.getEffective(owner, repo)
     } catch (e) {
       // EC-17: 캐시도 없이 서버에 닿지 못하면 이슈를 열 수 없다
-      if (e instanceof ApiError && (e.code === 'network_error' || e.code === 'server_error' || e.status >= 500)) {
+      if (isOfflineError(e)) {
         throw new WorktreeError('server_required', { message: '서버 연결 필요 — 설정을 불러올 수 없습니다' })
       }
       throw e
@@ -182,30 +220,17 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     const issueId = worktreeId(t.owner, t.repo, t.key)
     log(issueId, 'effective', 'start')
     const values = (await loadEffective(t.owner, t.repo)).values
-    let branch: string
-    if (t.number === null) {
-      branch = values.etcBranchName
-    } else {
-      try {
-        branch = renderBranch(values.branchTemplate, { number: t.number, title: t.title }, { etcBranchName: values.etcBranchName })
-      } catch (e) {
-        if (e instanceof TemplateError) {
-          log(issueId, 'effective', 'error', '브랜치명이 기타 브랜치와 충돌')
-          throw new WorktreeError('branch_conflicts_etc', { message: '브랜치명이 기타 브랜치와 충돌합니다' })
-        }
-        throw e
+    let resolved: { branch: string; ctx: PathContext }
+    try {
+      resolved = issueBranchContext(values, t, { home: deps.home, platform }, { checkEtcConflict: true })
+    } catch (e) {
+      if (e instanceof TemplateError) {
+        log(issueId, 'effective', 'error', '브랜치명이 기타 브랜치와 충돌')
+        throw new WorktreeError('branch_conflicts_etc', { message: '브랜치명이 기타 브랜치와 충돌합니다' })
       }
+      throw e
     }
-    const ctx = {
-      owner: t.owner,
-      repo: t.repo,
-      branch,
-      key: t.key,
-      number: t.number,
-      slug: t.number === null ? '' : slugOf(t.title),
-      home: deps.home,
-      platform,
-    }
+    const { branch, ctx } = resolved
     const main = renderPath(values.mainClonePath, ctx)
     const path = renderPath(values.worktreePath, ctx)
     // EC-23: worktree 가 메인 clone 과 같거나 그 하위면 중단
@@ -398,10 +423,12 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
   async function inspect(t: IssueTarget): Promise<DeleteCheck> {
     const entry = deps.pathStore.get(worktreeId(t.owner, t.repo, t.key))
     if (!entry) throw new WorktreeError('not_found', { message: 'worktree 가 없습니다' })
-    const st = await tauri.gitRun(['-C', entry.path, 'status', '--porcelain'])
+    // 읽기 전용 git 두 개 — 서로 독립이라 병렬
+    const [st, unpushed] = await Promise.all([
+      tauri.gitRun(['-C', entry.path, 'status', '--porcelain']),
+      countUnpushed(tauri.gitRun, entry.path),
+    ])
     const uncommitted = st.code === 0 ? st.stdout.split(/\r?\n/).filter((l) => l.trim() !== '').length : 0
-    const rl = await tauri.gitRun(['-C', entry.path, 'rev-list', '--count', 'HEAD', '--not', '--remotes=origin'])
-    const unpushed = rl.code === 0 ? Number.parseInt(rl.stdout.trim(), 10) || 0 : 0
     return { uncommitted, unpushed }
   }
 

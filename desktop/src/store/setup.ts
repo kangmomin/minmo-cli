@@ -23,7 +23,7 @@ export interface SetupState {
   clearLog(id: string): void
 }
 
-/** 이슈별 로그 상한 — 긴 npm ci 출력이 메모리를 잡아먹지 않도록 최근 것만 */
+/** [Assumption] 이슈별 로그 상한 2000줄 — 긴 npm ci 출력이 메모리를 잡아먹지 않도록 최근 것만 */
 export const MAX_LOG_LINES = 2000
 
 export const useSetupStore = create<SetupState>()((set) => ({

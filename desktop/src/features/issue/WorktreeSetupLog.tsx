@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 
 import { Button } from '../../components/ui/button'
 import { worktreeId } from '../../lib/worktree'
@@ -25,8 +25,17 @@ function line(e: SetupLogEvent): string {
   return `[${label}] ${status}${e.message ? ` — ${e.message}` : ''}`
 }
 
+// 로그 줄마다 store 가 갱신되므로 기존 줄(이벤트 객체 동일)은 다시 그리지 않는다
+const LogLine = memo(function LogLine({ e }: { e: SetupLogEvent }) {
+  return <div className={e.status === 'error' ? 'whitespace-pre-wrap text-destructive' : 'whitespace-pre-wrap'}>{line(e)}</div>
+})
+
 /** worktree 준비 단계·생성 후 스크립트 로그 패널 (F-09, AC-16, EC-19, EC-21) */
-export function WorktreeSetupLog({ target }: { target: IssueTarget }) {
+export interface WorktreeSetupLogProps {
+  target: IssueTarget
+}
+
+export function WorktreeSetupLog({ target }: WorktreeSetupLogProps) {
   const id = worktreeId(target.owner, target.repo, target.key)
   const logs = useSetupStore((s) => s.logs[id] ?? EMPTY)
   const open = useSetupStore((s) => s.open[id])
@@ -37,7 +46,7 @@ export function WorktreeSetupLog({ target }: { target: IssueTarget }) {
 
   useEffect(() => {
     bottom.current?.scrollIntoView?.({ block: 'end' })
-  }, [logs.length])
+  }, [logs])
 
   const running = script?.status === 'running'
   const visible = open?.phase === 'opening' || open?.phase === 'error' || script !== undefined
@@ -83,9 +92,7 @@ export function WorktreeSetupLog({ target }: { target: IssueTarget }) {
       {!collapsed && (
         <div className="max-h-48 overflow-auto px-4 pb-2 font-mono text-xs">
           {logs.map((e, i) => (
-            <div key={i} className={e.status === 'error' ? 'whitespace-pre-wrap text-destructive' : 'whitespace-pre-wrap'}>
-              {line(e)}
-            </div>
+            <LogLine key={i} e={e} />
           ))}
           {open?.phase === 'error' && <div className="whitespace-pre-wrap text-destructive">{open.message}</div>}
           <div ref={bottom} />

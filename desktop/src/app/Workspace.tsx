@@ -28,9 +28,7 @@ export function Workspace() {
   const openState = useSetupStore((s) => (selectedId ? s.open[selectedId] : undefined))
   const [settings, setSettings] = useState<SettingsTarget | null>(null)
 
-  const selectedPreview: PreviewIssue | null = target
-    ? { owner: target.owner, repo: target.repo, key: target.key, number: target.number, title: target.title }
-    : null
+  const selectedPreview: PreviewIssue | null = target ?? null
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

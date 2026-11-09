@@ -6,7 +6,9 @@ import { useQuery } from '@tanstack/react-query'
 import { useDeps } from '../../app/deps'
 import { GitHubError } from '../../lib/github'
 import type { GitHubClient } from '../../lib/github'
+import { queryKeys } from '../../lib/queryKeys'
 import type { TauriApi } from '../../lib/tauri'
+import { countUnpushed } from '../../lib/worktree'
 
 export type FileChange = {
   path: string
@@ -154,10 +156,7 @@ export function createGitOps(deps: GitOpsDeps): GitOps {
       }
     },
 
-    async unpushedCount(cwd) {
-      const r = await git(cwd, ['rev-list', '--count', 'HEAD', '--not', '--remotes=origin'])
-      return r.code === 0 ? Number.parseInt(r.stdout.trim(), 10) || 0 : 0
-    },
+    unpushedCount: (cwd) => countUnpushed(deps.tauri.gitRun, cwd),
 
     async createOrOpenPr(req) {
       if (req.issue.number === null && req.title.trim() === '') {
@@ -202,14 +201,14 @@ export function useGit(target: UseGitTarget): {
   const { tauri, github } = useDeps()
   const ops = useMemo(() => createGitOps({ tauri, github }), [tauri, github])
   const status = useQuery({
-    queryKey: ['git', 'status', target.cwd],
+    queryKey: queryKeys.gitStatus(target.cwd),
     queryFn: () => ops.status(target.cwd),
-    // 로컬 명령이라 서버 retry 정책과 무관. 터미널에서 바꾼 파일을 반영하도록 주기 갱신
+    // 로컬 명령이라 서버 retry 정책과 무관. [Assumption] 터미널에서 바꾼 파일을 반영하도록 5초 주기 갱신
     refetchInterval: 5000,
     retry: false,
   })
   const unpushed = useQuery({
-    queryKey: ['git', 'unpushed', target.cwd],
+    queryKey: queryKeys.gitUnpushed(target.cwd),
     queryFn: () => ops.unpushedCount(target.cwd),
     refetchInterval: 5000,
     retry: false,

@@ -1,7 +1,7 @@
 import { useId, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 
-import { ApiError, renderBranch, renderPath, slug } from '@minmo/api-client'
+import { ApiError, renderPath } from '@minmo/api-client'
 import type { SettingsInput, SettingsRecord, SettingsScope, SettingsValues } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
@@ -11,6 +11,7 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { Textarea } from '../../components/ui/textarea'
+import { issueBranchContext } from '../../lib/worktree'
 import { useSessionStore } from '../../store/session'
 import { useSettings } from './useSettings'
 
@@ -130,26 +131,13 @@ function SettingsForm(props: {
 
   const preview = useMemo(() => {
     if (!previewIssue) return null
-    let branch: string
+    let resolved: ReturnType<typeof issueBranchContext>
     try {
-      branch =
-        previewIssue.number === null
-          ? effective.etcBranchName
-          : renderBranch(effective.branchTemplate, { number: previewIssue.number, title: previewIssue.title }, { etcBranchName: effective.etcBranchName })
+      resolved = issueBranchContext(effective, previewIssue, { home, platform }, { checkEtcConflict: true })
     } catch {
       return { branch: '브랜치명이 기타 브랜치와 충돌', path: '—' }
     }
-    const path = renderPath(effective.worktreePath, {
-      owner: previewIssue.owner,
-      repo: previewIssue.repo,
-      branch,
-      key: previewIssue.key,
-      number: previewIssue.number,
-      slug: previewIssue.number === null ? '' : slug(previewIssue.title),
-      home,
-      platform,
-    })
-    return { branch, path }
+    return { branch: resolved.branch, path: renderPath(effective.worktreePath, resolved.ctx) }
   }, [effective, previewIssue, home, platform])
 
   async function onSubmit(e: FormEvent) {

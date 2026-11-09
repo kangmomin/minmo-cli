@@ -12,7 +12,12 @@ import { NotesTab } from '../notes/NotesTab'
 import { TerminalTab } from '../terminal/TerminalTab'
 
 /** 작업 탭: 터미널 · 변경 · 메모. 터미널은 이슈 전환에도 세션을 유지하도록 항상 마운트한다 */
-export function WorkTabs({ target, state }: { target: IssueTarget; state: IssueOpenState | undefined }) {
+export interface WorkTabsProps {
+  target: IssueTarget
+  state: IssueOpenState | undefined
+}
+
+export function WorkTabs({ target, state }: WorkTabsProps) {
   const tab = useUiStore((s) => s.tab)
   const setTab = useUiStore((s) => s.setTab)
   const open = useSetupStore((s) => s.open)

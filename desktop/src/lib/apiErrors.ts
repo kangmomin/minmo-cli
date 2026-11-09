@@ -19,13 +19,17 @@ export function isUnauthorized(err: unknown): boolean {
 // - 그 외 4xx → 상태 변화 없음
 export function handleApiError(err: unknown, opts?: { queryClient?: QueryClient }): void {
   if (!(err instanceof ApiError)) return
-  const store = useSessionStore.getState()
   if (isUnauthorized(err)) {
-    store.clearSession()
-    opts?.queryClient?.clear()
+    expireSession(opts?.queryClient)
     return
   }
-  if (isOfflineError(err)) store.setStatus('offline')
+  if (isOfflineError(err)) useSessionStore.getState().setStatus('offline')
+}
+
+/** 세션 만료 공통 처리(서버 401·GitHub 토큰 거부 EC-02): 세션 삭제 → /login, 서버 읽기 캐시 삭제 */
+export function expireSession(queryClient?: QueryClient): void {
+  useSessionStore.getState().clearSession()
+  queryClient?.clear()
 }
 
 /** TanStack Query retry 정책: 4xx 0회, 네트워크(network_error) 1회 */

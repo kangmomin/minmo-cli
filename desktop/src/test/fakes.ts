@@ -6,12 +6,18 @@ import { ApiError } from '@minmo/api-client'
 import type { ApiClient, ApiErrorCode, Notes } from '@minmo/api-client'
 
 import type { GitHubClient } from '../lib/github'
-import type { CmdResult, TauriApi } from '../lib/tauri'
+import type { TauriApi } from '../lib/tauri'
+import { ok } from '../lib/tauri.mock'
 
 export type Mocked<T> = { [K in keyof T]: T[K] extends (...args: infer A) => infer R ? Mock<(...args: A) => R> : T[K] }
 
-export const ok = (stdout = ''): CmdResult => ({ code: 0, stdout, stderr: '' })
-export const fail = (stderr: string, code = 1): CmdResult => ({ code, stdout: '', stderr })
+export { fail, ok } from '../lib/tauri.mock'
+
+/** base 를 overrides 로 덮고 모든 메서드를 vi.fn 으로 감싼다 */
+function mockAll<T extends object>(base: T, overrides: Partial<T>): Mocked<T> {
+  const merged = { ...base, ...overrides }
+  return Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, vi.fn(fn as (...a: unknown[]) => unknown)])) as unknown as Mocked<T>
+}
 
 export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
   const keychain = new Map<string, string>()
@@ -48,8 +54,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
       }
     },
   }
-  const merged = { ...base, ...overrides }
-  const tauri = Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, vi.fn(fn as (...a: unknown[]) => unknown)])) as unknown as Mocked<TauriApi>
+  const tauri = mockAll(base, overrides)
   return {
     tauri,
     keychain,
@@ -77,8 +82,7 @@ export function createFakeApi(overrides: Partial<ApiClient> = {}): Mocked<ApiCli
     getNotes: unexpected('getNotes'),
     putNotes: unexpected('putNotes'),
   }
-  const merged = { ...base, ...overrides }
-  return Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, vi.fn(fn as (...a: unknown[]) => unknown)])) as unknown as Mocked<ApiClient>
+  return mockAll(base, overrides)
 }
 
 export function createFakeGitHub(overrides: Partial<GitHubClient> = {}): Mocked<GitHubClient> {
@@ -91,8 +95,7 @@ export function createFakeGitHub(overrides: Partial<GitHubClient> = {}): Mocked<
     openPrForBranch: async () => null,
     createPr: async () => ({ number: 1, url: 'https://github.com/o/r/pull/1' }),
   }
-  const merged = { ...base, ...overrides }
-  return Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, vi.fn(fn as (...a: unknown[]) => unknown)])) as unknown as Mocked<GitHubClient>
+  return mockAll(base, overrides)
 }
 
 export const apiError = (status: number, code: ApiErrorCode, extra: { field?: string; current?: Notes } = {}) =>

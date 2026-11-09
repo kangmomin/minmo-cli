@@ -9,7 +9,6 @@ export type TransportResponse = {
 }
 
 export interface GitHubTransport {
-  kind: 'gh' | 'rest'
   get(path: string): Promise<TransportResponse>
   post(path: string, body: unknown): Promise<TransportResponse>
 }

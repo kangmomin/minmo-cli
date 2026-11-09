@@ -7,7 +7,12 @@ import type { IssueOpenState } from '../../store/setup'
 import { useIssueActions } from './useWorktree'
 
 /** 상단 바: 저장소·이슈, 브랜치(AC-05), worktree 경로, 준비 상태 */
-export function IssueHeader({ target, state }: { target: IssueTarget; state: IssueOpenState | undefined }) {
+export interface IssueHeaderProps {
+  target: IssueTarget
+  state: IssueOpenState | undefined
+}
+
+export function IssueHeader({ target, state }: IssueHeaderProps) {
   const actions = useIssueActions()
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2" data-testid="issue-header">

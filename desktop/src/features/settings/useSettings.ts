@@ -4,7 +4,6 @@ import { useMemo } from 'react'
 import type { SettingsInput, SettingsRecord, SettingsScope, SettingsValues } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
-import { handleApiError } from '../../lib/apiErrors'
 import { queryKeys } from '../../lib/queryKeys'
 
 export type SettingsFormData = {
@@ -28,15 +27,7 @@ export function overlay(base: SettingsValues, rec: SettingsRecord | undefined): 
   return out
 }
 
-function asValues(rec: SettingsRecord): SettingsValues {
-  return {
-    branchTemplate: rec.branchTemplate ?? '',
-    etcBranchName: rec.etcBranchName ?? '',
-    worktreePath: rec.worktreePath ?? '',
-    mainClonePath: rec.mainClonePath ?? '',
-    postCreateScript: rec.postCreateScript ?? '',
-  }
-}
+const EMPTY_VALUES: SettingsValues = { branchTemplate: '', etcBranchName: '', worktreePath: '', mainClonePath: '', postCreateScript: '' }
 
 export function useSettings(scope: SettingsScope): SettingsFormData & {
   save(input: SettingsInput): Promise<SettingsRecord>
@@ -62,7 +53,7 @@ export function useSettings(scope: SettingsScope): SettingsFormData & {
 
   const inherited = useMemo<SettingsValues | null>(() => {
     if (scope.kind === 'global' || !global.data) return null
-    const base = asValues(global.data)
+    const base = overlay(EMPTY_VALUES, global.data)
     return scope.kind === 'org' ? base : overlay(base, org.data)
   }, [scope.kind, global.data, org.data])
 
@@ -77,7 +68,6 @@ export function useSettings(scope: SettingsScope): SettingsFormData & {
       // effective(이슈 열기·경로 변경 배지)가 바뀌므로 갱신. 다른 scope 레코드는 열 때 다시 조회된다(staleTime 0)
       void queryClient.invalidateQueries({ queryKey: queryKeys.effectiveAll })
     },
-    onError: (e) => handleApiError(e, { queryClient }),
   })
 
   return {

@@ -1,11 +1,11 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 딥링크·브라우저 열기는 window.__MINMO_MOCK__ 로 노출해 E2E 가 조작한다.
-import type { CmdResult, PtyDataEvent, ScriptLogEvent, TauriApi } from './tauri'
+import type { CmdResult, Platform, PtyDataEvent, ScriptLogEvent, TauriApi } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
-  platform?: 'win32' | 'darwin' | 'linux'
+  platform?: Platform
 }
 
 export interface MinmoMockHandle {
@@ -21,8 +21,8 @@ declare global {
   }
 }
 
-const ok = (stdout = ''): CmdResult => ({ code: 0, stdout, stderr: '' })
-const fail = (stderr: string, code = 1): CmdResult => ({ code, stdout: '', stderr })
+export const ok = (stdout = ''): CmdResult => ({ code: 0, stdout, stderr: '' })
+export const fail = (stderr: string, code = 1): CmdResult => ({ code, stdout: '', stderr })
 const HASH = '0000000000000000000000000000000000000000'
 
 // 새로고침해도 로그인 상태를 유지하도록 키체인만 sessionStorage 에 둔다(탭 수명)

@@ -10,26 +10,23 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { Textarea } from '../../components/ui/textarea'
 import { GitHubError } from '../../lib/github'
+import { queryKeys } from '../../lib/queryKeys'
 import { cn } from '../../lib/utils'
 import { GitError, buildPrDraft, useGit } from './useGit'
-import type { FileChange, PrResult, UseGitTarget } from './useGit'
+import type { FileChange, GitErrorCode, PrResult, UseGitTarget } from './useGit'
 
 type Feedback = { kind: 'ok' | 'error'; text: string; detail?: string } | null
 
+const GIT_ERROR_TITLE: Record<GitErrorCode, string> = {
+  push_rejected: 'push 거절됨 — 원격이 앞서 있습니다(강제 push 하지 않음)',
+  permission_denied: '권한 없음 — 이 저장소에 쓰기 권한이 없습니다',
+  title_required: 'PR 제목을 입력하세요',
+  nothing_selected: '커밋할 파일을 선택하세요',
+  git_failed: 'git 실패',
+}
+
 function errorFeedback(e: unknown): Feedback {
-  if (e instanceof GitError) {
-    const title =
-      e.code === 'push_rejected'
-        ? 'push 거절됨 — 원격이 앞서 있습니다(강제 push 하지 않음)'
-        : e.code === 'permission_denied'
-          ? '권한 없음 — 이 저장소에 쓰기 권한이 없습니다'
-          : e.code === 'title_required'
-            ? 'PR 제목을 입력하세요'
-            : e.code === 'nothing_selected'
-              ? '커밋할 파일을 선택하세요'
-              : 'git 실패'
-    return { kind: 'error', text: title, detail: e.stderr ?? e.message }
-  }
+  if (e instanceof GitError) return { kind: 'error', text: GIT_ERROR_TITLE[e.code], detail: e.stderr ?? e.message }
   if (e instanceof GitHubError) {
     if (e.code === 'rate_limited') {
       return { kind: 'error', text: e.retryAt ? `GitHub 사용량 제한 — ${e.retryAt.toLocaleTimeString()} 이후 재시도` : 'GitHub 사용량 제한 — 잠시 후 재시도' }
@@ -42,7 +39,11 @@ function errorFeedback(e: unknown): Feedback {
 const statusLabel = (f: FileChange) => (f.untracked ? '새 파일' : f.xy.replace(/\./g, ' ').trim() || f.xy)
 
 /** 변경 탭 (F-05): 파일 선택 → 커밋 → push → PR */
-export function ChangesTab({ target }: { target: UseGitTarget }) {
+export interface ChangesTabProps {
+  target: UseGitTarget
+}
+
+export function ChangesTab({ target }: ChangesTabProps) {
   const { tauri } = useDeps()
   const queryClient = useQueryClient()
   const git = useGit(target)
@@ -71,6 +72,8 @@ export function ChangesTab({ target }: { target: UseGitTarget }) {
     const change = git.changes.find((c) => c.path === diffPath)
     if (!change) return
     let cancelled = false
+    // 이전 파일의 diff 가 새 경로 아래 남아 보이지 않도록 로딩 표시부터
+    setDiff('불러오는 중…')
     const load = change.untracked
       ? Promise.resolve('(새 파일 — 커밋하면 추가됩니다)')
       : git.ops.diff(target.cwd, diffPath, { staged: change.staged && !change.unstaged })
@@ -82,37 +85,36 @@ export function ChangesTab({ target }: { target: UseGitTarget }) {
     }
   }, [diffPath, git.changes, git.ops, target.cwd])
 
-  const refreshGit = () => queryClient.invalidateQueries({ queryKey: ['git'] })
+  const refreshGit = () => queryClient.invalidateQueries({ queryKey: queryKeys.gitAll })
 
-  async function commit() {
-    setBusy('commit')
+  // 커밋·push·PR 공통: 진행 표시 + 실패 문구
+  async function run(kind: 'commit' | 'push' | 'pr', fn: () => Promise<void>) {
+    setBusy(kind)
     setFeedback(null)
     try {
+      await fn()
+    } catch (e) {
+      setFeedback(errorFeedback(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const commit = () =>
+    run('commit', async () => {
       const { hash } = await git.ops.commit(target.cwd, [...selected], message.trim())
       setFeedback({ kind: 'ok', text: `커밋 ${hash.slice(0, 7)}` })
       setMessage('')
       setSelected(new Set())
       await refreshGit()
-    } catch (e) {
-      setFeedback(errorFeedback(e))
-    } finally {
-      setBusy(null)
-    }
-  }
+    })
 
-  async function push() {
-    setBusy('push')
-    setFeedback(null)
-    try {
+  const push = () =>
+    run('push', async () => {
       await git.ops.push(target.cwd, target.branch)
       setFeedback({ kind: 'ok', text: `push 완료 — origin/${target.branch}` })
       await refreshGit()
-    } catch (e) {
-      setFeedback(errorFeedback(e))
-    } finally {
-      setBusy(null)
-    }
-  }
+    })
 
   const allSelected = git.changes.length > 0 && selected.size === git.changes.length
 
@@ -167,7 +169,12 @@ export function ChangesTab({ target }: { target: UseGitTarget }) {
           </label>
           <ul className="min-h-0 flex-1 overflow-auto text-sm">
             {git.isLoading && <li className="p-2 text-xs text-muted-foreground">불러오는 중…</li>}
-            {!git.isLoading && git.changes.length === 0 && <li className="p-2 text-xs text-muted-foreground">변경 없음</li>}
+            {git.error !== null && git.error !== undefined && (
+              <li className="whitespace-pre-wrap p-2 text-xs text-destructive">
+                변경 사항을 불러오지 못했습니다 — {git.error instanceof Error ? git.error.message : String(git.error)}
+              </li>
+            )}
+            {!git.isLoading && !git.error && git.changes.length === 0 && <li className="p-2 text-xs text-muted-foreground">변경 없음</li>}
             {git.changes.map((c) => (
               <li key={c.path} className={cn('flex items-center gap-2 px-2 py-0.5 hover:bg-accent', diffPath === c.path && 'bg-accent')}>
                 <input
@@ -210,21 +217,17 @@ export function ChangesTab({ target }: { target: UseGitTarget }) {
         open={prOpen}
         onOpenChange={setPrOpen}
         target={target}
-        onCreate={async (input) => {
-          setBusy('pr')
-          setFeedback(null)
-          try {
-            const res = await git.ops.createOrOpenPr({ owner: target.owner, repo: target.repo, branch: target.branch, issue: target.issue, ...input })
-            setPr(res)
-            setPrOpen(false)
-            void tauri.openUrl(res.url)
-          } catch (e) {
-            setFeedback(errorFeedback(e))
-            setPrOpen(false)
-          } finally {
-            setBusy(null)
-          }
-        }}
+        onCreate={(input) =>
+          run('pr', async () => {
+            try {
+              const res = await git.ops.createOrOpenPr({ owner: target.owner, repo: target.repo, branch: target.branch, issue: target.issue, ...input })
+              setPr(res)
+              void tauri.openUrl(res.url)
+            } finally {
+              setPrOpen(false)
+            }
+          })
+        }
       />
     </div>
   )

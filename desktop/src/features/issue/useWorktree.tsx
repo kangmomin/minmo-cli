@@ -31,7 +31,7 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
           const st = useSetupStore.getState()
           st.appendLog(e)
           if (e.step === 'script' && e.status === 'start') st.setScript(e.issueId, { status: 'running' })
-          // worktree 가 만들어지면 스크립트 완료를 기다리지 않고 이슈를 연다(터미널·메모 사용 가능)
+          // [Assumption] worktree 가 만들어지면 스크립트 완료를 기다리지 않고 이슈를 연다(터미널·메모 사용 가능)
           if (e.step === 'worktree' && e.status === 'ok') {
             const entry = useUiStore.getState().worktreePathMap[e.issueId]
             if (entry) st.setOpen(e.issueId, { phase: 'ready', path: entry.path, branch: entry.branch, pathChanged: false })
@@ -111,13 +111,24 @@ export function useIssueActions() {
         }
       },
       async cancelSetup(t: IssueTarget) {
-        await service.cancelSetup(t)
+        try {
+          await service.cancelSetup(t)
+        } catch (e) {
+          const id = worktreeId(t.owner, t.repo, t.key)
+          useSetupStore.getState().appendLog({ issueId: id, step: 'script', status: 'error', message: describeOpenError(e).message })
+        }
       },
       async rerunScript(t: IssueTarget) {
         const id = worktreeId(t.owner, t.repo, t.key)
-        useSetupStore.getState().setScript(id, { status: 'running' })
-        const outcome = await service.rerunScript(t)
-        useSetupStore.getState().setScript(id, outcome)
+        const st = useSetupStore.getState()
+        st.setScript(id, { status: 'running' })
+        try {
+          st.setScript(id, await service.rerunScript(t))
+        } catch (e) {
+          // 실행 전 실패(worktree 없음·설정 조회 실패 등)로 'running' 에 멈추지 않도록 실패로 표시
+          st.appendLog({ issueId: id, step: 'script', status: 'error', message: describeOpenError(e).message })
+          st.setScript(id, { status: 'failed', exitCode: null })
+        }
       },
       inspect: (t: IssueTarget) => service.inspect(t),
       async remove(t: IssueTarget, confirmed = false): Promise<DeleteResult> {

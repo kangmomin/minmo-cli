@@ -11,8 +11,13 @@ export const queryKeys = {
   effectiveAll: ['effective'] as const,
   effective: (owner: string, repo: string) => ['effective', owner, repo] as const,
   notes: (owner: string, repo: string, key: string) => ['notes', owner, repo, key] as const,
+  githubAll: ['github'] as const,
   githubOwners: ['github', 'owners'] as const,
   githubRepos: (owner: string) => ['github', 'repos', owner] as const,
   githubIssues: (owner: string, repo: string) => ['github', 'issues', owner, repo] as const,
   githubSource: ['github', 'source'] as const,
+  // 로컬 git 조회(서버 캐시 아님)
+  gitAll: ['git'] as const,
+  gitStatus: (cwd: string) => ['git', 'status', cwd] as const,
+  gitUnpushed: (cwd: string) => ['git', 'unpushed', cwd] as const,
 }

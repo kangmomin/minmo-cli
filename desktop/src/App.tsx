@@ -47,7 +47,7 @@ function Root() {
   )
 }
 
-export default function App() {
+export function App() {
   const [queryClient] = useState(createAppQueryClient)
   const [deps, setDeps] = useState<AppDeps | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)

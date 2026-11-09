@@ -44,7 +44,7 @@ export const useUiStore = create<UiState>()(
     {
       name: 'minmo-ui',
       storage: createJSONStorage(() => localStorage),
-      // PTY 세션 id 는 프로세스 수명과 같으므로 재시작 후 의미가 없다 → 영속 대상에서 제외
+      // [Assumption] Plan 은 terminal ids 도 persist 였으나 PTY 세션 id 는 프로세스 수명과 같아 재시작 후 의미가 없다 → 영속 대상에서 제외
       partialize: (s) => ({
         expanded: s.expanded,
         selectedIssueId: s.selectedIssueId,

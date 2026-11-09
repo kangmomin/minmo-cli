@@ -1,11 +1,10 @@
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query'
 
 import { createAppApi } from '../lib/api'
-import { handleApiError, shouldRetry } from '../lib/apiErrors'
+import { expireSession, handleApiError, shouldRetry } from '../lib/apiErrors'
 import { createGitHubClient } from '../lib/github'
 import { cachedGithubToken, rememberGithubToken } from '../lib/githubToken'
 import { KEYCHAIN_KEYS, getTauri } from '../lib/tauri'
-import { useSessionStore } from '../store/session'
 import type { AppDeps } from './deps'
 
 /**
@@ -53,8 +52,7 @@ export async function createAppDeps(queryClient: QueryClient): Promise<AppDeps> 
     // EC-02: 서버가 준 GitHub 토큰도 거부 → 세션 폐기 후 로그인 화면
     onUnauthorized: () => {
       rememberGithubToken(null)
-      useSessionStore.getState().clearSession()
-      queryClient.clear()
+      expireSession(queryClient)
     },
   })
 

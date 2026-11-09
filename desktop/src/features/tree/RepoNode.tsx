@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon } from 'lucide-react'
 import { useMemo } from 'react'
 
-import { normalizePath, renderBranch, renderPath, slug } from '@minmo/api-client'
+import { normalizePath, renderPath } from '@minmo/api-client'
 import type { SettingsScope } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
@@ -10,7 +10,7 @@ import { Button } from '../../components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../../components/ui/context-menu'
 import type { GitHubRepo } from '../../lib/github'
 import { queryKeys } from '../../lib/queryKeys'
-import { worktreeId } from '../../lib/worktree'
+import { issueBranchContext, worktreeId } from '../../lib/worktree'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
@@ -52,18 +52,13 @@ export function RepoNode({ repo, onOpenSettings }: RepoNodeProps) {
     for (const [issue, entry] of entries) {
       if (!entry) continue
       try {
-        const branch =
-          issue.number === null ? v.etcBranchName : renderBranch(v.branchTemplate, { number: issue.number, title: issue.title })
-        const expected = renderPath(v.worktreePath, {
-          owner: repo.owner,
-          repo: repo.name,
-          branch,
-          key: issue.key,
-          number: issue.number,
-          slug: issue.number === null ? '' : slug(issue.title),
-          home,
-          platform,
-        })
+        const { ctx } = issueBranchContext(
+          v,
+          { owner: repo.owner, repo: repo.name, key: issue.key, number: issue.number, title: issue.title },
+          { home, platform },
+          { checkEtcConflict: false },
+        )
+        const expected = renderPath(v.worktreePath, ctx)
         if (normalizePath(expected, platform) !== normalizePath(entry.path, platform)) out.add(issue.key)
       } catch {
         // 템플릿 오류는 배지 판단에서 제외
