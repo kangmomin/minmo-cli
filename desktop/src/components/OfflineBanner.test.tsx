@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Health } from '@minmo/api-client'
 
 import { handleApiError } from '../lib/apiErrors'
+import { queryKeys } from '../lib/queryKeys'
 import { useSessionStore } from '../store/session'
 import { apiError, createFakeApi } from '../test/fakes'
 import { makeDeps, renderWithDeps } from '../test/render'
@@ -19,8 +20,8 @@ const networkDown = async (): Promise<Health> => {
 
 function setup(healthz: () => Promise<Health>) {
   const api = createFakeApi({ healthz })
-  renderWithDeps(<OfflineBanner />, makeDeps({ api }))
-  return { api }
+  const { queryClient } = renderWithDeps(<OfflineBanner />, makeDeps({ api }))
+  return { api, queryClient }
 }
 
 beforeEach(() => {
@@ -140,5 +141,35 @@ describe('AX OfflineBanner live region 상시 유지', () => {
     expect(live).toBeEmptyDOMElement()
     act(() => handleApiError(apiError(0, 'network_error')))
     expect(await within(live).findByTestId('offline-banner')).toBeInTheDocument()
+  })
+})
+
+describe('CR-16 재연결 시 서버 기반 쿼리만 무효화', () => {
+  it('settings·effective·notes 는 invalidate, GitHub 목록·git 조회는 건드리지 않는다(EC-18)', async () => {
+    const { queryClient } = setup(async () => ({ status: 'ok' }))
+    const server = [
+      queryKeys.settings({ kind: 'global' }),
+      queryKeys.settings({ kind: 'project', owner: 'o', repo: 'r' }),
+      queryKeys.effective('o', 'r'),
+      queryKeys.notes('o', 'r', '42'),
+    ]
+    const local = [
+      queryKeys.githubSource,
+      queryKeys.githubOwners,
+      queryKeys.githubRepos('o'),
+      queryKeys.githubIssues('o', 'r'),
+      queryKeys.gitStatus('/w/42'),
+      queryKeys.gitUnpushed('/w/42'),
+    ]
+    for (const k of [...server, ...local]) queryClient.setQueryData(k, { seeded: true })
+    const invalidated = (k: readonly unknown[]) => queryClient.getQueryState(k)?.isInvalidated
+
+    act(() => useSessionStore.setState({ status: 'offline' }))
+    await screen.findByTestId('offline-banner')
+    fireEvent.click(screen.getByRole('button', { name: '다시 연결' }))
+    await waitFor(() => expect(useSessionStore.getState().status).toBe('online'))
+
+    for (const k of server) expect(invalidated(k), JSON.stringify(k)).toBe(true)
+    for (const k of local) expect(invalidated(k), JSON.stringify(k)).toBe(false)
   })
 })

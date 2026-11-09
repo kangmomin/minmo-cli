@@ -3,6 +3,7 @@ import { WifiOffIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useDeps } from '../app/deps'
+import { queryKeys } from '../lib/queryKeys'
 import { useSessionStore } from '../store/session'
 import { Button } from './ui/button'
 
@@ -24,8 +25,8 @@ export function OfflineBanner() {
     try {
       await api.healthz()
       setStatus('online')
-      // 오프라인 동안 실패한 읽기를 다시 불러온다
-      void queryClient.invalidateQueries()
+      // 오프라인 동안 실패한 서버 읽기만 다시 불러온다 — GitHub 목록·git 조회는 건드리지 않는다(EC-18, CR-16)
+      for (const queryKey of queryKeys.serverAll) void queryClient.invalidateQueries({ queryKey })
     } catch {
       // 계속 offline — 다음 폴링에서 재확인
     } finally {

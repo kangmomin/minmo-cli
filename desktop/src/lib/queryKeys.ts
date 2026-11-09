@@ -11,6 +11,8 @@ export const queryKeys = {
   effectiveAll: ['effective'] as const,
   effective: (owner: string, repo: string) => ['effective', owner, repo] as const,
   notes: (owner: string, repo: string, key: string) => ['notes', owner, repo, key] as const,
+  /** 서버(api-client) 응답을 캐시하는 키들 — 재연결 시 이것만 다시 불러온다. GitHub·git 은 제외(EC-18 자동 재시도 없음, CR-16) */
+  serverAll: [['settings'], ['effective'], ['notes']] as const,
   githubAll: ['github'] as const,
   githubOwners: ['github', 'owners'] as const,
   githubRepos: (owner: string) => ['github', 'repos', owner] as const,
