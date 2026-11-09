@@ -60,10 +60,10 @@ function renderWorkspace() {
 }
 
 describe('AX-01 조직·프로젝트 설정을 키보드로 연다(⚙ 버튼)', () => {
-  it('"조직 설정" 버튼에 포커스 + Enter → 설정 다이얼로그', async () => {
+  it('"my-org 조직 설정" 버튼에 포커스 + Enter → 설정 다이얼로그', async () => {
     const user = userEvent.setup()
     renderWorkspace()
-    const btn = await screen.findByRole('button', { name: '조직 설정' })
+    const btn = await screen.findByRole('button', { name: 'my-org 조직 설정' })
     btn.focus()
     await user.keyboard('{Enter}')
     const dialog = await screen.findByRole('dialog')
@@ -71,15 +71,38 @@ describe('AX-01 조직·프로젝트 설정을 키보드로 연다(⚙ 버튼)',
     expect(await within(dialog).findByLabelText('브랜치 템플릿')).toBeInTheDocument()
   })
 
-  it('"프로젝트 설정" 버튼에 포커스 + Enter → 설정 다이얼로그', async () => {
+  it('"widgets 프로젝트 설정" 버튼에 포커스 + Enter → 설정 다이얼로그', async () => {
     const user = userEvent.setup()
     renderWorkspace()
     await user.click(await screen.findByTestId('org-node-my-org'))
-    const btn = await screen.findByRole('button', { name: '프로젝트 설정' })
+    const btn = await screen.findByRole('button', { name: 'widgets 프로젝트 설정' })
     btn.focus()
     await user.keyboard('{Enter}')
     const dialog = await screen.findByRole('dialog')
     expect(await within(dialog).findByLabelText('브랜치 템플릿')).toBeInTheDocument()
+  })
+})
+
+describe('AX-21 ⚙ 버튼 이름에 대상이 들어간다', () => {
+  it('조직·저장소가 여럿이어도 버튼 이름으로 구분된다(일반 이름 "조직 설정" 단독 버튼은 없다)', async () => {
+    const user = userEvent.setup()
+    const github = createFakeGitHub({
+      listOwners: async () => [ORG, { login: 'other-org', kind: 'org' as const, avatarUrl: null }],
+      listRepos: async (o) =>
+        o.login === 'my-org'
+          ? [REPO, { owner: 'my-org', name: 'gadgets', defaultBranch: 'main' }]
+          : [{ owner: 'other-org', name: 'tools', defaultBranch: 'main' }],
+    })
+    const api = createFakeApi({ getSettings: async (s) => (s.kind === 'global' ? GLOBAL : SCOPE_EMPTY) })
+    renderWithDeps(wrap(<Workspace />), makeDeps({ api, github }))
+    expect(await screen.findByRole('button', { name: 'my-org 조직 설정' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'other-org 조직 설정' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '조직 설정' })).toBeNull()
+
+    await user.click(screen.getByTestId('org-node-my-org'))
+    expect(await screen.findByRole('button', { name: 'widgets 프로젝트 설정' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'gadgets 프로젝트 설정' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '프로젝트 설정' })).toBeNull()
   })
 })
 
@@ -165,5 +188,47 @@ describe('F-4 삭제 전 검사 실패 → 확인 대화상자에 "개수 확인
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toHaveTextContent(/미커밋 변경 확인 불가/)
     expect(within(dialog).getByRole('button', { name: '삭제' })).toBeInTheDocument()
+  })
+})
+
+describe('AX-23 삭제 확인 대화상자: 데이터 손실 경고는 설명, 삭제 실패는 role=alert (CR-14a)', () => {
+  it('미커밋·미push 경고 문구가 대화상자의 접근 가능한 설명에 들어 있다', async () => {
+    const id = worktreeId('my-org', 'widgets', '42')
+    useUiStore.setState({ worktreePathMap: { [id]: { path: '/w/42', branch: 'issue/42-add-login' } } })
+    renderRow(ISSUE, {
+      hasWorktree: true,
+      gitRun: async (args) => (args.includes('status') ? ok(' M a.ts\n M b.ts\n') : args.includes('rev-list') ? ok('3\n') : ok()),
+    })
+    fireEvent.contextMenu(screen.getByTestId('issue-row-42'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'worktree 삭제' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAccessibleDescription(/미커밋 변경 2\s*개, 미push 커밋 3\s*개\. 삭제하면 이 변경을 잃게 됩니다\. 계속할까요\?/)
+    // 경고는 본문 별도 문단이 아니라 설명(DialogDescription) 안에 있다
+    const describedBy = dialog.getAttribute('aria-describedby')
+    expect(describedBy).toBeTruthy()
+    expect(document.getElementById(describedBy!)).toHaveTextContent(/삭제하면 이 변경을 잃게 됩니다/)
+  })
+
+  it('"개수 확인 불가" 경고도 설명에 들어 있다', async () => {
+    const id = worktreeId('my-org', 'widgets', '42')
+    useUiStore.setState({ worktreePathMap: { [id]: { path: '/w/42', branch: 'issue/42-add-login' } } })
+    renderRow(ISSUE, {
+      hasWorktree: true,
+      gitRun: async (args) => (args.includes('status') ? fail('fatal: index locked', 128) : args.includes('rev-list') ? ok('0\n') : ok()),
+    })
+    fireEvent.contextMenu(screen.getByTestId('issue-row-42'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'worktree 삭제' }))
+    expect(await screen.findByRole('dialog')).toHaveAccessibleDescription(/미커밋 변경 확인 불가\s*\(git 검사 실패\)/)
+  })
+
+  it('삭제 실패 오류(<pre>)는 role=alert', async () => {
+    // worktree 경로 기록이 없으면 삭제가 not_found 로 실패한다
+    renderRow(ISSUE, { hasWorktree: true })
+    fireEvent.contextMenu(screen.getByTestId('issue-row-42'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'worktree 삭제' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.tagName).toBe('PRE')
+    expect(alert).toHaveTextContent('worktree 가 없습니다')
+    expect(screen.getByRole('dialog')).toContainElement(alert)
   })
 })

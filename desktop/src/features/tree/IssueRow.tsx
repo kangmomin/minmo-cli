@@ -146,17 +146,22 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
         <DialogContent>
           <DialogHeader>
             <DialogTitle>worktree 삭제</DialogTitle>
+            {/* 데이터 손실 경고는 설명으로 두어 대화상자가 열릴 때 함께 낭독된다(AX-23) */}
             <DialogDescription>
               {owner}/{repo} #{issue.number} {issue.title}
+              {confirm && (
+                <span className="mt-2 block text-foreground">
+                  {countText('미커밋 변경', confirm.uncommitted)}, {countText('미push 커밋', confirm.unpushed)}. 삭제하면 이 변경을 잃게 됩니다.
+                  계속할까요?
+                </span>
+              )}
             </DialogDescription>
           </DialogHeader>
-          {confirm && (
-            <p className="text-sm">
-              {countText('미커밋 변경', confirm.uncommitted)}, {countText('미push 커밋', confirm.unpushed)}. 삭제하면 이 변경을 잃게 됩니다.
-              계속할까요?
-            </p>
+          {deleteError && (
+            <pre role="alert" className="whitespace-pre-wrap rounded bg-muted p-2 text-xs text-destructive">
+              {deleteError}
+            </pre>
           )}
-          {deleteError && <pre className="whitespace-pre-wrap rounded bg-muted p-2 text-xs text-destructive">{deleteError}</pre>}
           <DialogFooter>
             <Button
               variant="outline"

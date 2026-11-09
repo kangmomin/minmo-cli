@@ -5,7 +5,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '../../components/ui/textarea'
 import { useSessionStore } from '../../store/session'
 import { useNotes } from './useNotes'
-import type { NotesSaveState } from './useNotes'
 
 export interface NotesTabProps {
   owner: string
@@ -20,19 +19,10 @@ const formatTime = (ts: string | null) => {
   return Number.isNaN(d.getTime()) ? ts : d.toLocaleTimeString()
 }
 
-function statusText(s: NotesSaveState): string {
-  switch (s.kind) {
-    case 'idle':
-      return ''
-    case 'saving':
-      return '저장 중…'
-    case 'saved':
-      return s.updatedAt ? `저장됨 ${formatTime(s.updatedAt)}` : '저장됨'
-    case 'failed':
-      if (s.code === 'body_too_large') return '저장 실패 — 메모가 1 MiB 를 넘습니다'
-      if (s.code === 'conflict') return '저장 보류 — 충돌 해결 필요'
-      return `저장 실패(${s.code})`
-  }
+function failureText(code: string): string {
+  if (code === 'body_too_large') return '저장 실패 — 메모가 1 MiB 를 넘습니다'
+  if (code === 'conflict') return '저장 보류 — 충돌 해결 필요'
+  return `저장 실패(${code})`
 }
 
 /** 메모 탭 (F-06) — 마크다운 텍스트 편집, 1초 디바운스 자동 저장 */
@@ -40,6 +30,7 @@ export function NotesTab({ owner, repo, issueKey }: NotesTabProps) {
   const n = useNotes(owner, repo, issueKey)
   const id = useId()
   const offline = useSessionStore((s) => s.status === 'offline')
+  const save = n.saveState
 
   return (
     <div className="flex h-full flex-col gap-2 p-3">
@@ -47,15 +38,20 @@ export function NotesTab({ owner, repo, issueKey }: NotesTabProps) {
         <label htmlFor={id} className="text-sm font-medium">
           메모
         </label>
-        <span
-          data-testid="notes-status"
-          data-state={n.saveState.kind}
-          // 저장 진행·완료는 polite, 실패는 즉시 알린다(AX)
-          role={n.saveState.kind === 'failed' ? 'alert' : 'status'}
-          className={n.saveState.kind === 'failed' ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
-        >
-          {statusText(n.saveState)}
-        </span>
+        {/* live region 은 role 을 바꾸지 않는다: status 컨테이너는 항상 두고(고정 문구 "저장됨"만), 실패는 새 alert 노드를 삽입해 즉시 알린다.
+            "저장 중…" 은 낭독하지 않고(타이핑마다 반복되므로), 저장 시각은 live 밖의 보이는 텍스트로 둔다(AX-20, AX-27) */}
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          {save.kind === 'saving' && <span aria-hidden="true">저장 중…</span>}
+          <span data-testid="notes-status" data-state={save.kind} role="status">
+            {save.kind === 'saved' ? '저장됨' : ''}
+          </span>
+          {save.kind === 'saved' && save.updatedAt && <span>{formatTime(save.updatedAt)}</span>}
+          {save.kind === 'failed' && (
+            <span role="alert" className="text-destructive">
+              {failureText(save.code)}
+            </span>
+          )}
+        </div>
       </div>
       {n.isLoading ? (
         <p className="text-sm text-muted-foreground">{offline ? '서버 연결 필요 — 연결되면 메모를 불러옵니다' : '불러오는 중…'}</p>

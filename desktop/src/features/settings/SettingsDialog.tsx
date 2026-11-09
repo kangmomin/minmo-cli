@@ -179,17 +179,19 @@ function SettingsForm(props: {
               value={text[field]}
               placeholder={inherited ? `상속: ${inherited[field]}` : undefined}
               aria-invalid={errors[field] ? true : undefined}
-              aria-describedby={`${fieldId(field)}-hint`}
+              aria-describedby={errors[field] ? `${fieldId(field)}-hint ${fieldId(field)}-error` : `${fieldId(field)}-hint`}
               onChange={(e) => setText((t) => ({ ...t, [field]: e.target.value }))}
               spellCheck={false}
             />
-            <p
-              id={`${fieldId(field)}-hint`}
-              role={errors[field] ? 'alert' : undefined}
-              className={errors[field] ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
-            >
-              {errors[field] ?? hint}
+            {/* 힌트는 그대로 두고 오류는 새로 삽입되는 alert 노드로 — 같은 요소의 role 을 바꾸지 않는다(AX-20) */}
+            <p id={`${fieldId(field)}-hint`} className="text-xs text-muted-foreground">
+              {hint}
             </p>
+            {errors[field] && (
+              <p id={`${fieldId(field)}-error`} role="alert" className="text-xs text-destructive">
+                {errors[field]}
+              </p>
+            )}
           </div>
         ))}
 
@@ -232,18 +234,18 @@ function SettingsForm(props: {
                 rows={5}
                 className="font-mono"
                 aria-invalid={errors.postCreateScript ? true : undefined}
-                aria-describedby={fieldId('script-hint')}
+                aria-describedby={errors.postCreateScript ? `${fieldId('script-hint')} ${fieldId('script-error')}` : fieldId('script-hint')}
                 onChange={(e) => setScript(e.target.value)}
                 spellCheck={false}
               />
-              <p
-                id={fieldId('script-hint')}
-                role={errors.postCreateScript ? 'alert' : undefined}
-                className={errors.postCreateScript ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
-              >
-                {errors.postCreateScript ??
-                  `worktree 생성 직후 1회 실행 (${platform === 'win32' ? 'PowerShell' : 'sh'}) · env MINMO_OWNER, MINMO_REPO, MINMO_BRANCH, MINMO_WORKTREE …`}
+              <p id={fieldId('script-hint')} className="text-xs text-muted-foreground">
+                {`worktree 생성 직후 1회 실행 (${platform === 'win32' ? 'PowerShell' : 'sh'}) · env MINMO_OWNER, MINMO_REPO, MINMO_BRANCH, MINMO_WORKTREE …`}
               </p>
+              {errors.postCreateScript && (
+                <p id={fieldId('script-error')} role="alert" className="text-xs text-destructive">
+                  {errors.postCreateScript}
+                </p>
+              )}
             </div>
           )}
         </div>

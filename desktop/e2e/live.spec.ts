@@ -63,7 +63,7 @@ test('실서버: 로그인 → 트리 → 프로젝트 설정 저장 → 메모 
 
   // 3) 프로젝트 설정 저장(실서버 PUT) — 키보드 접근 가능한 ⚙ 버튼 경로
   const template = `feat/{number}-live${Date.now() % 100000}`
-  await page.getByRole('button', { name: '프로젝트 설정' }).click()
+  await page.getByRole('button', { name: 'widgets 프로젝트 설정' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('브랜치 템플릿').fill(template)
   await dialog.getByRole('button', { name: '저장' }).click()

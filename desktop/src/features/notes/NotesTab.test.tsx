@@ -287,8 +287,8 @@ describe('UI State "세션 없음/401" — 미전송 본문 보존·같은 사�
   })
 })
 
-describe('AX 저장 상태 live region', () => {
-  it('notes-status 는 role=status, 실패하면 role=alert', async () => {
+describe('AX 저장 상태 live region (AX-20 / AX-27)', () => {
+  it('notes-status 는 role=status 컨테이너로 고정(role 불변), 실패하면 별도 role=alert 노드가 삽입된다', async () => {
     const t = setup({
       putNotes: async () => {
         throw apiError(400, 'invalid_issue_key')
@@ -296,10 +296,47 @@ describe('AX 저장 상태 live region', () => {
     })
     const el = await editor()
     expect(status()).toHaveAttribute('role', 'status')
+    expect(screen.queryByRole('alert')).toBeNull()
     type(el, 'x')
     await advance(1100)
     await waitFor(() => expect(status()).toHaveAttribute('data-state', 'failed'))
-    expect(status()).toHaveAttribute('role', 'alert')
+    // 같은 요소의 role 을 바꾸지 않는다
+    expect(status()).toHaveAttribute('role', 'status')
+    expect(status()).toBeEmptyDOMElement()
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('저장 실패(invalid_issue_key)')
+    expect(status()).not.toContainElement(alert)
     expect(t.api.putNotes).toHaveBeenCalled()
+  })
+
+  it('live 영역에는 고정 문구 "저장됨" 만, 저장 시각은 live 밖의 보이는 텍스트', async () => {
+    setup()
+    const el = await editor()
+    type(el, 'x')
+    await advance(1100)
+    await waitFor(() => expect(status()).toHaveAttribute('data-state', 'saved'))
+    expect(status()).toHaveTextContent(/^저장됨$/)
+    const time = screen.getByText(new Date(T1).toLocaleTimeString())
+    expect(time).toBeVisible()
+    expect(status()).not.toContainElement(time)
+    expect(time.closest('[role="status"]')).toBeNull()
+  })
+
+  it('"저장 중…" 은 화면에는 보이되 스크린 리더 낭독에서 제외(live 영역 밖, aria-hidden)', async () => {
+    const pending = deferred<Notes>()
+    setup({ putNotes: () => pending.promise })
+    const el = await editor()
+    type(el, 'x')
+    await advance(1100)
+    await waitFor(() => expect(status()).toHaveAttribute('data-state', 'saving'))
+    const saving = screen.getByText('저장 중…')
+    expect(saving).toBeVisible()
+    expect(saving).toHaveAttribute('aria-hidden', 'true')
+    expect(status()).toBeEmptyDOMElement()
+    await act(async () => {
+      pending.resolve({ body: 'x', updatedAt: T1 })
+    })
+    await waitFor(() => expect(status()).toHaveAttribute('data-state', 'saved'))
+    expect(screen.queryByText('저장 중…')).toBeNull()
   })
 })

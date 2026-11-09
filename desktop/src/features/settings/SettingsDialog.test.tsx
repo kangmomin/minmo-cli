@@ -253,4 +253,50 @@ describe('AX 오류 안내 연결', () => {
     const alert = await screen.findByRole('alert')
     expect(etc.getAttribute('aria-describedby')).toContain(alert.id)
   })
+
+  it('AX-20 오류가 나도 힌트 <p> 는 그대로(role 없음), 오류는 별도 alert 노드, aria-describedby 는 힌트+오류 둘 다', async () => {
+    const { user } = setup({
+      scope: ORG,
+      put: async () => {
+        throw apiError(400, 'invalid_template', { field: 'etcBranchName' })
+      },
+    })
+    const etc = await field('기타 브랜치명')
+    const hintId = etc.getAttribute('aria-describedby')!
+    const hint = document.getElementById(hintId)!
+    expect(hint).toHaveTextContent('★기타 이슈의 브랜치')
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    await replace(user, etc, 'a b')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    const alert = await screen.findByRole('alert')
+    // 힌트는 같은 요소·같은 내용·role 없음 — role 을 status↔alert 로 바꾸지 않는다
+    expect(document.getElementById(hintId)).toBe(hint)
+    expect(hint).toHaveTextContent('★기타 이슈의 브랜치')
+    expect(hint).not.toHaveAttribute('role')
+    expect(alert).toHaveTextContent('템플릿 형식이 올바르지 않습니다')
+    expect(alert).not.toBe(hint)
+    expect(etc.getAttribute('aria-describedby')?.split(' ')).toEqual([hintId, alert.id])
+    expect(etc).toHaveAccessibleDescription(/★기타 이슈의 브랜치.*템플릿 형식이 올바르지 않습니다/)
+  })
+
+  it('AX-20 스크립트 필드도 힌트 유지 + 별도 alert, describedby 둘 다', async () => {
+    const { user } = setup({
+      scope: ORG,
+      put: async () => {
+        throw apiError(400, 'script_too_large', { field: 'postCreateScript' })
+      },
+    })
+    await field('브랜치 템플릿')
+    await user.click(screen.getByRole('radio', { name: '직접 입력' }))
+    const script = await field('스크립트 내용')
+    const hintId = script.getAttribute('aria-describedby')!
+    await replace(user, script, 'echo hi')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('스크립트가 64 KiB 를 넘습니다')
+    expect(document.getElementById(hintId)).toHaveTextContent(/worktree 생성 직후 1회 실행/)
+    expect(document.getElementById(hintId)).not.toHaveAttribute('role')
+    expect(script.getAttribute('aria-describedby')?.split(' ')).toEqual([hintId, alert.id])
+  })
 })

@@ -50,12 +50,12 @@ export function OrgNode({ owner, onOpenSettings }: OrgNodeProps) {
             <ContextMenuItem onSelect={openSettings}>조직 설정</ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
-        {/* 우클릭 메뉴는 키보드로 열 수 없다 → 같은 동작의 버튼을 둔다(AX-01, WCAG 2.1.1) */}
+        {/* 우클릭 메뉴는 키보드로 열 수 없다 → 같은 동작의 버튼을 둔다(AX-01, WCAG 2.1.1). 이름에 대상을 넣어 여러 개를 구분한다(AX-21) */}
         <Button
           size="icon-sm"
           variant="ghost"
-          aria-label="조직 설정"
-          title="조직 설정"
+          aria-label={`${owner.login} 조직 설정`}
+          title={`${owner.login} 조직 설정`}
           onClick={openSettings}
           className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
         >

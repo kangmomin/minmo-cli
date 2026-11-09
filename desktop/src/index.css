@@ -24,7 +24,8 @@
   --warning: oklch(0.828 0.189 84.429);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  /* 포커스 표시는 인접색 대비 3:1 이상(WCAG 1.4.11): 흰 배경 기준 약 4.7:1 */
+  --ring: oklch(0.556 0 0);
 }
 
 .dark {
@@ -76,7 +77,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
   html,
   body,
