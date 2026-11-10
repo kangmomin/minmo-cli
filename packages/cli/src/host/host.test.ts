@@ -111,3 +111,29 @@ describe.skipIf(!posix)('생성 후 스크립트(sh)', () => {
     await expect(done).resolves.toEqual({ exitCode: null, cancelled: true })
   })
 })
+
+const hasTmux = posix && (await run('tmux', ['-V'])).code === 0
+
+describe.skipIf(!hasTmux)('tmux 세션 정리(실제 tmux)', () => {
+  it('태그로 세션을 찾아 그 안의 프로세스만 끝내고, worktree 안에서 띄운 tmux 서버·다른 세션은 남긴다', async () => {
+    const { ensureSession, killByCwd, listSessions } = await import('./tmux')
+    const base = await tmp()
+    const wt = join(base, 'acme', 'w|t') // 경로의 '|' 도 다룬다
+    await mkdir(wt, { recursive: true })
+    // 서버를 worktree 안에서 처음 띄운다(서버 cwd = worktree)
+    await run('tmux', ['-L', 'minmo', 'new-session', '-d', '-s', 'other-test', '-c', tmpdir()], { cwd: wt })
+    const name = await ensureSession(wt, 'test')
+    const sessions = await listSessions()
+    const mine = sessions.find((s) => s.name === name)!
+    expect(mine.worktree).toBe(wt)
+    expect(Number.isInteger(mine.serverPid)).toBe(true)
+    await run('tmux', ['-L', 'minmo', 'send-keys', '-t', `=${name}`, 'sleep 1011 & setsid sleep 1012 &', 'Enter'])
+    await new Promise((r) => setTimeout(r, 800))
+    expect(await killByCwd(wt)).toBe(1)
+    expect((await run('pgrep', ['-f', 'sleep 101[12]'])).code).toBe(1)
+    expect(() => process.kill(mine.serverPid, 0)).not.toThrow()
+    expect((await listSessions()).map((s) => s.name)).toContain('other-test')
+    await run('tmux', ['-L', 'minmo', 'kill-session', '-t', '=other-test'])
+    await rm(base, { recursive: true, force: true })
+  })
+})

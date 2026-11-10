@@ -49,13 +49,16 @@ export function attach(name: string, env: NodeJS.ProcessEnv = process.env): numb
 type Session = { name: string; worktree: string; serverPid: number }
 
 export async function listSessions(): Promise<Session[]> {
-  const r = await tmux(['list-sessions', '-F', '#{session_name}\t#{@minmo_worktree}\t#{pid}'])
+  // tmux 는 -F 출력의 제어 문자(탭 등)를 '_' 로 바꾸므로 '|' 로 나눈다. 경로에 '|' 가 있어도 되게 경로는 마지막에 둔다
+  const r = await tmux(['list-sessions', '-F', '#{session_name}|#{pid}|#{@minmo_worktree}'])
   if (r.code !== 0) return []
   return r.stdout
     .split('\n')
-    .map((l) => l.split('\t'))
-    .filter(([name]) => name)
-    .map(([name, wt, pid]) => ({ name, worktree: wt ?? '', serverPid: Number(pid) }))
+    .filter(Boolean)
+    .map((l) => {
+      const [name, pid, ...wt] = l.split('|')
+      return { name, worktree: wt.join('|'), serverPid: Number(pid) }
+    })
 }
 
 const inside = (child: string, parent: string) => {

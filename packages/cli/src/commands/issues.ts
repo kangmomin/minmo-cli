@@ -133,7 +133,12 @@ export async function removeWorktree(ctx: Ctx, target: IssueTarget, opts: { yes?
   if (!ctx.state.worktrees[worktreeId(target.owner, target.repo, target.key)]) {
     throw new CliError(`이 기기에 worktree 가 없습니다: ${target.owner}/${target.repo}#${target.key}`)
   }
-  let res = await ctx.worktree.deleteWorktree(target, { confirmed: !!opts.yes })
+  // 호스트·git 오류(예: 지울 worktree 의 터미널 안에서 실행)는 스택 없이 안내만
+  const del = (confirmed: boolean) =>
+    ctx.worktree.deleteWorktree(target, { confirmed }).catch((e: unknown) => {
+      throw e instanceof CliError ? e : new CliError(e instanceof ApiError ? serverErrorMessage(e, ctx.server) : e instanceof Error ? e.message : String(e))
+    })
+  let res = await del(!!opts.yes)
   if (res.status === 'needs_confirmation') {
     const what = [
       res.uncommitted === null ? '미커밋 변경(확인 실패)' : res.uncommitted > 0 ? `미커밋 변경 ${res.uncommitted}개` : '',
@@ -143,7 +148,7 @@ export async function removeWorktree(ctx: Ctx, target: IssueTarget, opts: { yes?
       .join(', ')
     const ok = await (opts.ask ?? confirm)(`${what} 이(가) 있습니다. 그래도 삭제할까요?`)
     if (!ok) throw new CliError('삭제를 취소했습니다(확인 없이 지우려면 --yes)', 1)
-    res = await ctx.worktree.deleteWorktree(target, { confirmed: true })
+    res = await del(true)
   }
   if (res.status === 'deleted') ctx.out.log(`삭제했습니다: ${target.owner}/${target.repo}#${target.key} (터미널·프로세스 정리 포함)`)
 }
