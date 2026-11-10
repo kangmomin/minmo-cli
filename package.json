@@ -9,8 +9,9 @@
   "scripts": {
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "lint": "npm run lint --workspace desktop",
-    "build": "npm run build --workspace desktop",
-    "e2e": "npm run e2e --workspace desktop"
+    "lint": "npm run lint --workspaces --if-present",
+    "build": "npm run build --workspace desktop && npm run build --workspace minmo-cli",
+    "e2e": "npm run e2e --workspace desktop",
+    "pack:cli": "npm pack --workspace minmo-cli --pack-destination dist"
   }
 }

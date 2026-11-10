@@ -7,7 +7,7 @@ import type { Effective, SettingsValues } from '@minmo/api-client'
 
 import { createFakeHost, deferred, fail, flush, ok } from './testing'
 import type { CmdResult, RunOptions, ScriptRunResult } from './host'
-import { createWorktreeService, localFilesDir, scriptFor, sparseDirs, worktreeId } from './worktree'
+import { createWorktreeService, isAbsoluteFor, localFilesDir, scriptFor, sparseDirs, worktreeId } from './worktree'
 import type { IssueTarget, SetupLogEvent, WorktreeEntry } from './worktree'
 
 const HOME = '/home/u'
@@ -786,5 +786,22 @@ describe('F-4 EC-15 삭제 전 검사 실패 → 개수 불명으로 확인 요�
     const t = setupFailing('status')
     await expect(t.svc.deleteWorktree(ISSUE42, { confirmed: true })).resolves.toEqual({ status: 'deleted' })
     expect(t.find(t.isRemove)[0]).toContain(P)
+  })
+})
+
+describe('openIssue — 설정 경로가 이 OS 의 절대 경로가 아니면 중단(기기 간 설정 공유)', () => {
+  it('Linux 에서 Windows 경로 → path_not_absolute, clone 하지 않음', async () => {
+    const t = setup({ values: { mainClonePath: 'C:/ws/{owner}/{repo}/_main' } })
+    await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'path_not_absolute' })
+    expect(t.find((a) => a[0] === 'clone')).toHaveLength(0)
+  })
+
+  it('isAbsoluteFor: Windows 는 드라이브·UNC, 그 외는 / 시작', () => {
+    expect(isAbsoluteFor('C:/x', 'win32')).toBe(true)
+    expect(isAbsoluteFor('c:\\x', 'win32')).toBe(true)
+    expect(isAbsoluteFor('\\\\server\\share', 'win32')).toBe(true)
+    expect(isAbsoluteFor('/x', 'win32')).toBe(false)
+    expect(isAbsoluteFor('/home/u/x', 'linux')).toBe(true)
+    expect(isAbsoluteFor('C:/x', 'darwin')).toBe(false)
   })
 })

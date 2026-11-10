@@ -86,6 +86,7 @@ export type WorktreeErrorCode =
   | 'server_required'
   | 'etc_not_deletable'
   | 'not_found'
+  | 'path_not_absolute'
 
 export class WorktreeError extends Error {
   code: WorktreeErrorCode
@@ -165,6 +166,11 @@ export function sparseDirs(v: string): string[] {
 /** 생성 후 스크립트는 실행 셸이 OS 마다 달라 두 벌이다 — Windows 는 PowerShell, 그 외(macOS·원격 CLI)는 sh */
 export function scriptFor(values: Pick<SettingsValues, 'postCreateScript' | 'postCreateScriptPosix'>, platform: Platform): string {
   return platform === 'win32' ? values.postCreateScript : values.postCreateScriptPosix
+}
+
+/** 렌더한 경로가 이 OS 의 절대 경로인지 — Windows 는 드라이브·UNC, 그 외는 / 시작 */
+export function isAbsoluteFor(path: string, platform: Platform): boolean {
+  return platform === 'win32' ? /^[A-Za-z]:[\\/]/.test(path) || /^\\\\[^\\]/.test(path) : path.startsWith('/')
 }
 
 /** worktreePathMap 키 */
@@ -272,6 +278,16 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     const { branch, ctx } = resolved
     const main = renderPath(values.mainClonePath, ctx)
     const path = renderPath(values.worktreePath, ctx)
+    // 설정은 기기 간 공유된다 — 다른 OS 용 절대 경로(예: Linux 에서 C:\...)로는 clone 하지 않는다
+    for (const p of [main, path]) {
+      if (!isAbsoluteFor(p, platform)) {
+        log(issueId, 'effective', 'error', `이 OS 에서 쓸 수 없는 경로입니다: ${p}`)
+        throw new WorktreeError('path_not_absolute', {
+          path: p,
+          message: `이 OS 에서 쓸 수 없는 경로입니다(절대 경로 아님): ${p} — 설정의 경로는 ~ 로 시작하게 하세요`,
+        })
+      }
+    }
     // EC-23: worktree 가 메인 clone 과 같거나 그 하위면 중단
     if (isSameOrInside(path, main, platform)) {
       log(issueId, 'effective', 'error', `worktree 경로가 메인 clone 과 겹칩니다: ${path}`)

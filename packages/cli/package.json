@@ -1,0 +1,42 @@
+{
+  "name": "minmo-cli",
+  "version": "0.1.0",
+  "description": "minmo 원격 관리 CLI — SSH 로 접속한 서버에서 GitHub 이슈 단위 worktree 를 관리하는 TUI·명령어",
+  "type": "module",
+  "bin": {
+    "minmo": "dist/minmo.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "commander": "^15.1.0",
+    "ink": "^8.0.0",
+    "react": "^19.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@minmo/api-client": "*",
+    "@minmo/core": "*",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^16.5.0",
+    "ink-testing-library": "^4.0.0",
+    "tsup": "^9.0.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^3.2.7"
+  }
+}

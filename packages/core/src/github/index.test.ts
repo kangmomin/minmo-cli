@@ -234,3 +234,21 @@ describe('PF-01 개별 보충 중 삭제·이전된 이슈(404/410) → 그 번�
     expect(t.rest.fn).not.toHaveBeenCalled()
   })
 })
+
+describe('getRepo · getIssue (원격 CLI 의 이슈 지정용)', () => {
+  it('getRepo 는 GitHub 표기(대소문자)로, getIssue 는 PR 이면 not_found', async () => {
+    const t = setup({
+      route: (u) =>
+        u.pathname === '/repos/acme/widgets'
+          ? json({ name: 'Widgets', owner: { login: 'Acme' }, default_branch: 'main' })
+          : u.pathname === '/repos/acme/widgets/issues/7'
+            ? json({ number: 7, title: 'Seven', state: 'open', html_url: 'u7' })
+            : u.pathname === '/repos/acme/widgets/issues/8'
+              ? json({ number: 8, title: 'PR', state: 'open', html_url: 'u8', pull_request: {} })
+              : json({}, { status: 404 }),
+    })
+    await expect(t.gh.getRepo('acme', 'widgets')).resolves.toEqual({ owner: 'Acme', name: 'Widgets', defaultBranch: 'main' })
+    await expect(t.gh.getIssue('acme', 'widgets', 7)).resolves.toEqual({ number: 7, title: 'Seven', state: 'open', htmlUrl: 'u7' })
+    await expect(t.gh.getIssue('acme', 'widgets', 8)).rejects.toMatchObject({ code: 'not_found' })
+  })
+})
