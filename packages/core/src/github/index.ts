@@ -1,5 +1,5 @@
 // GitHubClient — gh(우선) / REST(폴백). 서버 캐시 없음(D-22).
-import type { TauriApi } from '../tauri'
+import type { GhHost } from '../host'
 import { GhFailure, createGhTransport } from './ghCli'
 import { createRestTransport } from './rest'
 import type { GitHubTransport } from './transport'
@@ -13,7 +13,7 @@ export const PER_PAGE = 100
 export const MAX_PAGES = 5
 
 export interface GitHubClientDeps {
-  tauri: Pick<TauriApi, 'ghAvailable' | 'ghRun'>
+  tauri: Pick<GhHost, 'ghAvailable' | 'ghRun'>
   fetch: typeof fetch
   /** 서버 E4 로 받은 GitHub 토큰 (REST 폴백용) */
   getToken(): Promise<string>

@@ -1,30 +1,24 @@
 // Tauri invoke 래퍼 인터페이스. UI·도메인 코드는 이 인터페이스에만 의존하고
 // 실제 구현(invoke)과 tauri.mock.ts(dev·Playwright) 를 getTauri() 로 고른다.
 import type { Platform } from '@minmo/api-client'
+import type { CmdResult, GhHost, RunOptions, ScriptLogEvent, ScriptRunRequest, ScriptRunResult, Unlisten, WorktreeHost } from '@minmo/core'
 
 import { createTauriMock } from './tauri.mock'
 
 export type { Platform }
-
-export type CmdResult = { code: number; stdout: string; stderr: string }
-export type RunOptions = { cwd?: string; env?: Record<string, string> }
-export type Unlisten = () => void
+// 호스트 공통 타입은 원격 CLI 와 함께 쓰도록 @minmo/core 에 있다
+export type { CmdResult, RunOptions, ScriptLogEvent, ScriptRunRequest, ScriptRunResult, Unlisten } from '@minmo/core'
 
 export type PtySpawnRequest = { cwd: string; cols: number; rows: number }
 export type PtyDataEvent = { id: string; data: string }
-
-/** runId 는 호출자가 만든다(취소를 위해 완료 전에 알아야 함) */
-export type ScriptRunRequest = { runId: string; cwd: string; script: string; env: Record<string, string> }
-/** 프로세스 종료 시 resolve. 취소되면 cancelled=true, exitCode=null */
-export type ScriptRunResult = { exitCode: number | null; cancelled: boolean }
-export type ScriptLogEvent = { runId: string; stream: 'stdout' | 'stderr'; line: string }
 
 export const KEYCHAIN_KEYS = {
   session: 'minmo.session',
   githubToken: 'minmo.github-token',
 } as const
 
-export interface TauriApi {
+/** 데스크탑 전용 기능(PTY·키체인·딥링크 등)을 더한 Tauri 호스트 — worktree·GitHub 공용 인터페이스를 모두 만족한다 */
+export interface TauriApi extends WorktreeHost, GhHost {
   /** git <args> — non-zero 종료도 reject 하지 않고 code 로 돌려준다 */
   gitRun(args: string[], opts?: RunOptions): Promise<CmdResult>
   ghRun(args: string[], opts?: RunOptions & { stdin?: string }): Promise<CmdResult>

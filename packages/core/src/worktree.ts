@@ -1,10 +1,10 @@
 // 이슈 열기(openIssue)·worktree 삭제(deleteWorktree) 도메인 서비스.
-// Frontend Plan "src/lib/worktree.ts" 규칙을 따른다. 모든 OS 접근은 TauriApi 경유.
+// Frontend Plan "src/lib/worktree.ts" 규칙을 따른다. 모든 OS 접근은 호스트 인터페이스(데스크탑 Tauri·CLI Node) 경유.
 import { TemplateError, isSameOrInside, normalizePath, renderBranch, renderPath, slug as slugOf } from '@minmo/api-client'
 import type { Effective, PathContext, Platform, SettingsValues } from '@minmo/api-client'
 
 import { isOfflineError } from './apiErrors'
-import type { CmdResult, ScriptRunResult, TauriApi } from './tauri'
+import type { CmdResult, GitHost, ScriptRunResult, WorktreeHost } from './host'
 
 export type IssueTarget = {
   owner: string
@@ -50,7 +50,7 @@ export function issueBranchContext(
 }
 
 /** origin 어느 브랜치에도 없는 HEAD 커밋 수. git 실패 시 null(개수 불명) */
-async function tryCountUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promise<number | null> {
+async function tryCountUnpushed(gitRun: GitHost['gitRun'], cwd: string): Promise<number | null> {
   const r = await gitRun(['-C', cwd, 'rev-list', '--count', 'HEAD', '--not', '--remotes=origin'])
   if (r.code !== 0) return null
   const n = Number.parseInt(r.stdout.trim(), 10)
@@ -58,7 +58,7 @@ async function tryCountUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promis
 }
 
 /** 변경 탭 "미push" 표시용. 실패 시 0 — 삭제 판단에는 쓰지 않는다(inspect 는 실패를 null 로 구분) */
-export async function countUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promise<number> {
+export async function countUnpushed(gitRun: GitHost['gitRun'], cwd: string): Promise<number> {
   return (await tryCountUnpushed(gitRun, cwd)) ?? 0
 }
 
@@ -118,7 +118,7 @@ export type DeleteCheck = { uncommitted: number | null; unpushed: number | null 
 export type DeleteResult = { status: 'deleted' } | ({ status: 'needs_confirmation' } & DeleteCheck)
 
 export interface WorktreeDeps {
-  tauri: TauriApi
+  tauri: WorktreeHost
   getEffective(owner: string, repo: string): Promise<Effective>
   defaultBranch(owner: string, repo: string): Promise<string>
   pathStore: WorktreePathStore

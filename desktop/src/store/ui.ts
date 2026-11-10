@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 
 import { closePane, leaf, leafIds, splitPane } from '../features/terminal/panes'
 import type { PaneNode, SplitDir } from '../features/terminal/panes'
-import type { WorktreeEntry, WorktreePathStore } from '../lib/worktree'
+import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
 
 export type WorkTab = 'terminal' | 'changes' | 'notes'
 export type Theme = 'black' | 'light'

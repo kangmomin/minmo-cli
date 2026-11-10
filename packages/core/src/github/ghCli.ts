@@ -1,5 +1,5 @@
 // gh CLI 전송 계층 (우선 경로). `gh api` 로 REST 와 같은 경로를 호출한다.
-import type { TauriApi } from '../tauri'
+import type { GhHost } from '../host'
 import { GitHubError } from './types'
 import type { GitHubTransport, TransportResponse } from './transport'
 
@@ -16,7 +16,7 @@ export class GhFailure extends Error {
   }
 }
 
-export function createGhTransport(tauri: Pick<TauriApi, 'ghRun'>): GitHubTransport {
+export function createGhTransport(tauri: Pick<GhHost, 'ghRun'>): GitHubTransport {
   async function run(args: string[], stdin?: string): Promise<TransportResponse> {
     const res = await tauri.ghRun(args, stdin === undefined ? undefined : { stdin })
     if (res.code !== 0) {

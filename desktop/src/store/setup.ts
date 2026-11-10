@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { IssueTarget, ScriptOutcome, SetupLogEvent } from '../lib/worktree'
+import type { IssueTarget, ScriptOutcome, SetupLogEvent } from '@minmo/core'
 
 export type IssueOpenState =
   | { phase: 'opening' }

@@ -1,8 +1,8 @@
 import { useMemo, useRef } from 'react'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
-import { worktreeId } from '../../lib/worktree'
-import type { IssueTarget } from '../../lib/worktree'
+import { worktreeId } from '@minmo/core'
+import type { IssueTarget } from '@minmo/core'
 import { useSetupStore } from '../../store/setup'
 import type { IssueOpenState } from '../../store/setup'
 import { useUiStore } from '../../store/ui'

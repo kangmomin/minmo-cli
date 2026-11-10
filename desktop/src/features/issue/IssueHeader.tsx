@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
-import type { IssueTarget } from '../../lib/worktree'
+import type { IssueTarget } from '@minmo/core'
 import type { IssueOpenState } from '../../store/setup'
 import { LocalFilesDialog } from './LocalFilesDialog'
 import { useIssueActions } from './useWorktree'

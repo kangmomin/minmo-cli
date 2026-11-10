@@ -5,7 +5,7 @@ import type { Mock } from 'vitest'
 import { ApiError } from '@minmo/api-client'
 import type { ApiClient, ApiErrorCode, Notes } from '@minmo/api-client'
 
-import type { GitHubClient } from '../lib/github'
+import type { GitHubClient } from '@minmo/core'
 import type { TauriApi } from '../lib/tauri'
 import { ok } from '../lib/tauri.mock'
 

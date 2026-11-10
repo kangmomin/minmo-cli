@@ -7,7 +7,7 @@ import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
-import type { IssueTarget } from '../../lib/worktree'
+import type { IssueTarget } from '@minmo/core'
 import { useIssueActions } from './useWorktree'
 
 export interface LocalFilesDialogProps {

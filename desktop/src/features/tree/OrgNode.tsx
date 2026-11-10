@@ -5,7 +5,7 @@ import type { SettingsScope } from '@minmo/api-client'
 
 import { Button } from '../../components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../../components/ui/context-menu'
-import type { GitHubOwner } from '../../lib/github'
+import type { GitHubOwner } from '@minmo/core'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
 import { RepoNode } from './RepoNode'

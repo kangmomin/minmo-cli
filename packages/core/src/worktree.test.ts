@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { Effective, SettingsValues } from '@minmo/api-client'
 
-import { createFakeTauri, deferred, fail, flush, ok } from '../test/fakes'
-import type { CmdResult, RunOptions, ScriptRunResult } from './tauri'
+import { createFakeHost, deferred, fail, flush, ok } from './testing'
+import type { CmdResult, RunOptions, ScriptRunResult } from './host'
 import { createWorktreeService, localFilesDir, scriptFor, sparseDirs, worktreeId } from './worktree'
 import type { IssueTarget, SetupLogEvent, WorktreeEntry } from './worktree'
 
@@ -212,7 +212,7 @@ function setup(o: SetupOpts = {}) {
     sim.existing.add(MAIN)
     sim.mainIsRepo = o.sim?.mainIsRepo ?? true
   }
-  const fake = createFakeTauri({
+  const tauri = createFakeHost({
     gitRun: (args, opts) => simGit(sim, args, opts),
     pathExists: async (p) => sim.existing.has(p),
     removeDir: async (p) => {
@@ -237,7 +237,7 @@ function setup(o: SetupOpts = {}) {
   const logs: SetupLogEvent[] = []
   let n = 0
   const svc = createWorktreeService({
-    tauri: fake.tauri,
+    tauri,
     getEffective,
     defaultBranch,
     pathStore,
@@ -246,7 +246,6 @@ function setup(o: SetupOpts = {}) {
     onLog: (e) => logs.push(e),
     newRunId: () => `run-${++n}`,
   })
-  const tauri = fake.tauri
   const cmds = () => tauri.gitRun.mock.calls.map(([args, opts]) => normalize(args, opts)[0])
   const find = (pred: (a: string[]) => boolean) => cmds().filter(pred)
   const isAdd = (a: string[]) => a[0] === 'worktree' && a[1] === 'add'

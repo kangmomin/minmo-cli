@@ -1,7 +1,7 @@
 // 변경 탭 git·PR 동작 (F-05) — 근거: AC-09, AC-10, AC-11, EC-11, EC-12, EC-13, EC-14, A-07(draft 기본)
 import { describe, expect, it } from 'vitest'
 
-import { GitHubError } from '../../lib/github'
+import { GitHubError } from '@minmo/core'
 import type { CmdResult, RunOptions } from '../../lib/tauri'
 import { createFakeGitHub, createFakeTauri, fail, ok } from '../../test/fakes'
 import { GitError, buildPrDraft, createGitOps, parsePorcelainV2 } from './useGit'
