@@ -143,11 +143,12 @@ Tauri 네이티브 빌드는 Rust(cargo)가 필요하다. 서버 주소는 `VITE
 
 원격 서버에 `minmo` CLI 를 설치하고 SSH 로 접속해, 그 서버의 worktree 를 터미널에서 관리한다(TUI + 명령어).
 설정·메모·보일 저장소는 이 PC 의 minmo 서버에 있고, 원격 CLI 는 **SSH 역터널**로 그 서버를 쓴다(서버는 계속 `127.0.0.1` 에서만 듣는다).
+역터널 없이(다른 기기에서 SSH 로 들어와도) 쓰려면 **로컬 모드**로 바꾼다 — 아래 [서버 모드 / 로컬 모드](#서버-모드--로컬-모드).
 
 ### 요구 사항(원격)
 
 - Linux 또는 macOS, Node.js 22.12 이상, git 2.31 이상, tmux(터미널)
-- GitHub: `gh auth login` + `gh auth setup-git` 권장(private 저장소 clone). gh 가 없으면 `GITHUB_TOKEN` 또는 서버의 GitHub 토큰으로 REST 를 쓴다
+- GitHub: `gh auth login` + `gh auth setup-git` 권장(private 저장소 clone). gh 가 없으면 `GITHUB_TOKEN` 또는 서버의 GitHub 토큰으로 REST 를 쓴다(로컬 모드는 서버 토큰을 쓰지 않으므로 gh 나 `GITHUB_TOKEN` 이 꼭 있어야 한다)
 
 ### 설치
 
@@ -179,7 +180,7 @@ Host my-server
 2. 원격에서 `minmo login ABCD-EFGH` — 이 기기 이름(hostname)으로 세션이 만들어지고, 데스크탑의 같은 다이얼로그에서 확인·끊기 할 수 있다
 3. `minmo doctor` 로 터널·로그인·git·gh·tmux 점검
 
-자격 증명은 `~/.config/minmo/credentials.json`(권한 0600), worktree 기록은 `~/.config/minmo/state.json` 에 둔다.
+자격 증명은 `~/.config/minmo/credentials.json`(권한 0600), 모드·로컬 값은 `config.json`, worktree 기록·서버 사본은 `state.json` 에 둔다.
 CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인한다(다른 서버로 연결된 터널에 토큰을 보내지 않게).
 
 ### 사용
@@ -191,14 +192,32 @@ CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인�
 | `minmo open owner/repo#42` | worktree 준비 후 tmux 터미널(`--no-attach` 면 경로만) |
 | `minmo rm owner/repo#42 [--yes]` | worktree 삭제 — 그 안의 tmux 터미널·프로세스도 정리 |
 | `minmo note owner/repo#42` | 메모를 `$EDITOR` 로 편집(다른 기기와 충돌하면 내 내용을 파일로 보존) |
-| `minmo repos [add\|rm\|all] …` | 보일 저장소(데스크탑과 공유, `owner/*` 는 조직 전체) |
-| `minmo config [get\|set] … [--org o\|--project o/r]` | 설정(데스크탑과 공유). 여러 줄 값은 `@파일`, 조직·프로젝트 상속은 `-` |
+| `minmo repos [add\|rm\|all\|reset] …` | 보일 저장소(서버 모드는 데스크탑과 공유, 로컬 모드는 이 기기. `owner/*` 는 조직 전체, `reset` 은 로컬 모드에서 서버 사본으로) |
+| `minmo config [get\|set] … [--org o\|--project o/r]` | 설정(서버 모드는 데스크탑과 공유, 로컬 모드는 이 기기). 여러 줄 값은 `@파일`, `-` 는 상속(서버)·로컬 값 지움(로컬) |
+| `minmo mode [local\|server]` | 모드 보기·바꾸기 |
 | `minmo sessions [revoke <id>]` | 로그인된 기기 |
 
 - 터미널은 전용 tmux 서버(`tmux -L minmo`)의 세션이다. 분할은 tmux 기본 키를 쓴다.
 - 원격에서는 생성 후 스크립트로 **`postCreateScriptPosix`**(sh)를 실행한다. `postCreateScript` 는 Windows(PowerShell) 용이다.
 - 설정의 경로는 기기 간에 공유되므로 `~` 로 시작하게 둔다. 이 OS 에서 쓸 수 없는 경로(예: Linux 에서 `C:\…`)면 clone 하지 않고 알려 준다.
 - worktree 를 지우면 그 worktree 를 연 tmux 세션의 프로세스 트리와(Linux) cwd 가 그 안인 같은 사용자 프로세스를 끝낸다. 실행 중인 `minmo` 자신과 그 조상 셸은 제외한다.
+
+### 서버 모드 / 로컬 모드
+
+`minmo mode local` · `minmo mode server` 로 **명시적으로** 바꾼다(기본은 서버 모드). 모드는 `~/.config/minmo/config.json` 에 남는다.
+
+| | 서버 모드 | 로컬 모드 |
+|---|---|---|
+| 연결 | 이 PC 에서 연 SSH 역터널 필요 | 필요 없음(어느 기기에서 SSH 해도 됨) |
+| 로그인 | `minmo login <코드>` 필요 | 필요 없음 |
+| 설정·보일 저장소 | 서버 값(데스크탑과 공유) | **로컬 값 → 서버 사본 → 기본값**. `minmo config`·`minmo repos` 는 로컬 값을 바꾸고 서버로 올리지 않는다 |
+| 메모 | 사용 | 사용 안 함(서버 모드에서만) |
+| GitHub | gh → `GITHUB_TOKEN` → 서버 토큰 | gh → `GITHUB_TOKEN`(둘 중 하나 필수) |
+| worktree 열기·삭제·tmux·프로세스 정리 | 같음 | 같음 |
+
+- **서버 사본:** 서버 모드에서 받은 값(전역 설정·보일 저장소·연 저장소의 설정)을 `state.json` 에 남겨 로컬 모드의 기본값으로 쓴다. `minmo mode local` 을 실행할 때 서버에 닿고 로그인돼 있으면 사본을 새로 받는다 — worktree 가 있거나 보일 저장소로 고른 저장소의 설정까지. 사본에 없는 저장소의 서버 조직·프로젝트 설정은 로컬 모드에서 쓰이지 않는다(전역 사본·기본값).
+- **설정 우선순위(로컬 모드):** 기본값 ← 서버 사본 ← 로컬 전역 ← 로컬 조직 ← 로컬 프로젝트. 로컬 값은 서버 규칙과 같은 검증을 거친다. `minmo config get --effective owner/repo` 가 값마다 출처를 보여 준다.
+- worktree 기록은 두 모드가 함께 쓴다 — 어느 모드에서 만든 worktree 든 다른 모드에서 열고 지울 수 있다.
 
 ## Windows 안내
 
