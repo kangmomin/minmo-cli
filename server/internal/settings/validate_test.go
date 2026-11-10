@@ -87,7 +87,7 @@ func fillGlobal(in Input) Input {
 	def := map[string]string{
 		"branchTemplate": "issue/{number}-{slug}", "etcBranchName": "etc",
 		"worktreePath": "~/minmo-workspaces/{owner}/{repo}/{branch}", "mainClonePath": "~/minmo-workspaces/{owner}/{repo}/_main",
-		"postCreateScript": "",
+		"postCreateScript": "", "sparsePaths": "",
 	}
 	if in.BranchTemplate == nil {
 		in.BranchTemplate = sp(def["branchTemplate"])
@@ -103,6 +103,9 @@ func fillGlobal(in Input) Input {
 	}
 	if in.PostCreateScript == nil {
 		in.PostCreateScript = sp(def["postCreateScript"])
+	}
+	if in.SparsePaths == nil {
+		in.SparsePaths = sp(def["sparsePaths"])
 	}
 	return in
 }
@@ -207,6 +210,30 @@ func TestValidate_PostCreateScript_CT28(t *testing.T) {
 	})
 }
 
+// CT-40: sparsePaths (줄바꿈 구분 상대 디렉터리 · 빈 줄 무시 · "" = 전체 체크아웃)
+func TestValidate_SparsePaths_CT40(t *testing.T) {
+	ok := func(name, v string) vcase { return vcase{name: name, in: Input{SparsePaths: sp(v)}} }
+	bad := func(name, v string) vcase {
+		return vcase{name: name, in: Input{SparsePaths: sp(v)}, code: "invalid_sparse_paths", field: "sparsePaths"}
+	}
+	runValidate(t, allScopes, []vcase{
+		ok("empty = 전체", ""),
+		ok("dirs", "desktop\npackages/api-client/\n\n  server  "),
+		ok("crlf", "desktop\r\nserver"),
+		bad("absolute", "/etc"),
+		bad("drive", "C:/x"),
+		bad("backslash", `desktop\src`),
+		bad("parent", "a/../b"),
+		bad("dot", "./a"),
+		bad("glob", "src/*"),
+		bad("negation", "!docs"),
+		bad("option-like", "--no-cone"),
+		bad("double slash", "a//b"),
+		bad("101 lines", strings.Repeat("a\n", 100)+"a"),
+		bad("4097 bytes", strings.Repeat("a", 4097)),
+	})
+}
+
 // CT-28 / A-P19: org/project 의 nil 은 상속이므로 모두 nil 이어도 유효
 func TestValidate_AllNilInherit_CT28(t *testing.T) {
 	for _, sc := range []Scope{ScopeOrg, ScopeProject} {
@@ -238,6 +265,11 @@ func TestValidate_GlobalRequiresAllFields_CT29(t *testing.T) {
 		if code, field := ValidateInput(ScopeGlobal, in); code != "global_requires_all_fields" || field != c.field {
 			t.Errorf("global nil %s: got (%q,%q)", c.field, code, field)
 		}
+	}
+	noSparse := fillGlobal(Input{})
+	noSparse.SparsePaths = nil
+	if code, field := ValidateInput(ScopeGlobal, noSparse); code != "" || field != "" {
+		t.Errorf("global nil sparsePaths (v2.6 이전 클라이언트): got (%q,%q), want valid", code, field)
 	}
 	if code, field := ValidateInput(ScopeGlobal, Input{}); code != "global_requires_all_fields" || field != "branchTemplate" {
 		t.Errorf("global all nil: got (%q,%q), want first field branchTemplate", code, field)

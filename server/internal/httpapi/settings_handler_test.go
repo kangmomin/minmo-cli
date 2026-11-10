@@ -11,7 +11,10 @@ import (
 
 var reTS = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
 
-var settingsFields = []string{"branchTemplate", "etcBranchName", "worktreePath", "mainClonePath", "postCreateScript"}
+var settingsFields = []string{"branchTemplate", "etcBranchName", "worktreePath", "mainClonePath", "postCreateScript", "sparsePaths"}
+
+// requiredGlobalFields 는 전역 PUT 에서 생략·null 이 400 인 필드(sparsePaths 는 v2.6 호환을 위해 제외)
+var requiredGlobalFields = settingsFields[:5]
 
 var defaultGlobal = map[string]any{
 	"branchTemplate":   "issue/{number}-{slug}",
@@ -19,6 +22,7 @@ var defaultGlobal = map[string]any{
 	"worktreePath":     "~/minmo-workspaces/{owner}/{repo}/{branch}",
 	"mainClonePath":    "~/minmo-workspaces/{owner}/{repo}/_main",
 	"postCreateScript": "",
+	"sparsePaths":      "",
 }
 
 func globalWith(over map[string]any) map[string]any {
@@ -38,8 +42,8 @@ func expectEmptyScope(t *testing.T, name string, status int, m map[string]any) {
 		t.Errorf("%s: status %d %v", name, status, m)
 		return
 	}
-	if len(m) != 6 {
-		t.Errorf("%s: want 6 keys, got %v", name, m)
+	if len(m) != 7 {
+		t.Errorf("%s: want 7 keys, got %v", name, m)
 	}
 	for _, k := range append(append([]string{}, settingsFields...), "updatedAt") {
 		if v, ok := m[k]; !ok || v != nil {
@@ -48,12 +52,12 @@ func expectEmptyScope(t *testing.T, name string, status int, m map[string]any) {
 	}
 }
 
-// CT-07: 신규 사용자 E6 → 5필드 기본값 정확히 + updatedAt(ms 포맷), 키는 정확히 6개
+// CT-07: 신규 사용자 E6 → 6필드 기본값 정확히 + updatedAt(ms 포맷), 키는 정확히 7개
 func TestSettings_GlobalDefaults_CT07(t *testing.T) {
 	s := testutil.NewTestServer(t)
 	token, _ := s.Login(githubmock.CodeOK)
 	status, m := s.DoJSON("GET", "/settings", token, nil)
-	if status != 200 || len(m) != 6 {
+	if status != 200 || len(m) != 7 {
 		t.Fatalf("GET /settings %d %v", status, m)
 	}
 	for k, v := range defaultGlobal {
@@ -70,7 +74,7 @@ func TestSettings_GlobalDefaults_CT07(t *testing.T) {
 func TestSettings_GlobalMissingField_CT08(t *testing.T) {
 	s := testutil.NewTestServer(t)
 	token, _ := s.Login(githubmock.CodeOK)
-	for _, f := range settingsFields {
+	for _, f := range requiredGlobalFields {
 		body := globalWith(nil)
 		delete(body, f)
 		status, m := s.DoJSON("PUT", "/settings", token, body)
@@ -92,10 +96,27 @@ func TestSettings_GlobalMissingField_CT08(t *testing.T) {
 func TestSettings_GlobalExplicitNull_CT29(t *testing.T) {
 	s := testutil.NewTestServer(t)
 	token, _ := s.Login(githubmock.CodeOK)
-	for _, f := range settingsFields {
+	for _, f := range requiredGlobalFields {
 		status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{f: nil}))
 		expectErr(t, status, m, 400, "global_requires_all_fields", f)
 	}
+	// v2.6: sparsePaths 는 전역에서도 생략·null 허용 → 저장된 값 유지(처음엔 "")
+	for _, body := range []map[string]any{globalWith(map[string]any{"sparsePaths": nil}), func() map[string]any { b := globalWith(nil); delete(b, "sparsePaths"); return b }()} {
+		status, m := s.DoJSON("PUT", "/settings", token, body)
+		if status != 200 || m["sparsePaths"] != "" {
+			t.Errorf("global sparsePaths omitted/null: %d %v", status, m)
+		}
+	}
+	// 저장된 값이 있으면 생략한 PUT(이전 클라이언트)이 지우지 않는다
+	if status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"sparsePaths": "desktop"})); status != 200 || m["sparsePaths"] != "desktop" {
+		t.Fatalf("PUT sparsePaths: %d %v", status, m)
+	}
+	body := globalWith(map[string]any{"etcBranchName": "misc"})
+	delete(body, "sparsePaths")
+	if status, m := s.DoJSON("PUT", "/settings", token, body); status != 200 || m["sparsePaths"] != "desktop" || m["etcBranchName"] != "misc" {
+		t.Errorf("omitted sparsePaths should keep stored value: %d %v", status, m)
+	}
+	s.DoJSON("PUT", "/settings", token, globalWith(nil))
 	// 전역은 postCreateScript "" 허용 — 저장 후 그대로 반환
 	status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"postCreateScript": "", "branchTemplate": "feat/{number}"}))
 	if status != 200 || m["postCreateScript"] != "" || m["branchTemplate"] != "feat/{number}" {

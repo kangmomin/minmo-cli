@@ -25,6 +25,7 @@ const SCOPE_EMPTY = {
   worktreePath: null,
   mainClonePath: null,
   postCreateScript: null,
+  sparsePaths: null,
   updatedAt: null,
 }
 const GLOBAL = {
@@ -33,6 +34,7 @@ const GLOBAL = {
   worktreePath: '~/minmo-workspaces/{owner}/{repo}/{branch}',
   mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
   postCreateScript: '',
+  sparsePaths: '',
   updatedAt: '2026-11-09T00:00:00.000Z',
 }
 

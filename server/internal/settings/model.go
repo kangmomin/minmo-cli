@@ -11,22 +11,25 @@ const (
 	ScopeProject Scope = "project"
 )
 
-// Values 는 5개 필드가 모두 확정된 설정 값(전역 레코드, effective.values).
+// Values 는 6개 필드가 모두 확정된 설정 값(전역 레코드, effective.values).
 type Values struct {
 	BranchTemplate   string `json:"branchTemplate"`
 	EtcBranchName    string `json:"etcBranchName"`
 	WorktreePath     string `json:"worktreePath"`
 	MainClonePath    string `json:"mainClonePath"`
 	PostCreateScript string `json:"postCreateScript"`
+	// SparsePaths 는 줄바꿈으로 구분한 sparse-checkout(cone) 디렉터리 목록. 빈 값이면 전체 체크아웃
+	SparsePaths string `json:"sparsePaths"`
 }
 
-// Input 은 nullable 5필드(nil = 상속/미지정). org/project 저장 행과 PUT 입력 모두에 쓴다.
+// Input 은 nullable 6필드(nil = 상속/미지정). org/project 저장 행과 PUT 입력 모두에 쓴다.
 type Input struct {
 	BranchTemplate   *string `json:"branchTemplate"`
 	EtcBranchName    *string `json:"etcBranchName"`
 	WorktreePath     *string `json:"worktreePath"`
 	MainClonePath    *string `json:"mainClonePath"`
 	PostCreateScript *string `json:"postCreateScript"`
+	SparsePaths      *string `json:"sparsePaths"`
 }
 
 // Record 는 저장된 설정 행이다. 행이 없으면 모든 필드 nil · UpdatedAt nil.
@@ -35,13 +38,14 @@ type Record struct {
 	UpdatedAt *int64 // epoch ms
 }
 
-// Sources 는 effective 의 필드별 출처. 5키가 항상 존재한다.
+// Sources 는 effective 의 필드별 출처. 6키가 항상 존재한다.
 type Sources struct {
 	BranchTemplate   Scope `json:"branchTemplate"`
 	EtcBranchName    Scope `json:"etcBranchName"`
 	WorktreePath     Scope `json:"worktreePath"`
 	MainClonePath    Scope `json:"mainClonePath"`
 	PostCreateScript Scope `json:"postCreateScript"`
+	SparsePaths      Scope `json:"sparsePaths"`
 }
 
 // Effective 는 E12 응답 본문 `{values, sources}` 이다.
@@ -58,5 +62,6 @@ func Defaults() Values {
 		WorktreePath:     "~/minmo-workspaces/{owner}/{repo}/{branch}",
 		MainClonePath:    "~/minmo-workspaces/{owner}/{repo}/_main",
 		PostCreateScript: "",
+		SparsePaths:      "",
 	}
 }

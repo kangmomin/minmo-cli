@@ -1,9 +1,11 @@
-import { GitBranchIcon, Loader2Icon, StarIcon } from 'lucide-react'
+import { FileKeyIcon, GitBranchIcon, Loader2Icon, StarIcon } from 'lucide-react'
+import { useState } from 'react'
 
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import type { IssueTarget } from '../../lib/worktree'
 import type { IssueOpenState } from '../../store/setup'
+import { LocalFilesDialog } from './LocalFilesDialog'
 import { useIssueActions } from './useWorktree'
 
 /** 상단 바: 저장소·이슈, 브랜치(AC-05), worktree 경로, 준비 상태 */
@@ -14,6 +16,7 @@ export interface IssueHeaderProps {
 
 export function IssueHeader({ target, state }: IssueHeaderProps) {
   const actions = useIssueActions()
+  const [localOpen, setLocalOpen] = useState(false)
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2" data-testid="issue-header">
       <span className="text-sm text-muted-foreground">
@@ -39,10 +42,14 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
             {state.path}
           </span>
           {state.pathChanged && (
-            <Badge variant="outline" className="border-amber-500 text-amber-700">
+            <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-400">
               경로 변경됨
             </Badge>
           )}
+          <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setLocalOpen(true)}>
+            <FileKeyIcon /> 로컬 파일
+          </Button>
+          <LocalFilesDialog target={target} worktreePath={state.path} open={localOpen} onOpenChange={setLocalOpen} />
         </>
       )}
       {state?.phase === 'opening' && (

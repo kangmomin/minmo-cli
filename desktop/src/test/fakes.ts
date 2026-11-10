@@ -46,6 +46,11 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     platform: async () => 'linux',
     pathExists: async () => false,
     removeDir: async () => {},
+    copyTree: async () => 0,
+    listFiles: async () => [],
+    copyFileInto: async () => {},
+    removeFileIn: async () => {},
+    openDir: async () => {},
     openUrl: async () => {},
     onDeepLink: async (cb) => {
       deepLinkListeners.add(cb)

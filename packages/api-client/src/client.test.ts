@@ -33,6 +33,7 @@ const SETTINGS = {
   worktreePath: null,
   mainClonePath: null,
   postCreateScript: null,
+  sparsePaths: null,
   updatedAt: null,
 }
 

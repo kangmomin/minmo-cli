@@ -15,7 +15,7 @@ test('프로젝트 설정: 상속 placeholder, 브랜치 템플릿 feat/{number}
   const dialog = page.getByRole('dialog')
   const branch = dialog.getByLabel('브랜치 템플릿')
   await expect(branch).toHaveAttribute('placeholder', '상속: issue/{number}-{slug}')
-  await expect(dialog.getByRole('radio', { name: '상속' })).toBeChecked()
+  await expect(dialog.getByRole('radiogroup', { name: '생성 후 스크립트' }).getByRole('radio', { name: '상속' })).toBeChecked()
 
   await branch.fill('feat/{number}')
   await expect(dialog.getByTestId('preview-branch')).toHaveText('feat/42')
@@ -23,7 +23,7 @@ test('프로젝트 설정: 상속 placeholder, 브랜치 템플릿 feat/{number}
   await expect(dialog).toBeHidden()
 
   const put = calls.find((c) => c.method === 'PUT' && c.path === '/projects/my-org/widgets/settings')
-  expect(put?.body).toEqual({ branchTemplate: 'feat/{number}', etcBranchName: null, worktreePath: null, mainClonePath: null, postCreateScript: null })
+  expect(put?.body).toEqual({ branchTemplate: 'feat/{number}', etcBranchName: null, worktreePath: null, mainClonePath: null, postCreateScript: null, sparsePaths: null })
 })
 
 test('조직 설정: 400 field 오류는 인라인(aria-invalid), 저장 버튼 유지', async ({ page }) => {

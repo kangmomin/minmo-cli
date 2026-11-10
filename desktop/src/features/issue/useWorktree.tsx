@@ -60,7 +60,7 @@ export function describeOpenError(e: unknown): { code: string; message: string; 
           message: `경로가 이미 있지만 git worktree 가 아닙니다 — 설정에서 다른 경로를 쓰거나 폴더를 정리한 뒤 다시 여세요: ${e.path}`,
         }
       case 'overlaps_main_clone':
-        return { code: e.code, path: e.path, message: 'worktree 경로가 메인 clone과 겹침 — 설정의 worktree 경로를 바꾸세요' }
+        return { code: e.code, path: e.path, message: `${e.message} — 설정의 worktree 경로를 바꾸세요` }
       case 'branch_conflicts_etc':
         return { code: e.code, message: '브랜치명이 기타 브랜치와 충돌 — 브랜치 템플릿을 바꾸세요' }
       case 'server_required':
@@ -131,6 +131,7 @@ export function useIssueActions() {
         }
       },
       inspect: (t: IssueTarget) => service.inspect(t),
+      localFilesDir: (t: IssueTarget) => service.localFilesDirFor(t),
       async remove(t: IssueTarget, confirmed = false): Promise<DeleteResult> {
         const res = await service.deleteWorktree(t, { confirmed })
         if (res.status === 'deleted') {

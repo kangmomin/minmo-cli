@@ -4,13 +4,15 @@
     "etcBranchName": "etc",
     "worktreePath": "~/minmo-workspaces/{owner}/{repo}/{branch}",
     "mainClonePath": "~/minmo-workspaces/{owner}/{repo}/_main",
-    "postCreateScript": ""
+    "postCreateScript": "",
+    "sparsePaths": ""
   },
   "sources": {
     "branchTemplate": "project",
     "etcBranchName": "global",
     "worktreePath": "global",
     "mainClonePath": "global",
-    "postCreateScript": "global"
+    "postCreateScript": "global",
+    "sparsePaths": "global"
   }
 }

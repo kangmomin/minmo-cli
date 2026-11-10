@@ -80,7 +80,7 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
           >
             {/* ● 기호 자체는 읽지 않고 의미만 이름으로 전달한다(AX-05) */}
             {hasWorktree ? (
-              <span role="img" aria-label="worktree 있음" className="w-2 text-center text-xs text-emerald-600">
+              <span role="img" aria-label="worktree 있음" className="w-2 text-center text-xs text-emerald-600 dark:text-emerald-400">
                 ●
               </span>
             ) : (
@@ -103,7 +103,7 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
             {pathChanged && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Badge variant="outline" className="border-amber-500 text-amber-700">
+                  <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-400">
                     경로 변경됨
                   </Badge>
                 </TooltipTrigger>

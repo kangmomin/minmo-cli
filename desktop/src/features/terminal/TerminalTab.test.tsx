@@ -1,10 +1,12 @@
 // 터미널 탭 — 리소스 정리(CR-01~03)·초기 출력/종료 처리(CR-07·08·18·19)·접근성(AX-02·18·34·35·39). xterm 은 jsdom 에서 렌더할 수 없어 가짜로 대체한다.
 import { act, fireEvent, screen, within } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 
 import type { PtyDataEvent, TauriApi } from '../../lib/tauri'
 import { createFakeTauri, deferred, flush } from '../../test/fakes'
+import { useUiStore } from '../../store/ui'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 import { MAX_PENDING_PTY_CHARS, TerminalTab } from './TerminalTab'
@@ -72,6 +74,7 @@ const A: TerminalSessionSpec = { issueId: 'o/r#1', cwd: '/w/1' }
 beforeEach(() => {
   xterm.instances.length = 0
   xterm.strings.promptLabel = 'Terminal input'
+  useUiStore.setState({ panes: {}, focusRequest: null, terminalIds: {}, theme: 'black' })
 })
 
 function setup(tauriOverrides: Partial<TauriApi> = {}) {
@@ -429,5 +432,131 @@ describe('AX-39 xterm 입력 textarea 에도 탈출 안내 연결 + 라벨 한�
     expect(input).toHaveAccessibleDescription(`${TERMINAL_EXIT_HINT}: 터미널 밖으로 이동`)
     expect(xterm.strings.promptLabel).toBe('터미널 입력')
     expect(input).toHaveAccessibleName('터미널 입력')
+  })
+})
+
+describe('패널 분할 (Ctrl+D / Ctrl+Shift+D / Ctrl+W)', () => {
+  const key = (init: KeyboardEventInit, type = 'keydown') => new KeyboardEvent(type, { ctrlKey: true, ...init })
+  const press = (i: number, init: KeyboardEventInit) => act(() => void xterm.instances[i].keyHandler?.(key(init)))
+
+  it('키 핸들러: 세 조합은 셸로 보내지 않고(false) keydown 에서만 1회 실행, Ctrl+C 등은 통과', () => {
+    const panes = { splitRight: vi.fn(), splitDown: vi.fn(), close: vi.fn() }
+    const h = createTerminalKeyHandler(vi.fn(), panes)
+    expect(h(key({ key: 'd', code: 'KeyD' }))).toBe(false)
+    expect(h(key({ key: 'D', code: 'KeyD', shiftKey: true }))).toBe(false)
+    expect(h(key({ key: 'w', code: 'KeyW' }))).toBe(false)
+    expect(h(key({ key: 'd', code: 'KeyD' }, 'keyup'))).toBe(false)
+    expect([panes.splitRight.mock.calls.length, panes.splitDown.mock.calls.length, panes.close.mock.calls.length]).toEqual([1, 1, 1])
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(true)
+    expect(h(key({ key: 'd', code: 'KeyD', altKey: true }))).toBe(true)
+    // Dvorak: 물리 KeyD 자리에서 'e' 가 입력되면 Ctrl+E(줄 끝)로 셸에 보낸다 · 한글 IME 는 물리 키로 판단
+    expect(h(key({ key: 'e', code: 'KeyD' }))).toBe(true)
+    expect(h(key({ key: 'ㅇ', code: 'KeyD' }))).toBe(false)
+    // 패널 동작을 넘기지 않으면(기존 호출) Ctrl+D 는 셸로 간다
+    expect(createTerminalKeyHandler(vi.fn())(key({ key: 'd', code: 'KeyD' }))).toBe(true)
+  })
+
+  it('Ctrl+D → 오른쪽에 새 패널(PTY 하나 더) + 새 패널로 포커스, Ctrl+Shift+D → 아래 분할', async () => {
+    let n = 0
+    const t = setup({ ptySpawn: async () => `pty-${++n}` })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    press(0, { key: 'd', code: 'KeyD' })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(t.tauri.ptySpawn.mock.calls[1][0].cwd).toBe(A.cwd)
+    const panes = screen.getAllByTestId('terminal-pane')
+    expect(panes.map((p) => [p.style.left, p.style.width])).toEqual([
+      ['0%', '50%'],
+      ['50%', '50%'],
+    ])
+    // 기존 패널은 다시 만들지 않는다(PTY 유지)
+    expect(t.tauri.ptyKill).not.toHaveBeenCalled()
+    expect(xterm.instances[0].focus).not.toHaveBeenCalled()
+    expect(xterm.instances[1].focus).toHaveBeenCalledTimes(1)
+
+    press(1, { key: 'D', code: 'KeyD', shiftKey: true })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(3))
+    expect(screen.getAllByTestId('terminal-pane').map((p) => [p.style.top, p.style.height])).toEqual([
+      ['0%', '100%'],
+      ['0%', '50%'],
+      ['50%', '50%'],
+    ])
+  })
+
+  it('Ctrl+W → 그 패널의 PTY 만 종료(프로세스 트리 정리는 Rust pty_kill)하고 형제로 포커스, 마지막 패널을 닫으면 [새 터미널]', async () => {
+    let n = 0
+    const t = setup({ ptySpawn: async () => `pty-${++n}` })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    press(0, { key: 'd', code: 'KeyD' })
+    await vi.waitFor(() => expect(useUiStore.getState().terminalIds).toHaveProperty([`${A.issueId}::2`], 'pty-2'))
+
+    press(1, { key: 'w', code: 'KeyW' })
+    await vi.waitFor(() => expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-2'))
+    expect(t.tauri.ptyKill).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByTestId('terminal-pane')).toHaveLength(1)
+    expect(xterm.instances[0].focus).toHaveBeenCalledTimes(1)
+    expect(useUiStore.getState().terminalIds).not.toHaveProperty([`${A.issueId}::2`])
+
+    press(0, { key: 'w', code: 'KeyW' })
+    await vi.waitFor(() => expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1'))
+    const again = screen.getByRole('button', { name: '새 터미널' })
+    fireEvent.click(again)
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(3))
+  })
+
+  it('StrictMode(개발 실행)에서도 새 패널 xterm 이 포커스를 받는다', async () => {
+    let n = 0
+    const fake = createFakeTauri({ ptySpawn: async () => `pty-${++n}` })
+    renderWithDeps(
+      <StrictMode>
+        <TerminalTab sessions={[A]} activeId={A.issueId} visible />
+      </StrictMode>,
+      makeDeps({ tauri: fake.tauri }),
+    )
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalled())
+    const before = xterm.instances.length
+    press(before - 1, { key: 'd', code: 'KeyD' })
+    await vi.waitFor(() => expect(xterm.instances.length).toBeGreaterThan(before))
+    // StrictMode 는 effect 를 두 번 돌려 xterm 을 다시 만든다 — 실제로 남는 마지막 인스턴스가 포커스를 받아야 한다
+    expect(xterm.instances.at(-1)!.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('패널 상태가 지워져도(마운트 유지) 새 패널을 다시 만든다 — 빈 화면에 갇히지 않음', async () => {
+    let n = 0
+    const t = setup({ ptySpawn: async () => `pty-${++n}` })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    act(() => useUiStore.getState().removeWorktree(A.issueId))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1')
+    expect(screen.getAllByTestId('terminal-pane')).toHaveLength(1)
+  })
+
+  it('removeWorktree 는 그 이슈의 패널·PTY id·남은 포커스 요청을 지운다', () => {
+    useUiStore.setState({
+      panes: { [A.issueId]: { tree: { kind: 'leaf', id: `${A.issueId}::2` }, focused: null, seq: 2 } },
+      terminalIds: { [`${A.issueId}::2`]: 'pty-9', 'x::1': 'pty-1' },
+      focusRequest: { paneId: `${A.issueId}::2`, token: 3 },
+    })
+    useUiStore.getState().removeWorktree(A.issueId)
+    const s = useUiStore.getState()
+    expect(s.panes).toEqual({})
+    expect(s.terminalIds).toEqual({ 'x::1': 'pty-1' })
+    expect(s.focusRequest).toBeNull()
+  })
+
+  it('터미널 입력에 포커스가 들어오면 그 패널이 분할·닫기 대상이 된다', async () => {
+    const t = setup()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    press(0, { key: 'd', code: 'KeyD' })
+    await vi.waitFor(() => expect(xterm.instances).toHaveLength(2))
+    expect(useUiStore.getState().panes[A.issueId].focused).toBe(`${A.issueId}::2`)
+    fireEvent.focus(xterm.instances[0].textarea!)
+    expect(useUiStore.getState().panes[A.issueId].focused).toBe(`${A.issueId}::1`)
+  })
+
+  it('테마 전환을 열린 터미널에도 반영(블랙 #000000 · 라이트 #1e1e1e)', async () => {
+    setup()
+    expect((xterm.instances[0].options.theme as { background: string }).background).toBe('#000000')
+    act(() => useUiStore.getState().setTheme('light'))
+    expect((xterm.instances[0].options.theme as { background: string }).background).toBe('#1e1e1e')
   })
 })
