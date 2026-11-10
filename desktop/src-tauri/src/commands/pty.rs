@@ -16,6 +16,78 @@ pub struct PtySession {
     cwd: String,
     /// ConPTY 시작 커서 위치 질의(ESC[6n)의 응답(CPR)이 입력으로 지나갔는지
     cpr_answered: bool,
+    /// 셸과 그 자손이 속한 Job Object — 만들지 못하면 None(트리 종료만으로 정리)
+    #[cfg(windows)]
+    job: Option<job::Job>,
+}
+
+/// 셸을 KILL_ON_JOB_CLOSE Job Object 에 넣는다. 셸이 이후에 띄우는 프로세스는 자동으로 같은 Job 에 속하므로
+/// 중간 부모가 먼저 끝나 부모 체인이 끊긴 자손(taskkill /T 가 찾지 못함)까지 한 번에 끝낼 수 있다.
+/// 앱이 비정상 종료해도 핸들이 닫히며 터미널 프로세스가 함께 정리된다.
+#[cfg(windows)]
+mod job {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    };
+
+    pub struct Job(HANDLE);
+
+    // HANDLE 은 프로세스 전역 커널 객체 핸들이라 스레드 간 이동·공유해도 안전하다
+    unsafe impl Send for Job {}
+    unsafe impl Sync for Job {}
+
+    impl Job {
+        pub fn for_process(pid: u32) -> Option<Job> {
+            // SAFETY: 각 호출의 반환값을 검사하고, 실패 경로에서 만든 핸들은 모두 닫는다
+            unsafe {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() {
+                    return None;
+                }
+                let job = Job(handle);
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let set = SetInformationJobObject(
+                    job.0,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                if set == 0 {
+                    return None;
+                }
+                let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+                if process.is_null() {
+                    return None;
+                }
+                let assigned = AssignProcessToJobObject(job.0, process);
+                CloseHandle(process);
+                (assigned != 0).then_some(job)
+            }
+        }
+
+        pub fn terminate(&self) {
+            // SAFETY: self.0 은 for_process 가 만든 유효한 Job 핸들이다
+            unsafe {
+                TerminateJobObject(self.0, 1);
+            }
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            // SAFETY: 이 Job 이 소유한 핸들을 한 번만 닫는다
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
 }
 
 impl PtySession {
@@ -31,10 +103,16 @@ impl PtySession {
     fn terminate(&mut self) {
         // 셸에서 띄운 자손(dev 서버 등)이 cwd 를 잡고 있으면 worktree 삭제가 실패한다. 기본 conhost 는 ConPTY 를
         // 닫아도 자손에게 종료 이벤트만 보내 곧바로 끝나지 않으므로(종료 처리를 하는 프로세스는 더 오래 남는다)
-        // 닫기 전에 프로세스 트리를 직접 끝낸다(스크립트 취소와 같은 방식).
+        // 닫기 전에 프로세스 트리를 직접 끝낸다(스크립트 취소와 같은 방식). Job 이 있으면 부모 체인이 끊긴
+        // 자손까지 먼저 끝내고, Job 에 들어가기 전(spawn 직후 짧은 틈)에 생긴 자손은 트리 종료가 맡는다.
         #[cfg(windows)]
-        if let Some(pid) = self.child.process_id() {
-            super::taskkill_tree(pid);
+        {
+            if let Some(job) = &self.job {
+                job.terminate();
+            }
+            if let Some(pid) = self.child.process_id() {
+                super::taskkill_tree(pid);
+            }
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -136,6 +214,8 @@ pub fn pty_spawn(
     cmd.env("TERM", "xterm-256color");
     let child = pair.slave.spawn_command(cmd).map_err(err)?;
     drop(pair.slave);
+    #[cfg(windows)]
+    let job = child.process_id().and_then(job::Job::for_process);
 
     let mut reader = pair.master.try_clone_reader().map_err(err)?;
     let writer = pair.master.take_writer().map_err(err)?;
@@ -173,6 +253,8 @@ pub fn pty_spawn(
             child,
             cwd,
             cpr_answered: false,
+            #[cfg(windows)]
+            job,
         },
     );
     Ok(id)
@@ -330,6 +412,8 @@ mod tests {
             }
             let child = pair.slave.spawn_command(cmd).unwrap();
             drop(pair.slave);
+            let job = child.process_id().and_then(job::Job::for_process);
+            assert!(job.is_some(), "셸을 Job Object 에 넣지 못했다");
             let input_log = Arc::new(Mutex::new(Vec::new()));
             let writer = Box::new(Tee {
                 inner: pair.master.take_writer().unwrap(),
@@ -351,6 +435,7 @@ mod tests {
                 child,
                 cwd: String::new(),
                 cpr_answered: false,
+                job,
             };
             Pty {
                 session: ManuallyDrop::new(session),
@@ -452,6 +537,66 @@ mod tests {
                 removed = std::fs::remove_dir_all(&dir);
             }
             assert!(removed.is_ok(), "종료 후에도 cwd 가 잠겨 있다: {removed:?}");
+            assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
+        }
+
+        fn pid_alive(pid: u32) -> bool {
+            let out = std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
+        }
+
+        /// 패널 닫기(Ctrl+W) 시나리오: 에이전트처럼 중간 부모가 먼저 끝나 부모 체인이 끊긴 자손도 함께 끝나야 한다.
+        /// taskkill /T 는 이런 고아를 찾지 못하므로 Job Object 가 없으면 실패한다
+        #[test]
+        fn kill_terminates_orphaned_descendant() {
+            let mut pty = spawn_cmd_pty(None);
+            answer_cursor_query_and_wait_shell(&mut pty);
+            // 바깥 powershell 은 손자를 띄우고 pid 를 출력한 뒤 바로 끝난다 → 손자는 부모 없는 고아가 된다
+            pty.session
+                .write_input(
+                    concat!(
+                        "powershell -NoProfile -Command \"$p = Start-Process powershell ",
+                        "-ArgumentList '-NoProfile','-Command','Start-Sleep 60' -WindowStyle Hidden -PassThru; ",
+                        "Write-Output ('orphan=' + $p.Id + '=end')\"\r"
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let pid = loop {
+                let out = pty
+                    .output
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .expect("고아 프로세스 pid 를 받지 못했다");
+                let text = String::from_utf8_lossy(&out);
+                // 명령 에코('orphan=' + ...)와 구분되도록 실제 숫자가 찍힌 줄만 받는다
+                if let Some(pid) = text
+                    .split("orphan=")
+                    .skip(1)
+                    .filter_map(|s| s.split("=end").next()?.trim().parse::<u32>().ok())
+                    .next()
+                {
+                    break pid;
+                }
+            };
+            assert!(pid_alive(pid), "고아 프로세스가 시작되지 않았다");
+            let (closed, _) = kill_with_timeout(pty);
+            // TerminateJobObject 도 종료를 시작만 하므로 잠시 기다린다
+            let gone = (0..50).any(|_| {
+                let alive = pid_alive(pid);
+                if alive {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                !alive
+            });
+            if !gone {
+                // 실패해도 테스트 프로세스가 남지 않게 정리한다
+                super::super::super::taskkill_tree(pid);
+            }
+            assert!(gone, "PTY 종료 후에도 고아 자손(pid {pid})이 살아 있다");
             assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
         }
     }
