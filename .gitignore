@@ -1,0 +1,32 @@
+# Node
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+# Tauri / Rust
+desktop/src-tauri/target/
+desktop/src-tauri/gen/schemas/
+
+# Go
+server/bin/
+*.exe
+*.test
+
+# Local data
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+
+# Harness local profiles (per-machine)
+.claude/*.local.md
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

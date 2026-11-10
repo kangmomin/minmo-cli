@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS issue_notes;
+DROP TABLE IF EXISTS settings;
+DROP INDEX IF EXISTS sessions_user_id;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS users;

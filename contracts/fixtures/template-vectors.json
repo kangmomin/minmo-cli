@@ -1,0 +1,73 @@
+{
+  "$schema_note": "Integration Contract v2.4 §템플릿 치환. refCases/branchCases[].expected 는 Go validate_test 와 TS template.test 가 함께 소비한다. pathCases/slugCases 는 TS 전용.",
+  "refCases": [
+    { "ref": "issue/42-add-login", "valid": true },
+    { "ref": "etc", "valid": true },
+    { "ref": "feat/42", "valid": true },
+    { "ref": "release-1.0", "valid": true },
+    { "ref": "Fix-crash", "valid": true },
+    { "ref": "a b", "valid": false },
+    { "ref": "a..b", "valid": false },
+    { "ref": "a~b", "valid": false },
+    { "ref": "a^b", "valid": false },
+    { "ref": "a:b", "valid": false },
+    { "ref": "a?b", "valid": false },
+    { "ref": "a*b", "valid": false },
+    { "ref": "a[b", "valid": false },
+    { "ref": "a\\b", "valid": false },
+    { "ref": "a@{b", "valid": false },
+    { "ref": "/a", "valid": false },
+    { "ref": "a/", "valid": false },
+    { "ref": "a//b", "valid": false },
+    { "ref": "a.", "valid": false },
+    { "ref": "a.lock", "valid": false },
+    { "ref": "@", "valid": false },
+    { "ref": "", "valid": false },
+    { "ref": "a\u0001b", "valid": false }
+  ],
+  "branchCases": [
+    { "template": "issue/{number}-{slug}", "issue": { "number": 42, "title": "Add login" }, "expected": "issue/42-add-login" },
+    { "template": "feat/{number}", "issue": { "number": 7, "title": "anything" }, "expected": "feat/7" },
+    { "template": "{number}-{title}", "issue": { "number": 3, "title": "Fix: crash on start" }, "expected": "3-Fix-crash-on-start" },
+    { "template": "issue/{number}-{slug}", "issue": { "number": 9, "title": "Caf\u00e9 \u2615 R\u00e9sum\u00e9" }, "expected": "issue/9-caf-rsum" },
+    { "template": "issue/{number}-{slug}", "issue": { "number": 10, "title": "!!!" }, "expected": "issue/10-issue" },
+    { "template": "{number}-{title}", "issue": { "number": 11, "title": "ends with dot." }, "expected": "11-ends-with-dot" },
+    { "template": "{number}-{title}", "issue": { "number": 13, "title": "a..b @{ weird.lock" }, "expected": "13-a-b-weird" },
+    { "template": "issue/{number}-{slug}", "issue": { "number": 12, "title": "this is a very long issue title that goes on and on forever and ever" }, "expected": "issue/12-this-is-a-very-long-issue-title-that-goe" }
+  ],
+  "pathCases": [
+    {
+      "template": "~/minmo-workspaces/{owner}/{repo}/{branch}",
+      "ctx": { "owner": "MyOrg", "repo": "Repo-A", "branch": "issue/42-add-login", "key": "42", "number": 42, "slug": "add-login", "home": "/home/u", "platform": "linux" },
+      "expected": "/home/u/minmo-workspaces/MyOrg/Repo-A/issue--42-add-login"
+    },
+    {
+      "template": "~/work/{owner}/{repo}/{key}",
+      "ctx": { "owner": "MyOrg", "repo": "Repo-A", "branch": "etc", "key": "etc", "number": null, "slug": "", "home": "C:\\Users\\X", "platform": "win32" },
+      "expected": "C:\\Users\\X\\work\\MyOrg\\Repo-A\\etc"
+    },
+    {
+      "template": "D:\\w\\{key}",
+      "ctx": { "owner": "o", "repo": "r", "branch": "feat/42", "key": "42", "number": 42, "slug": "x", "home": "C:\\Users\\X", "platform": "win32" },
+      "expected": "D:\\w\\42"
+    },
+    {
+      "template": "~/w/{owner}/{repo}/{branch}",
+      "ctx": { "owner": "o", "repo": "r", "branch": "CON", "key": "etc", "number": null, "slug": "", "home": "C:\\Users\\X", "platform": "win32" },
+      "expected": "C:\\Users\\X\\w\\o\\r\\CON_"
+    },
+    {
+      "template": "~/w/{owner}/{repo}/{slug}",
+      "ctx": { "owner": "o", "repo": "r", "branch": "issue/5-x", "key": "5", "number": 5, "slug": "a\"b<c>d|e:f*g?h ", "home": "/home/u", "platform": "linux" },
+      "expected": "/home/u/w/o/r/abcdefgh"
+    }
+  ],
+  "slugCases": [
+    { "title": "Add login", "slug": "add-login", "titleToken": "Add-login" },
+    { "title": "Fix: crash on start", "slug": "fix-crash-on-start", "titleToken": "Fix-crash-on-start" },
+    { "title": "Caf\u00e9 \u2615 R\u00e9sum\u00e9", "slug": "caf-rsum", "titleToken": "Caf\u00e9-\u2615-R\u00e9sum\u00e9" },
+    { "title": "!!!", "slug": "issue", "titleToken": "!!!" },
+    { "title": "   ", "slug": "issue", "titleToken": "issue" },
+    { "title": "ends with dot.", "slug": "ends-with-dot", "titleToken": "ends-with-dot" }
+  ]
+}

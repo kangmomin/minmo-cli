@@ -1,0 +1,11 @@
+# 저장소는 LF 를 정본으로 유지한다 (Go/TS/sh 스크립트 공통). Windows 전용 스크립트만 CRLF.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 바이너리
+*.png binary
+*.ico binary
+*.icns binary
+*.db binary

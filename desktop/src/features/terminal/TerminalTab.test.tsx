@@ -1,0 +1,433 @@
+// 터미널 탭 — 리소스 정리(CR-01~03)·초기 출력/종료 처리(CR-07·08·18·19)·접근성(AX-02·18·34·35·39). xterm 은 jsdom 에서 렌더할 수 없어 가짜로 대체한다.
+import { act, fireEvent, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+
+import type { PtyDataEvent, TauriApi } from '../../lib/tauri'
+import { createFakeTauri, deferred, flush } from '../../test/fakes'
+import { makeDeps, renderWithDeps } from '../../test/render'
+import { TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
+import { MAX_PENDING_PTY_CHARS, TerminalTab } from './TerminalTab'
+import type { TerminalSessionSpec } from './TerminalTab'
+
+const xterm = vi.hoisted(() => ({
+  instances: [] as {
+    focus: ReturnType<typeof vi.fn>
+    options: Record<string, unknown>
+    keyHandler: ((e: KeyboardEvent) => boolean) | null
+    written: string[]
+    dataHandler: ((d: string) => void) | null
+    host: HTMLElement | null
+    textarea: HTMLTextAreaElement | undefined
+  }[],
+  // 정적 Terminal.strings — 실제 xterm 처럼 open() 이전에 바꿔야 입력 textarea 라벨에 반영된다
+  strings: { promptLabel: 'Terminal input', tooMuchOutput: '' },
+}))
+
+vi.mock('@xterm/xterm', () => ({
+  Terminal: class {
+    cols = 80
+    rows = 24
+    options: Record<string, unknown>
+    focus = vi.fn()
+    keyHandler: ((e: KeyboardEvent) => boolean) | null = null
+    written: string[] = []
+    dataHandler: ((d: string) => void) | null = null
+    host: HTMLElement | null = null
+    textarea: HTMLTextAreaElement | undefined
+    static strings = xterm.strings
+    constructor(options: Record<string, unknown>) {
+      this.options = options
+      xterm.instances.push(this)
+    }
+    loadAddon() {}
+    // 실제 xterm 처럼 host 안에 입력 textarea 를 만든다
+    open(el: HTMLElement) {
+      this.host = el
+      this.textarea = document.createElement('textarea')
+      this.textarea.setAttribute('aria-label', xterm.strings.promptLabel)
+      el.appendChild(this.textarea)
+    }
+    write(d: string) {
+      this.written.push(d)
+    }
+    onData(cb: (d: string) => void) {
+      this.dataHandler = cb
+      return { dispose() {} }
+    }
+    attachCustomKeyEventHandler(h: (e: KeyboardEvent) => boolean) {
+      this.keyHandler = h
+    }
+    dispose() {}
+  },
+}))
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: class {
+    fit() {}
+  },
+}))
+
+const A: TerminalSessionSpec = { issueId: 'o/r#1', cwd: '/w/1' }
+
+beforeEach(() => {
+  xterm.instances.length = 0
+  xterm.strings.promptLabel = 'Terminal input'
+})
+
+function setup(tauriOverrides: Partial<TauriApi> = {}) {
+  const fake = createFakeTauri(tauriOverrides)
+  const deps = makeDeps({ tauri: fake.tauri })
+  const r = renderWithDeps(<TerminalTab sessions={[A]} activeId={A.issueId} visible />, deps)
+  return { ...r, tauri: fake.tauri, deps }
+}
+
+describe('CR-01 onPtyData 구독 해제', () => {
+  it('구독이 resolve 되기 전에 unmount 되면 resolve 직후 즉시 unlisten, PTY 도 만들지 않는다', async () => {
+    const sub = deferred<() => void>()
+    const unlisten = vi.fn()
+    const t = setup({ onPtyData: () => sub.promise })
+    await flush()
+    t.unmount()
+    await act(async () => {
+      sub.resolve(unlisten)
+      await flush()
+    })
+    expect(unlisten).toHaveBeenCalledTimes(1)
+    expect(t.tauri.ptySpawn).not.toHaveBeenCalled()
+  })
+})
+
+describe('CR-03 세션이 사라지면 started 에서 제거', () => {
+  it('세션 제거 후 다시 나타나도 터미널 탭을 보기 전에는 PTY 를 만들지 않는다', async () => {
+    const t = setup()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    t.rerender(<TerminalTab sessions={[]} activeId={A.issueId} visible={false} />)
+    await flush()
+    expect(t.tauri.ptyKill).toHaveBeenCalled()
+    t.rerender(<TerminalTab sessions={[A]} activeId={A.issueId} visible={false} />)
+    await flush()
+    expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('AX-02 터미널 포커스·탈출', () => {
+  it('표시돼도 xterm 에 자동 focus() 하지 않는다(포커스 강탈 금지)', async () => {
+    const t = setup()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    expect(xterm.instances).toHaveLength(1)
+    expect(xterm.instances[0].focus).not.toHaveBeenCalled()
+  })
+
+  it('screenReaderMode 켬 + 키 핸들러 연결', () => {
+    setup()
+    expect(xterm.instances[0].options.screenReaderMode).toBe(true)
+    expect(xterm.instances[0].keyHandler).toBeTypeOf('function')
+  })
+
+  it('Ctrl+Shift+M 키 핸들러 → onExit 호출 + xterm 입력 차단(false), 그 외 키는 통과(true)', () => {
+    const onExit = vi.fn()
+    const h = createTerminalKeyHandler(onExit)
+    const key = (init: KeyboardEventInit, type = 'keydown') => new KeyboardEvent(type, init)
+    expect(h(key({ key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true }))).toBe(false)
+    expect(onExit).toHaveBeenCalledTimes(1)
+    // keyup 은 차단만 하고 다시 호출하지 않는다
+    expect(h(key({ key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true }, 'keyup'))).toBe(false)
+    expect(onExit).toHaveBeenCalledTimes(1)
+    expect(h(key({ key: 'm', code: 'KeyM', ctrlKey: true }))).toBe(true)
+    expect(h(key({ key: 'Escape', code: 'Escape' }))).toBe(true)
+    expect(h(key({ key: 'a', code: 'KeyA' }))).toBe(true)
+    expect(onExit).toHaveBeenCalledTimes(1)
+  })
+
+  it('xterm 에 연결된 핸들러가 Ctrl+Shift+M 에서 onExit 를 부른다', async () => {
+    const fake = createFakeTauri()
+    const onExit = vi.fn()
+    renderWithDeps(<TerminalTab sessions={[A]} activeId={A.issueId} visible onExit={onExit} />, makeDeps({ tauri: fake.tauri }))
+    const h = xterm.instances[0].keyHandler
+    expect(h).not.toBeNull()
+    h?.(new KeyboardEvent('keydown', { key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true }))
+    expect(onExit).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('AX-18 터미널 region 이름은 짧게, 탈출 안내는 보이는 한 줄 + aria-describedby', () => {
+  it('region 이름 "터미널", 설명 = 화면에 보이는 안내 문구(이름에 섞이지 않는다)', () => {
+    setup()
+    const region = screen.getByRole('region', { name: '터미널' })
+    const hint = within(region).getByText(`${TERMINAL_EXIT_HINT}: 터미널 밖으로 이동`)
+    expect(hint).toBeVisible()
+    expect(region.getAttribute('aria-describedby')).toBe(hint.id)
+    expect(region).toHaveAccessibleDescription(`${TERMINAL_EXIT_HINT}: 터미널 밖으로 이동`)
+  })
+
+  it('세션이 없으면 안내를 두지 않고 aria-describedby 도 없다', () => {
+    const fake = createFakeTauri()
+    renderWithDeps(<TerminalTab sessions={[]} activeId={A.issueId} visible />, makeDeps({ tauri: fake.tauri }))
+    const region = screen.getByRole('region', { name: '터미널' })
+    expect(region).not.toHaveAttribute('aria-describedby')
+    expect(screen.queryByText(/터미널 밖으로 이동/)).toBeNull()
+  })
+})
+
+describe('CR-07 ptySpawn 응답 전에 도착한 pty-data 는 id 확정 후 flush', () => {
+  function captureListener() {
+    let cb: ((e: PtyDataEvent) => void) | null = null
+    const onPtyData: TauriApi['onPtyData'] = async (c) => {
+      cb = c
+      return () => {}
+    }
+    return { onPtyData, emit: (e: PtyDataEvent) => act(() => cb?.(e)) }
+  }
+
+  it('자기 id 의 선도착분은 xterm 에 순서대로 쓰고, 다른 세션 id 의 출력은 버린다', async () => {
+    const spawn = deferred<string>()
+    const l = captureListener()
+    const t = setup({ onPtyData: l.onPtyData, ptySpawn: () => spawn.promise })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    l.emit({ id: 'pty-9', data: 'user@host:~$ ' })
+    l.emit({ id: 'pty-other', data: 'other session output' })
+    l.emit({ id: 'pty-9', data: 'ls\r\n' })
+    expect(xterm.instances[0].written).toEqual([])
+
+    await act(async () => {
+      spawn.resolve('pty-9')
+      await flush()
+    })
+    expect(xterm.instances[0].written).toEqual(['user@host:~$ ls\r\n'])
+
+    // 확정 이후: 자기 id 는 즉시 쓰고 다른 id 는 계속 무시
+    l.emit({ id: 'pty-9', data: 'next' })
+    l.emit({ id: 'pty-other', data: 'noise' })
+    expect(xterm.instances[0].written).toEqual(['user@host:~$ ls\r\n', 'next'])
+  })
+
+  it(`id 별 보관 상한(${MAX_PENDING_PTY_CHARS / 1024}KB)을 넘는 선도착분은 잘라낸다(앞부분 유지)`, async () => {
+    const spawn = deferred<string>()
+    const l = captureListener()
+    const t = setup({ onPtyData: l.onPtyData, ptySpawn: () => spawn.promise })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    l.emit({ id: 'pty-9', data: 'a'.repeat(MAX_PENDING_PTY_CHARS - 10) })
+    l.emit({ id: 'pty-9', data: 'b'.repeat(100) })
+    l.emit({ id: 'pty-9', data: 'c'.repeat(100) })
+    await act(async () => {
+      spawn.resolve('pty-9')
+      await flush()
+    })
+    const [flushed] = xterm.instances[0].written
+    expect(xterm.instances[0].written).toHaveLength(1)
+    expect(flushed).toHaveLength(MAX_PENDING_PTY_CHARS)
+    expect(flushed.endsWith('b'.repeat(10))).toBe(true)
+  })
+
+  it('spawn 이 실패하면 선도착분은 버리고 오류를 보인다', async () => {
+    const spawn = deferred<string>()
+    const l = captureListener()
+    const t = setup({ onPtyData: l.onPtyData, ptySpawn: () => spawn.promise })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    l.emit({ id: 'pty-9', data: 'orphan' })
+    await act(async () => {
+      spawn.reject(new Error('boom'))
+      await flush()
+    })
+    expect(xterm.instances[0].written).toEqual([])
+    expect(screen.getByRole('alert')).toHaveTextContent('boom')
+  })
+})
+
+describe('CR-08 PTY write reject → 세션 종료 안내 + [다시 시작]', () => {
+  const ENDED = '터미널 세션이 종료되었습니다'
+  const resizeObservers: { cb: () => void }[] = []
+
+  beforeEach(() => {
+    resizeObservers.length = 0
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          resizeObservers.push({ cb })
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    )
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('ptyWrite 가 reject 되면 종료 문구와 [다시 시작] 을 보이고, 다시 시작하면 새 PTY 를 spawn 한다', async () => {
+    let n = 0
+    const t = setup({
+      ptySpawn: async () => `pty-${++n}`,
+      ptyWrite: async () => {
+        throw new Error('pty gone')
+      },
+    })
+    await vi.waitFor(() => expect(xterm.instances[0].dataHandler).not.toBeNull())
+    expect(screen.queryByText(ENDED)).toBeNull()
+
+    await act(async () => {
+      xterm.instances[0].dataHandler?.('ls')
+      await flush()
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(ENDED)
+    // 종료 후 입력은 더 보내지 않는다
+    await act(async () => {
+      xterm.instances[0].dataHandler?.('again')
+      await flush()
+    })
+    expect(t.tauri.ptyWrite).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 시작' }))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    // 이전 PTY 정리 + 새 xterm 생성, 안내 제거, 사용자가 누른 재시작이라 새 터미널로 포커스 이동
+    expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1')
+    expect(xterm.instances).toHaveLength(2)
+    expect(xterm.instances[1].focus).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(ENDED)).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 시작' })).toBeNull()
+  })
+
+  it('CR-19 ptyResize reject 는 종료로 보지 않고 무시한다 — 이후 ptyWrite reject 에서만 종료 배너', async () => {
+    const t = setup({
+      ptyResize: async () => {
+        throw new Error('transient')
+      },
+      ptyWrite: async () => {
+        throw new Error('pty gone')
+      },
+    })
+    await vi.waitFor(() => expect(xterm.instances[0]?.dataHandler).not.toBeNull())
+    await flush()
+    await act(async () => {
+      for (const o of resizeObservers) o.cb()
+      await flush()
+    })
+    expect(t.tauri.ptyResize).toHaveBeenCalled()
+    expect(screen.queryByText(ENDED)).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    // 입력은 계속 PTY 로 보낸다(종료로 오탐하지 않았다는 증거)
+    await act(async () => {
+      xterm.instances[0].dataHandler?.('ls')
+      await flush()
+    })
+    expect(t.tauri.ptyWrite).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(ENDED)
+  })
+
+  it('ptyKill 의 reject 는 무시한다(언마운트 경로) — unhandled rejection 없음', async () => {
+    const t = setup({
+      ptyKill: async () => {
+        throw new Error('already dead')
+      },
+    })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    await flush()
+    t.unmount()
+    await flush()
+    expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1')
+  })
+})
+
+describe('AX-34 / CR-18 / AX-35 종료 배너 — 키보드 도달·포커스 이동·alert 분리', () => {
+  const ENDED = '터미널 세션이 종료되었습니다'
+
+  async function endedSession() {
+    const t = setup({
+      ptyWrite: async () => {
+        throw new Error('pty gone')
+      },
+    })
+    await vi.waitFor(() => expect(xterm.instances[0]?.dataHandler).not.toBeNull())
+    const end = () =>
+      act(async () => {
+        xterm.instances[0].dataHandler?.('ls')
+        await flush()
+      })
+    return { ...t, end }
+  }
+
+  it('[다시 시작] 은 DOM 순서상 xterm host 보다 앞에 있다(Tab 순서)', async () => {
+    const t = await endedSession()
+    await t.end()
+    const button = screen.getByRole('button', { name: '다시 시작' })
+    const host = xterm.instances[0].host
+    expect(host).not.toBeNull()
+    expect(button.compareDocumentPosition(host as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('종료 시 포커스가 터미널(host) 안에 있었다면 [다시 시작] 으로 옮긴다', async () => {
+    const t = await endedSession()
+    const input = xterm.instances[0].textarea as HTMLTextAreaElement
+    input.focus()
+    expect(input).toHaveFocus()
+    await t.end()
+    expect(screen.getByRole('button', { name: '다시 시작' })).toHaveFocus()
+  })
+
+  it('포커스가 터미널 밖(다른 탭·이슈 등)에 있으면 옮기지 않는다', async () => {
+    const t = await endedSession()
+    const other = document.createElement('button')
+    document.body.append(other)
+    try {
+      other.focus()
+      await t.end()
+      expect(screen.getByRole('alert')).toHaveTextContent(ENDED)
+      expect(other).toHaveFocus()
+      expect(screen.getByRole('button', { name: '다시 시작' })).not.toHaveFocus()
+    } finally {
+      other.remove()
+    }
+  })
+
+  it('role=alert 는 문구 요소에만 두고 버튼은 형제로 분리한다', async () => {
+    const t = await endedSession()
+    await t.end()
+    const alert = screen.getByRole('alert')
+    const button = screen.getByRole('button', { name: '다시 시작' })
+    expect(alert).toHaveTextContent(ENDED)
+    expect(alert).not.toContainElement(button)
+    expect(alert.parentElement).toBe(button.parentElement)
+  })
+})
+
+describe('CR-19(a) spawn 실패 alert 에도 [다시 시도] 로 복구', () => {
+  it('문구 alert 와 버튼은 형제, 누르면 새 PTY 를 spawn 하고 오류를 지우며 새 터미널로 포커스', async () => {
+    let n = 0
+    const t = setup({
+      ptySpawn: async () => {
+        if (++n === 1) throw new Error('boom')
+        return `pty-${n}`
+      },
+    })
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('boom')
+    const retry = screen.getByRole('button', { name: '다시 시도' })
+    expect(alert).not.toContainElement(retry)
+    expect(alert.parentElement).toBe(retry.parentElement)
+    // 오류 안내도 xterm host 보다 앞에 있다
+    const host = xterm.instances[0].host as HTMLElement
+    expect(retry.compareDocumentPosition(host) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    fireEvent.click(retry)
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    await flush()
+    expect(xterm.instances).toHaveLength(2)
+    expect(xterm.instances[1].focus).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
+  })
+})
+
+describe('AX-39 xterm 입력 textarea 에도 탈출 안내 연결 + 라벨 한국어화', () => {
+  it('입력 textarea 의 aria-describedby 는 보이는 탈출 안내 요소의 id, 라벨은 "터미널 입력"', () => {
+    setup()
+    const hint = screen.getByText(`${TERMINAL_EXIT_HINT}: 터미널 밖으로 이동`)
+    const input = xterm.instances[0].textarea as HTMLTextAreaElement
+    expect(input.getAttribute('aria-describedby')).toBe(hint.id)
+    expect(input).toHaveAccessibleDescription(`${TERMINAL_EXIT_HINT}: 터미널 밖으로 이동`)
+    expect(xterm.strings.promptLabel).toBe('터미널 입력')
+    expect(input).toHaveAccessibleName('터미널 입력')
+  })
+})

@@ -1,0 +1,8 @@
+{
+  "branchTemplate": "issue/{number}-{slug}",
+  "etcBranchName": "etc",
+  "worktreePath": "~/minmo-workspaces/{owner}/{repo}/{branch}",
+  "mainClonePath": "~/minmo-workspaces/{owner}/{repo}/_main",
+  "postCreateScript": "",
+  "updatedAt": "<ts>"
+}

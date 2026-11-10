@@ -1,0 +1,5 @@
+{
+  "conventions": [
+    { "name": "default-conventions", "source": "plugin", "skill": "be-harness:default-conventions" }
+  ]
+}
