@@ -1,15 +1,17 @@
-// Integration Contract v2.4 "타입" 블록 그대로. 필드 추가만 허용(Breaking 없음).
+// Integration Contract v2.6 "타입" 블록 그대로. 필드 추가만 허용(Breaking 없음).
 export type SettingsValues = {
   branchTemplate: string
   etcBranchName: string
   worktreePath: string
   mainClonePath: string
   postCreateScript: string
+  /** v2.6: 줄바꿈 구분 sparse-checkout 디렉터리, "" = 전체 체크아웃 */
+  sparsePaths: string
 }
 export type SettingsField = keyof SettingsValues
 // 전역은 null 없음
 export type SettingsRecord = { [K in keyof SettingsValues]: SettingsValues[K] | null } & { updatedAt: string | null }
-// 전역 PUT 은 5개 모두 string
+// 전역 PUT 은 5개 필드가 string 필수, sparsePaths 는 생략·null 이면 ""
 export type SettingsInput = { [K in keyof SettingsValues]?: string | null }
 export type SettingsSource = 'global' | 'org' | 'project'
 export type Effective = { values: SettingsValues; sources: Record<keyof SettingsValues, SettingsSource> }
@@ -34,6 +36,7 @@ export type ErrorCode =
   | 'invalid_template'
   | 'invalid_path_template'
   | 'script_too_large'
+  | 'invalid_sparse_paths'
   | 'invalid_issue_key'
   | 'body_too_large'
   | 'invalid_base_updated_at'

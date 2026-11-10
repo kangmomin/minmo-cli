@@ -27,6 +27,7 @@ export interface SettingsDialogProps {
 
 type TextField = 'branchTemplate' | 'etcBranchName' | 'worktreePath' | 'mainClonePath'
 type ScriptMode = 'inherit' | 'none' | 'custom'
+type SparseMode = 'inherit' | 'all' | 'custom'
 
 const TEXT_FIELDS: { field: TextField; label: string; hint: string }[] = [
   { field: 'branchTemplate', label: '브랜치 템플릿', hint: '{number} 필수 · {slug} {title}' },
@@ -40,6 +41,7 @@ const ERROR_TEXT: Record<string, string> = {
   invalid_path_template: '경로 템플릿 형식이 올바르지 않습니다',
   global_requires_all_fields: '전역 설정은 이 값을 비울 수 없습니다',
   script_too_large: '스크립트가 64 KiB 를 넘습니다',
+  invalid_sparse_paths: '저장소 기준 상대 폴더만 한 줄에 하나씩 적을 수 있습니다 (glob·.. 불가)',
   invalid_json: '값의 형식이 올바르지 않습니다',
 }
 
@@ -93,6 +95,17 @@ function initialScriptMode(scope: SettingsScope, v: string | null): ScriptMode {
   return v === '' ? 'none' : 'custom'
 }
 
+function initialSparseMode(scope: SettingsScope, v: string | null): SparseMode {
+  if (v === null) return scope.kind === 'global' ? 'all' : 'inherit'
+  return v === '' ? 'all' : 'custom'
+}
+
+/** 줄 목록 요약(상속 표시용) */
+function sparseSummary(v: string): string {
+  const dirs = v.split('\n').map((l) => l.trim()).filter(Boolean)
+  return dirs.length === 0 ? '(전체)' : dirs.join(', ')
+}
+
 function SettingsForm(props: {
   scope: SettingsScope
   record: SettingsRecord
@@ -116,6 +129,8 @@ function SettingsForm(props: {
   }))
   const [scriptMode, setScriptMode] = useState<ScriptMode>(() => initialScriptMode(scope, record.postCreateScript))
   const [script, setScript] = useState(record.postCreateScript ?? '')
+  const [sparseMode, setSparseMode] = useState<SparseMode>(() => initialSparseMode(scope, record.sparsePaths))
+  const [sparse, setSparse] = useState(record.sparsePaths ?? '')
   const [errors, setErrors] = useState<Partial<Record<keyof SettingsValues, string>>>({})
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -151,6 +166,7 @@ function SettingsForm(props: {
       worktreePath: value('worktreePath'),
       mainClonePath: value('mainClonePath'),
       postCreateScript: scriptMode === 'inherit' ? null : scriptMode === 'none' ? '' : script,
+      sparsePaths: sparseMode === 'inherit' ? null : sparseMode === 'all' ? '' : sparse,
     }
     try {
       await props.save(input)
@@ -244,6 +260,60 @@ function SettingsForm(props: {
               {errors.postCreateScript && (
                 <p id={fieldId('script-error')} role="alert" className="text-xs text-destructive">
                   {errors.postCreateScript}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-2">
+          <span id={fieldId('sparse-group')} className="text-sm font-medium">
+            체크아웃 범위
+          </span>
+          <RadioGroup
+            aria-labelledby={fieldId('sparse-group')}
+            value={sparseMode}
+            onValueChange={(v) => setSparseMode(v as SparseMode)}
+            className="flex gap-4"
+          >
+            {!isGlobal && (
+              <div className="flex items-center gap-2">
+                <RadioGroupItem id={fieldId('sparse-inherit')} value="inherit" />
+                <Label htmlFor={fieldId('sparse-inherit')}>상속</Label>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <RadioGroupItem id={fieldId('sparse-all')} value="all" />
+              <Label htmlFor={fieldId('sparse-all')}>전체</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem id={fieldId('sparse-custom')} value="custom" />
+              <Label htmlFor={fieldId('sparse-custom')}>지정한 폴더만</Label>
+            </div>
+          </RadioGroup>
+          {sparseMode === 'inherit' && inherited && (
+            <p className="text-xs text-muted-foreground">상속: {sparseSummary(inherited.sparsePaths)}</p>
+          )}
+          {sparseMode === 'custom' && (
+            <div className="grid gap-1.5">
+              <Label htmlFor={fieldId('sparse')}>폴더 목록</Label>
+              <Textarea
+                id={fieldId('sparse')}
+                value={sparse}
+                rows={4}
+                className="font-mono"
+                placeholder={'desktop\npackages/api-client'}
+                aria-invalid={errors.sparsePaths ? true : undefined}
+                aria-describedby={errors.sparsePaths ? `${fieldId('sparse-hint')} ${fieldId('sparse-error')}` : fieldId('sparse-hint')}
+                onChange={(e) => setSparse(e.target.value)}
+                spellCheck={false}
+              />
+              <p id={fieldId('sparse-hint')} className="text-xs text-muted-foreground">
+                저장소 기준 폴더를 한 줄에 하나씩 · 새로 만드는 worktree 부터 적용 · 루트의 파일은 항상 포함
+              </p>
+              {errors.sparsePaths && (
+                <p id={fieldId('sparse-error')} role="alert" className="text-xs text-destructive">
+                  {errors.sparsePaths}
                 </p>
               )}
             </div>

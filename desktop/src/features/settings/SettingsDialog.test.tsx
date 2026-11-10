@@ -3,8 +3,9 @@
 //
 // 접근성 계약(6.2 구현이 유지): 입력 라벨 "브랜치 템플릿" "기타 브랜치명" "worktree 경로" "메인 clone 경로",
 // 라디오 그룹 "생성 후 스크립트"(라디오 "상속"/"없음"/"직접 입력"), 텍스트영역 "스크립트 내용", 버튼 "저장",
+// 라디오 그룹 "체크아웃 범위"(라디오 "상속"/"전체"/"지정한 폴더만"), 텍스트영역 "폴더 목록",
 // 미리보기 data-testid "preview-branch" / "preview-path", 필드 오류는 aria-invalid="true".
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -22,6 +23,7 @@ const GLOBAL: SettingsRecord = {
   worktreePath: '~/minmo-workspaces/{owner}/{repo}/{branch}',
   mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
   postCreateScript: '',
+  sparsePaths: '',
   updatedAt: '2026-11-09T00:00:00.000Z',
 }
 const EMPTY: SettingsRecord = {
@@ -30,6 +32,7 @@ const EMPTY: SettingsRecord = {
   worktreePath: null,
   mainClonePath: null,
   postCreateScript: null,
+  sparsePaths: null,
   updatedAt: null,
 }
 const PROJECT: SettingsScope = { kind: 'project', owner: 'MyOrg', repo: 'Repo-A' }
@@ -68,7 +71,8 @@ describe('CT-22 행 없는 org/project → 모든 필드 "상속"', () => {
     expect(await field('기타 브랜치명')).toHaveAttribute('placeholder', '상속: etc')
     expect(await field('worktree 경로')).toHaveAttribute('placeholder', '상속: ~/minmo-workspaces/{owner}/{repo}/{branch}')
     expect(await field('메인 clone 경로')).toHaveAttribute('placeholder', '상속: ~/minmo-workspaces/{owner}/{repo}/_main')
-    expect(screen.getByRole('radio', { name: '상속' })).toBeChecked()
+    expect(within(group('생성 후 스크립트')).getByRole('radio', { name: '상속' })).toBeChecked()
+    expect(within(group('체크아웃 범위')).getByRole('radio', { name: '상속' })).toBeChecked()
     // placeholder 출처: E6 + E8 + E10
     expect(api.getSettings).toHaveBeenCalledWith({ kind: 'global' })
     expect(api.getSettings).toHaveBeenCalledWith(ORG)
@@ -143,6 +147,47 @@ describe('CT-08 전역 400 global_requires_all_fields → 인라인 오류', () 
     await field('브랜치 템플릿')
     expect(screen.queryByRole('radio', { name: '상속' })).toBeNull()
     await waitFor(() => expect(screen.getByRole('radio', { name: '없음' })).toBeChecked())
+  })
+})
+
+const group = (name: string) => screen.getByRole('radiogroup', { name })
+
+describe('CT-40 sparsePaths 3상태', () => {
+  it('전역 기본은 "전체" — 상속 선택지 없음, "" 로 저장', async () => {
+    const { api, user } = setup({ scope: { kind: 'global' } })
+    await field('브랜치 템플릿')
+    expect(within(group('체크아웃 범위')).queryByRole('radio', { name: '상속' })).toBeNull()
+    expect(within(group('체크아웃 범위')).getByRole('radio', { name: '전체' })).toBeChecked()
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1))
+    expect(api.putSettings.mock.calls[0][1].sparsePaths).toBe('')
+  })
+
+  it('"지정한 폴더만" → 폴더 목록 그대로 저장, "상속" 유지 → null', async () => {
+    const { api, user } = setup({ scope: PROJECT })
+    await field('브랜치 템플릿')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1))
+    expect(api.putSettings.mock.calls[0][1].sparsePaths ?? null).toBeNull()
+
+    await user.click(within(group('체크아웃 범위')).getByRole('radio', { name: '지정한 폴더만' }))
+    await replace(user, await field('폴더 목록'), 'desktop')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(2))
+    expect(api.putSettings.mock.calls[1][1].sparsePaths).toBe('desktop')
+  })
+
+  it('저장된 목록 → "지정한 폴더만" + 내용, 400 invalid_sparse_paths → 인라인 오류', async () => {
+    const { api, user } = setup({ scope: PROJECT, project: { ...EMPTY, sparsePaths: 'desktop', updatedAt: '2026-11-09T00:00:01.000Z' } })
+    await waitFor(() => expect(within(group('체크아웃 범위')).getByRole('radio', { name: '지정한 폴더만' })).toBeChecked())
+    const list = await field('폴더 목록')
+    expect(list).toHaveValue('desktop')
+    api.putSettings.mockImplementation(async () => {
+      throw apiError(400, 'invalid_sparse_paths', { field: 'sparsePaths' })
+    })
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(list).toHaveAttribute('aria-invalid', 'true'))
+    expect(screen.getByRole('alert')).toHaveTextContent('상대 폴더만')
   })
 })
 

@@ -129,12 +129,13 @@ minmo-cli/
 | worktreePath | string? | ✔ | `{branch}` 또는 `{key}` 포함(유일성), 토큰 `~` `{owner}` `{repo}` `{branch}` `{key}` `{number}` `{slug}`, ≤512자 |
 | mainClonePath | string? | ✔ | 토큰 `~` `{owner}` `{repo}`, `{branch}`·`{key}` 금지, ≤512자 |
 | postCreateScript | string? | ✔(빈 문자열 허용) | ≤64KB |
+| sparsePaths (v2.6) | string? | 생략·null 이면 `""` | 줄바꿈 구분 저장소 기준 상대 폴더(cone sparse-checkout), 빈 줄 무시, 절대 경로·`..`·`\`·`:`·glob(`*?[]`)·`!`·`#` 금지, ≤100줄·≤4KB. `""` = 전체 체크아웃. 오류 `invalid_sparse_paths` |
 | updatedAt | string | — | 응답 전용, nullable |
 
 - 전역 초기 레코드 기본값: `issue/{number}-{slug}`, `etc`, `~/minmo-workspaces/{owner}/{repo}/{branch}`,
   `~/minmo-workspaces/{owner}/{repo}/_main`, `""`
 - 조직·프로젝트 scope에서 null = 상속
-- effective 응답: `{ values: {branchTemplate, etcBranchName, worktreePath, mainClonePath, postCreateScript}, sources: { <field>: "global"|"org"|"project" } }`
+- effective 응답: `{ values: {branchTemplate, etcBranchName, worktreePath, mainClonePath, postCreateScript, sparsePaths}, sources: { <field>: "global"|"org"|"project" } }`
 - 경로 토큰 치환은 데스크탑에서 수행. `~`는 홈 디렉터리, `{branch}`의 `/`는 `--`로 치환(A-06). `{key}` = 이슈 번호 또는 `etc`
 
 ### Request — PUT notes

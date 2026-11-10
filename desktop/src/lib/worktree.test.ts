@@ -26,11 +26,12 @@ const DEFAULTS: SettingsValues = {
   worktreePath: '~/minmo-workspaces/{owner}/{repo}/{branch}',
   mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
   postCreateScript: '',
+  sparsePaths: '',
 }
 
 const effective = (v: Partial<SettingsValues> = {}): Effective => ({
   values: { ...DEFAULTS, ...v },
-  sources: { branchTemplate: 'global', etcBranchName: 'global', worktreePath: 'global', mainClonePath: 'global', postCreateScript: 'global' },
+  sources: { branchTemplate: 'global', etcBranchName: 'global', worktreePath: 'global', mainClonePath: 'global', postCreateScript: 'global', sparsePaths: 'global' },
 })
 
 // ── git 시뮬레이터 ───────────────────────────────────────────────

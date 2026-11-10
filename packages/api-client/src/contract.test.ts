@@ -76,13 +76,13 @@ describe('contract: 성공 응답 ↔ fixture (CT-05, 07, 09, 13, 14, 22)', () =
     expect(calls[1].url).toBe(`${BASE}/projects/acme/widgets/settings`)
   })
 
-  it('GET effective → values + sources 5키 (CT-09)', async () => {
+  it('GET effective → values + sources 6키 (CT-09)', async () => {
     const eff = fx<Effective>('effective-project-override.json')
     const { api, calls } = client(() => json(200, eff))
     const got = await api.getEffective('acme', 'widgets')
     expect(got).toEqual(eff)
     expect(Object.keys(got.sources).sort()).toEqual(
-      ['branchTemplate', 'etcBranchName', 'mainClonePath', 'postCreateScript', 'worktreePath'].sort(),
+      ['branchTemplate', 'etcBranchName', 'mainClonePath', 'postCreateScript', 'sparsePaths', 'worktreePath'].sort(),
     )
     expect(calls[0].url).toBe(`${BASE}/projects/acme/widgets/settings/effective`)
   })
@@ -111,13 +111,14 @@ describe('contract: 성공 응답 ↔ fixture (CT-05, 07, 09, 13, 14, 22)', () =
 })
 
 describe('contract: 설정 PUT 전송 형식 (E7/E9/E11)', () => {
-  it('전역 PUT 은 5필드 string 전부 전송', async () => {
+  it('전역 PUT 은 6필드 string 전부 전송', async () => {
     const input: SettingsInput = {
       branchTemplate: 'issue/{number}-{slug}',
       etcBranchName: 'etc',
       worktreePath: '~/minmo-workspaces/{owner}/{repo}/{branch}',
       mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
       postCreateScript: '',
+      sparsePaths: '',
     }
     const { api, calls } = client(() => json(200, fx('settings-global-default.json')))
     await api.putSettings({ kind: 'global' }, input)

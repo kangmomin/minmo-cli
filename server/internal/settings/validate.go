@@ -12,10 +12,13 @@ const (
 	maxBranchRunes   = 100
 	maxPathRunes     = 512
 	maxScriptBytes   = 65536
+	maxSparseBytes   = 4096
+	maxSparseLines   = 100
 	codeRequiresAll  = "global_requires_all_fields"
 	codeTemplate     = "invalid_template"
 	codePathTemplate = "invalid_path_template"
 	codeScript       = "script_too_large"
+	codeSparse       = "invalid_sparse_paths"
 )
 
 var (
@@ -28,23 +31,26 @@ var (
 )
 
 // ValidateInput 은 계약 검증 규칙표를 선언 순서(branchTemplate → etcBranchName → worktreePath →
-// mainClonePath → postCreateScript)로 적용해 첫 위반 1건의 (code, field)를 반환한다. 위반이 없으면 ("", "").
-// scope 가 global 이면 nil 필드는 global_requires_all_fields 이다.
+// mainClonePath → postCreateScript → sparsePaths)로 적용해 첫 위반 1건의 (code, field)를 반환한다. 위반이 없으면 ("", "").
+// scope 가 global 이면 nil 필드는 global_requires_all_fields 이다(sparsePaths 는 예외 — nil 은 "").
 func ValidateInput(scope Scope, in Input) (code, field string) {
 	fields := []struct {
 		name  string
 		value *string
 		check func(string) string
+		// optional: 전역에서도 nil 을 허용한다 — v2.6 에 추가된 필드라 이전 클라이언트의 전역 PUT 을 깨지 않도록 nil 은 "" 로 읽는다
+		optional bool
 	}{
-		{"branchTemplate", in.BranchTemplate, checkBranchTemplate},
-		{"etcBranchName", in.EtcBranchName, checkEtcBranchName},
-		{"worktreePath", in.WorktreePath, checkWorktreePath},
-		{"mainClonePath", in.MainClonePath, checkMainClonePath},
-		{"postCreateScript", in.PostCreateScript, checkPostCreateScript},
+		{"branchTemplate", in.BranchTemplate, checkBranchTemplate, false},
+		{"etcBranchName", in.EtcBranchName, checkEtcBranchName, false},
+		{"worktreePath", in.WorktreePath, checkWorktreePath, false},
+		{"mainClonePath", in.MainClonePath, checkMainClonePath, false},
+		{"postCreateScript", in.PostCreateScript, checkPostCreateScript, false},
+		{"sparsePaths", in.SparsePaths, checkSparsePaths, true},
 	}
 	for _, f := range fields {
 		if f.value == nil {
-			if scope == ScopeGlobal {
+			if scope == ScopeGlobal && !f.optional {
 				return codeRequiresAll, f.name
 			}
 			continue // org/project 의 nil 은 상속
@@ -102,6 +108,39 @@ func checkMainClonePath(v string) string {
 func checkPostCreateScript(v string) string {
 	if len(v) > maxScriptBytes { // 바이트 기준(rune 아님)
 		return codeScript
+	}
+	return ""
+}
+
+// checkSparsePaths 는 줄마다 저장소 루트 기준 상대 디렉터리인지 검사한다(빈 줄은 무시).
+// cone 모드는 디렉터리만 받으므로 glob·부정 패턴은 거부하고, 저장소 밖을 가리키는 경로도 막는다.
+func checkSparsePaths(v string) string {
+	if len(v) > maxSparseBytes {
+		return codeSparse
+	}
+	lines := strings.Split(v, "\n")
+	if len(lines) > maxSparseLines {
+		return codeSparse
+	}
+	for _, line := range lines {
+		p := strings.TrimSpace(line)
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "!") || strings.HasPrefix(p, "#") ||
+			strings.ContainsAny(p, `\:*?[]`) {
+			return codeSparse
+		}
+		for _, seg := range strings.Split(strings.TrimSuffix(p, "/"), "/") {
+			if seg == "" || seg == "." || seg == ".." {
+				return codeSparse
+			}
+		}
+		for _, r := range p {
+			if unicode.IsControl(r) {
+				return codeSparse
+			}
+		}
 	}
 	return ""
 }

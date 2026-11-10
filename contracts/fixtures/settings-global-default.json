@@ -4,5 +4,6 @@
   "worktreePath": "~/minmo-workspaces/{owner}/{repo}/{branch}",
   "mainClonePath": "~/minmo-workspaces/{owner}/{repo}/_main",
   "postCreateScript": "",
+  "sparsePaths": "",
   "updatedAt": "<ts>"
 }
