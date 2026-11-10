@@ -3,7 +3,8 @@ import { Command } from 'commander'
 
 import { doctor, login, logout, revokeSession, sessions } from './commands/account'
 import { ls, note, openIssue, rm } from './commands/issues'
-import { configGet, configSet, reposAdd, reposAll, reposList, reposRemove } from './commands/settings'
+import { modeCmd } from './commands/mode'
+import { configGet, configSet, reposAdd, reposAll, reposList, reposRemove, reposReset } from './commands/settings'
 import type { Ctx } from './context'
 
 export type ProgramDeps = {
@@ -31,7 +32,12 @@ export function buildProgram(deps: ProgramDeps): Command {
     .description('데스크탑에서 발급한 코드로 로그인')
     .action(withCtx((ctx, code: string) => login(ctx, code)))
   program.command('logout').description('이 기기의 세션을 끊고 로그인 정보를 지웁니다').action(withCtx((ctx) => logout(ctx)))
-  program.command('doctor').description('서버(역터널)·로그인·git·gh·tmux 점검').action(withCtx((ctx) => doctor(ctx)))
+  program.command('doctor').description('모드·서버(역터널)·로그인·git·gh·tmux 점검').action(withCtx((ctx) => doctor(ctx)))
+  program
+    .command('mode')
+    .argument('[mode]', 'server(PC 의 minmo 서버, 역터널) 또는 local(서버 없이 이 기기에서)')
+    .description('모드 보기·바꾸기 — local 로 바꿀 때 서버에 닿으면 서버 값을 사본으로 받아 둡니다')
+    .action(withCtx((ctx, mode: string | undefined) => modeCmd(ctx, mode)))
 
   program
     .command('ls')
@@ -61,7 +67,7 @@ export function buildProgram(deps: ProgramDeps): Command {
     .description('이슈 메모를 $EDITOR 로 편집')
     .action(withCtx((ctx, issue: string) => note(ctx, issue)))
 
-  const repos = program.command('repos').description('보일 저장소(데스크탑과 공유)')
+  const repos = program.command('repos').description('보일 저장소(서버 모드: 데스크탑과 공유 · 로컬 모드: 이 기기)')
   repos.command('list', { isDefault: true }).description('현재 선택').action(withCtx((ctx) => reposList(ctx)))
   repos
     .command('add')
@@ -74,8 +80,9 @@ export function buildProgram(deps: ProgramDeps): Command {
     .description('보일 저장소에서 빼기')
     .action(withCtx((ctx, entries: string[]) => reposRemove(ctx, entries)))
   repos.command('all').description('모든 저장소 표시(선택 해제)').action(withCtx((ctx) => reposAll(ctx)))
+  repos.command('reset').description('로컬 모드: 로컬 선택을 지우고 서버 사본으로').action(withCtx((ctx) => reposReset(ctx)))
 
-  const config = program.command('config').description('설정(전역 → 조직 → 프로젝트 상속, 데스크탑과 공유)')
+  const config = program.command('config').description('설정(전역 → 조직 → 프로젝트 상속 · 서버 모드: 데스크탑과 공유 · 로컬 모드: 이 기기의 로컬 값)')
   config
     .command('get', { isDefault: true })
     .option('--org <owner>', '조직 설정')
@@ -87,7 +94,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   config
     .command('set')
     .argument('<key>', '설정 이름 (branchTemplate, worktreePath, postCreateScriptPosix …)')
-    .argument('<value>', '값 · @파일(여러 줄) · -(조직·프로젝트에서 상속으로)')
+    .argument('<value>', '값 · @파일(여러 줄) · -(서버 모드: 상속으로 · 로컬 모드: 로컬 값 지움)')
     .option('--org <owner>', '조직 설정')
     .option('--project <owner/repo>', '프로젝트 설정')
     .description('설정 값 하나 바꾸기')

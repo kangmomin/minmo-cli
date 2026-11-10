@@ -5,7 +5,7 @@ import { render } from 'ink'
 import { ApiError } from '@minmo/api-client'
 
 import { editInEditor } from '../commands/issues'
-import { CliError, requireLogin } from '../context'
+import { CliError } from '../context'
 import type { Ctx } from '../context'
 import { attach, ensureSession, tmuxAvailable } from '../host/tmux'
 import { reloadState } from '../store'
@@ -16,11 +16,11 @@ export async function runTui(ctx: Ctx): Promise<void> {
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
     throw new CliError('TUI 는 터미널에서만 실행할 수 있습니다 — 명령은 `minmo --help`', 2)
   }
-  const me = await requireLogin(ctx)
+  const { login } = await ctx.data.ready()
   let snapshot: Snapshot | undefined
   for (;;) {
     let result: ExitResult = { kind: 'quit' }
-    const app = render(<App ctx={ctx} login={me.githubLogin} initial={snapshot} onExit={(r) => (result = r)} />)
+    const app = render(<App ctx={ctx} login={login} initial={snapshot} onExit={(r) => (result = r)} />)
     await app.waitUntilExit()
     // render 가 켠 raw 모드를 풀어야 tmux·편집기가 입력을 받는다
     process.stdin.setRawMode?.(false)
@@ -47,6 +47,6 @@ export async function runTui(ctx: Ctx): Promise<void> {
       }
     }
     // tmux 안에서 다른 minmo(예: `minmo open`)가 worktree 를 만들었을 수 있다 — 파일의 최신 상태로 다시 그린다
-    await reloadState(ctx.paths, ctx.state).catch(() => undefined)
+    await reloadState(ctx.paths, ctx.state, ctx.config).catch(() => undefined)
   }
 }
