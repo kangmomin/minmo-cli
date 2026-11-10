@@ -55,6 +55,7 @@ const ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'invalid_template',
   'invalid_path_template',
   'script_too_large',
+  'invalid_sparse_paths',
   'invalid_issue_key',
   'body_too_large',
   'invalid_base_updated_at',

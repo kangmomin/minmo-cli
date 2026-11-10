@@ -611,6 +611,9 @@ func TestCT10_CT11_CT28_Validation(t *testing.T) {
 	}
 	status, m = e.doJSON("PUT", "/orgs/acme/settings", token, map[string]any{"postCreateScript": strings.Repeat("x", 65537)})
 	ctExpectError(t, status, m, 400, "script_too_large", "postCreateScript")
+	// v2.6 sparsePaths
+	status, m = e.doJSON("PUT", "/orgs/acme/settings", token, map[string]any{"sparsePaths": "a/../b"})
+	ctExpectError(t, status, m, 400, "invalid_sparse_paths", "sparsePaths")
 	status, m = e.doJSON("PUT", "/orgs/acme/settings", token, map[string]any{"postCreateScript": strings.Repeat("x", 65536)})
 	if status != 200 {
 		t.Errorf("65536B script: %d %v", status, m)

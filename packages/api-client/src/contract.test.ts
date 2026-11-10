@@ -155,6 +155,12 @@ describe('contract: 에러 → ApiError (CT-21)', () => {
     expect(err).toMatchObject({ status: 400, code: 'global_requires_all_fields', field: 'worktreePath' })
   })
 
+  it('400 invalid_sparse_paths → code·field (v2.6)', async () => {
+    const { api } = client(() => json(400, errors.invalid_sparse_paths))
+    const err = (await api.putSettings({ kind: 'org', owner: 'acme' }, { sparsePaths: 'a/../b' }).catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 400, code: 'invalid_sparse_paths', field: 'sparsePaths' })
+  })
+
   it('401 unauthorized', async () => {
     const { api } = client(() => json(401, errors.unauthorized))
     const err = (await api.me().catch((e: unknown) => e)) as ApiError
