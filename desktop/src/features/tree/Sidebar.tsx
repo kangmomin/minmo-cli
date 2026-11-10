@@ -1,3 +1,6 @@
+import { ListFilterIcon } from 'lucide-react'
+import { useState } from 'react'
+
 import type { SettingsScope } from '@minmo/api-client'
 
 import { Badge } from '../../components/ui/badge'
@@ -7,6 +10,8 @@ import type { PreviewIssue } from '../settings/SettingsDialog'
 import { OrgNode } from './OrgNode'
 import { RefreshButton } from './RefreshButton'
 import { githubErrorMessage, useGitHubSource, useOwners } from './useTree'
+import { useOwnerFilter, useRepoSelection } from './useVisibleRepos'
+import { VisibleReposDialog } from './VisibleReposDialog'
 
 export interface SidebarProps {
   onOpenSettings(scope: SettingsScope, preview: PreviewIssue | null): void
@@ -16,6 +21,10 @@ export interface SidebarProps {
 export function Sidebar({ onOpenSettings }: SidebarProps) {
   const owners = useOwners()
   const source = useGitHubSource()
+  const ownerFilter = useOwnerFilter()
+  const filtering = useRepoSelection() !== null
+  const [filterOpen, setFilterOpen] = useState(false)
+  const shownOwners = owners.data?.filter((o) => ownerFilter(o.login))
 
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r" aria-label="이슈 트리">
@@ -26,8 +35,18 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
             gh 미사용(REST)
           </Badge>
         )}
+        <Button
+          variant={filtering ? 'secondary' : 'ghost'}
+          size="icon-sm"
+          aria-label="표시할 저장소"
+          title={filtering ? '표시할 저장소(골라 둔 저장소만 보는 중)' : '표시할 저장소'}
+          onClick={() => setFilterOpen(true)}
+        >
+          <ListFilterIcon />
+        </Button>
         <RefreshButton />
       </div>
+      <VisibleReposDialog open={filterOpen} onOpenChange={setFilterOpen} />
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-2">
           {owners.isLoading && (
@@ -45,7 +64,10 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
               </Button>
             </div>
           )}
-          {owners.data?.map((o) => <OrgNode key={o.login} owner={o} onOpenSettings={onOpenSettings} />)}
+          {owners.data && owners.data.length > 0 && shownOwners?.length === 0 && (
+            <p className="p-2 text-xs text-muted-foreground">표시하도록 고른 저장소가 없습니다 — 위의 필터 버튼에서 고르세요.</p>
+          )}
+          {shownOwners?.map((o) => <OrgNode key={o.login} owner={o} onOpenSettings={onOpenSettings} />)}
         </div>
       </ScrollArea>
     </aside>

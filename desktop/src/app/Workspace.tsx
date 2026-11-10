@@ -1,4 +1,4 @@
-import { LogOutIcon, SettingsIcon } from 'lucide-react'
+import { LogOutIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
 import { useState } from 'react'
 
 import type { SettingsScope } from '@minmo/api-client'
@@ -7,6 +7,7 @@ import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useAuth } from '../features/auth/useAuth'
+import { CliAccessDialog } from '../features/cli/CliAccessDialog'
 import { IssueHeader } from '../features/issue/IssueHeader'
 import { WorkTabs } from '../features/issue/WorkTabs'
 import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
@@ -28,6 +29,7 @@ export function Workspace() {
   const target = useSetupStore((s) => (selectedId ? s.targets[selectedId] : undefined))
   const openState = useSetupStore((s) => (selectedId ? s.open[selectedId] : undefined))
   const [settings, setSettings] = useState<SettingsTarget | null>(null)
+  const [cliOpen, setCliOpen] = useState(false)
 
   const selectedPreview: PreviewIssue | null = target ?? null
 
@@ -38,6 +40,14 @@ export function Workspace() {
         <span className="flex-1" />
         {auth.me && <span className="text-sm text-muted-foreground">{auth.me.githubLogin}</span>}
         <ThemeToggle />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label="원격 CLI 접속" onClick={() => setCliOpen(true)}>
+              <TerminalSquareIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>원격 CLI 접속</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -89,6 +99,8 @@ export function Workspace() {
           )}
         </main>
       </div>
+
+      <CliAccessDialog open={cliOpen} onOpenChange={setCliOpen} />
 
       {settings && (
         <SettingsDialog

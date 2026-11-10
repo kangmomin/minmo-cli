@@ -10,6 +10,7 @@ import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
 import { RepoNode } from './RepoNode'
 import { githubErrorMessage, useRepos } from './useTree'
+import { useRepoFilter } from './useVisibleRepos'
 
 export interface OrgNodeProps {
   owner: GitHubOwner
@@ -25,6 +26,8 @@ export function OrgNode({ owner, onOpenSettings }: OrgNodeProps) {
   const expanded = useUiStore((s) => !!s.expanded[nodeId])
   const setExpanded = useUiStore((s) => s.setExpanded)
   const repos = useRepos(owner, expanded)
+  const repoFilter = useRepoFilter()
+  const shown = repos.data?.map((r) => ({ repo: r, ...repoFilter(r.owner, r.name) })).filter((x) => x.show)
   const childrenId = useId()
   const openSettings = () => onOpenSettings({ kind: 'org', owner: owner.login }, null)
 
@@ -75,8 +78,11 @@ export function OrgNode({ owner, onOpenSettings }: OrgNodeProps) {
               </div>
             )}
             {repos.data?.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">저장소 없음</div>}
-            {repos.data?.map((r) => (
-              <RepoNode key={`${r.owner}/${r.name}`} repo={r} onOpenSettings={onOpenSettings} />
+            {repos.data && repos.data.length > 0 && shown?.length === 0 && (
+              <div className="px-2 py-1 text-xs text-muted-foreground">표시하도록 고른 저장소 없음</div>
+            )}
+            {shown?.map(({ repo: r, hidden }) => (
+              <RepoNode key={`${r.owner}/${r.name}`} repo={r} hidden={hidden} onOpenSettings={onOpenSettings} />
             ))}
           </div>
         )}

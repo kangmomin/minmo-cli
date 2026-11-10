@@ -6,6 +6,7 @@ import { normalizePath, renderPath } from '@minmo/api-client'
 import type { SettingsScope } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
+import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../../components/ui/context-menu'
 import type { GitHubRepo } from '@minmo/core'
@@ -19,10 +20,12 @@ import { githubErrorMessage, useIssues } from './useTree'
 
 export interface RepoNodeProps {
   repo: GitHubRepo
+  /** 표시 목록에서 뺐지만 로컬 worktree 가 있어 보여 주는 저장소 */
+  hidden?: boolean
   onOpenSettings(scope: SettingsScope, preview: PreviewIssue | null): void
 }
 
-export function RepoNode({ repo, onOpenSettings }: RepoNodeProps) {
+export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps) {
   const { api, home, platform } = useDeps()
   const nodeId = `repo:${repo.owner}/${repo.name}`
   const expanded = useUiStore((s) => !!s.expanded[nodeId])
@@ -91,6 +94,11 @@ export function RepoNode({ repo, onOpenSettings }: RepoNodeProps) {
               {expanded ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
               <FolderGit2Icon className="size-3.5 text-muted-foreground" />
               <span className="truncate">{repo.name}</span>
+              {hidden && (
+                <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]" title="표시 목록에서 뺐지만 로컬 worktree 가 있어 보입니다">
+                  숨김
+                </Badge>
+              )}
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent>
