@@ -16,6 +16,8 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 | `server/cmd/githubmock` | E2E 전용 GitHub OAuth/API mock 서버 |
 | `desktop/` | Tauri 2 + React/TS 데스크탑 앱 |
 | `packages/api-client/` | 공유 TS 타입·API 클라이언트·템플릿 치환(`@minmo/api-client`) |
+| `packages/core/` | 데스크탑·원격 CLI 공용 도메인 로직 — worktree 서비스·GitHub 클라이언트·보일 저장소 판정(`@minmo/core`) |
+| `packages/cli/` | 원격 SSH 관리용 CLI·TUI(`minmo-cli`, bin `minmo`) |
 | `contracts/fixtures/` | 서버·클라이언트가 함께 읽는 API 계약 fixture |
 | `mobile/` | Phase 3 RN 앱 자리 |
 | `docs/specs/` | 기능 Spec |
@@ -134,6 +136,70 @@ npm run e2e        # Playwright(Tauri mock)
 ```
 
 Tauri 네이티브 빌드는 Rust(cargo)가 필요하다. 서버 주소는 `VITE_MINMO_SERVER`(기본 `http://127.0.0.1:8787`).
+
+트리 상단의 **표시할 저장소** 버튼으로 보일 저장소를 고른다(서버에 저장되어 원격 CLI 와 공유). 로컬 worktree 가 있는 저장소는 빼도 "숨김" 표시와 함께 보인다.
+
+## 원격 CLI (SSH)
+
+원격 서버에 `minmo` CLI 를 설치하고 SSH 로 접속해, 그 서버의 worktree 를 터미널에서 관리한다(TUI + 명령어).
+설정·메모·보일 저장소는 이 PC 의 minmo 서버에 있고, 원격 CLI 는 **SSH 역터널**로 그 서버를 쓴다(서버는 계속 `127.0.0.1` 에서만 듣는다).
+
+### 요구 사항(원격)
+
+- Linux 또는 macOS, Node.js 22.12 이상, git 2.31 이상, tmux(터미널)
+- GitHub: `gh auth login` + `gh auth setup-git` 권장(private 저장소 clone). gh 가 없으면 `GITHUB_TOKEN` 또는 서버의 GitHub 토큰으로 REST 를 쓴다
+
+### 설치
+
+```bash
+# 이 PC(저장소)에서 패키지 만들기 → dist/minmo-cli-<버전>.tgz
+npm ci && npm run pack:cli
+# 원격에 복사해 설치
+scp dist/minmo-cli-*.tgz my-server:
+ssh my-server 'npm i -g ./minmo-cli-*.tgz && mkdir -p ~/.minmo'
+```
+
+### SSH 설정(이 PC 의 `~/.ssh/config`)
+
+```
+Host my-server
+  HostName <원격 주소>
+  User <사용자>
+  RemoteForward /home/<사용자>/.minmo/server.sock 127.0.0.1:8787
+  ExitOnForwardFailure yes
+  StreamLocalBindUnlink yes
+```
+
+- TCP 포트 대신 **Unix 소켓**으로 역터널한다 — 원격의 다른 사용자가 포트로 접근하거나, 포트 충돌로 토큰이 엉뚱한 곳으로 가는 일을 막는다.
+- 원격 sshd 가 `AllowStreamLocalForwarding` 을 허용해야 한다(기본 허용). 같은 PC 에서 여러 SSH 세션을 열면 마지막 세션의 터널이 쓰인다.
+- 소켓 대신 다른 주소를 쓰려면 `MINMO_SERVER=http://…`, 소켓 경로는 `MINMO_SOCKET`.
+
+### 로그인
+
+1. 데스크탑 상단 바 **원격 CLI 접속** → **코드 발급**(10분, 1회용)
+2. 원격에서 `minmo login ABCD-EFGH` — 이 기기 이름(hostname)으로 세션이 만들어지고, 데스크탑의 같은 다이얼로그에서 확인·끊기 할 수 있다
+3. `minmo doctor` 로 터널·로그인·git·gh·tmux 점검
+
+자격 증명은 `~/.config/minmo/credentials.json`(권한 0600), worktree 기록은 `~/.config/minmo/state.json` 에 둔다.
+CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인한다(다른 서버로 연결된 터널에 토큰을 보내지 않게).
+
+### 사용
+
+| 명령 | 내용 |
+|------|------|
+| `minmo` | TUI — 트리(보일 저장소 필터)·상세. `Enter` 준비 · `t` tmux 터미널 · `n` 메모 · `d` 삭제 · `f` 보이기/숨기기 · `a` 숨긴 것 보기 · `s` 설정 · `/` 검색 · `q` 종료 |
+| `minmo ls [owner[/repo]] [--all] [--json]` | 저장소·이슈 목록 |
+| `minmo open owner/repo#42` | worktree 준비 후 tmux 터미널(`--no-attach` 면 경로만) |
+| `minmo rm owner/repo#42 [--yes]` | worktree 삭제 — 그 안의 tmux 터미널·프로세스도 정리 |
+| `minmo note owner/repo#42` | 메모를 `$EDITOR` 로 편집(다른 기기와 충돌하면 내 내용을 파일로 보존) |
+| `minmo repos [add\|rm\|all] …` | 보일 저장소(데스크탑과 공유, `owner/*` 는 조직 전체) |
+| `minmo config [get\|set] … [--org o\|--project o/r]` | 설정(데스크탑과 공유). 여러 줄 값은 `@파일`, 조직·프로젝트 상속은 `-` |
+| `minmo sessions [revoke <id>]` | 로그인된 기기 |
+
+- 터미널은 전용 tmux 서버(`tmux -L minmo`)의 세션이다. 분할은 tmux 기본 키를 쓴다.
+- 원격에서는 생성 후 스크립트로 **`postCreateScriptPosix`**(sh)를 실행한다. `postCreateScript` 는 Windows(PowerShell) 용이다.
+- 설정의 경로는 기기 간에 공유되므로 `~` 로 시작하게 둔다. 이 OS 에서 쓸 수 없는 경로(예: Linux 에서 `C:\…`)면 clone 하지 않고 알려 준다.
+- worktree 를 지우면 그 worktree 를 연 tmux 세션의 프로세스 트리와(Linux) cwd 가 그 안인 같은 사용자 프로세스를 끝낸다. 실행 중인 `minmo` 자신과 그 조상 셸은 제외한다.
 
 ## Windows 안내
 
