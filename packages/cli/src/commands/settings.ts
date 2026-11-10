@@ -1,34 +1,33 @@
-// 보일 저장소 선택·설정 편집 (데스크탑과 같은 서버 값을 쓴다)
+// 보일 저장소 선택·설정 편집 — 서버 모드는 데스크탑과 같은 서버 값, 로컬 모드는 이 기기의 로컬 값(서버 사본 위에 덮음)
 import { readFile } from 'node:fs/promises'
 
 import { ApiError } from '@minmo/api-client'
-import type { SettingsField, SettingsInput, SettingsScope } from '@minmo/api-client'
-import { toggleOwnerAll, toggleRepo } from '@minmo/core'
+import type { SettingsField, SettingsScope } from '@minmo/api-client'
+import { SETTING_FIELDS, toggleOwnerAll, toggleRepo } from '@minmo/core'
 
-import { CliError, requireLogin, serverErrorMessage } from '../context'
+import { SOURCE_LABEL } from '../backend'
+import type { SelectionOrigin } from '../backend'
+import { CliError, serverErrorMessage, toCliError } from '../context'
 import type { Ctx } from '../context'
 import { parseRepo } from '../refs'
 
+const ORIGIN_LABEL: Record<SelectionOrigin, string> = {
+  server: '서버(데스크탑과 공유)',
+  offline: '서버에 연결할 수 없음',
+  local: '로컬(이 기기)',
+  copy: '서버 사본',
+  default: '고른 적 없음',
+}
+
 export async function reposList(ctx: Ctx): Promise<void> {
-  await requireLogin(ctx)
-  const { repos } = await ctx.api.getVisibleRepos()
+  await ctx.data.ready()
+  const { repos, origin } = await ctx.data.getSelection()
+  // 트리는 오프라인이면 전체 표시로 버티지만, 선택을 보여 달라는 명령에서 "전체"라고 하면 틀린 답이다
+  if (origin === 'offline') throw new CliError(serverErrorMessage(new ApiError({ status: 0, code: 'network_error' }), ctx.server))
+  if (ctx.mode === 'local') ctx.out.log(`[로컬 모드 · ${ORIGIN_LABEL[origin]}]`)
   if (repos === null) return ctx.out.log('모든 저장소를 표시합니다 (`minmo repos add owner/repo` 로 고를 수 있습니다)')
   if (repos.length === 0) return ctx.out.log('고른 저장소가 없습니다 — worktree 가 있는 저장소만 보입니다')
   for (const r of repos) ctx.out.log(r)
-}
-
-/** 읽고 → 바꾸고 → baseUpdatedAt 으로 저장. 다른 기기가 먼저 바꿨으면(409) 한 번 다시 시도한다 */
-async function updateSelection(ctx: Ctx, change: (cur: string[] | null) => string[] | null): Promise<string[] | null> {
-  for (let attempt = 0; ; attempt++) {
-    const cur = await ctx.api.getVisibleRepos()
-    try {
-      return (await ctx.api.putVisibleRepos({ repos: change(cur.repos), baseUpdatedAt: cur.updatedAt })).repos
-    } catch (e) {
-      if (e instanceof ApiError && e.code === 'conflict' && attempt === 0) continue
-      if (e instanceof ApiError && e.code === 'invalid_visible_repos') throw new CliError('형식이 올바르지 않습니다 — "owner/repo" 또는 "owner/*"')
-      throw new CliError(serverErrorMessage(e, ctx.server))
-    }
-  }
 }
 
 function applyEntry(sel: string[], entry: string, on: boolean): string[] {
@@ -38,36 +37,38 @@ function applyEntry(sel: string[], entry: string, on: boolean): string[] {
   return toggleRepo(sel, owner, repo, on)
 }
 
+const savedText = (ctx: Ctx, saved: string[] | null) =>
+  `보일 저장소${ctx.mode === 'local' ? '(로컬)' : ''}: ${saved === null ? '(전체)' : saved.join(', ') || '(없음)'}`
+
 export async function reposAdd(ctx: Ctx, entries: string[]): Promise<void> {
-  await requireLogin(ctx)
-  const saved = await updateSelection(ctx, (cur) => entries.reduce((s, e) => applyEntry(s, e, true), cur ?? []))
-  ctx.out.log(`보일 저장소: ${saved?.join(', ') || '(없음)'}`)
+  await ctx.data.ready()
+  const saved = await ctx.data.updateSelection((cur) => entries.reduce((s, e) => applyEntry(s, e, true), cur ?? []))
+  ctx.out.log(savedText(ctx, saved))
 }
 
 export async function reposRemove(ctx: Ctx, entries: string[]): Promise<void> {
-  await requireLogin(ctx)
-  const saved = await updateSelection(ctx, (cur) => {
+  await ctx.data.ready()
+  const saved = await ctx.data.updateSelection((cur) => {
     if (cur === null) throw new CliError('지금은 모든 저장소를 표시 중입니다 — 먼저 `minmo repos add` 로 볼 저장소를 고르세요')
     return entries.reduce((s, e) => applyEntry(s, e, false), cur)
   })
-  ctx.out.log(`보일 저장소: ${saved?.join(', ') || '(없음)'}`)
+  ctx.out.log(savedText(ctx, saved))
 }
 
 export async function reposAll(ctx: Ctx): Promise<void> {
-  await requireLogin(ctx)
-  await updateSelection(ctx, () => null)
-  ctx.out.log('모든 저장소를 표시합니다')
+  await ctx.data.ready()
+  await ctx.data.updateSelection(() => null)
+  ctx.out.log(`모든 저장소를 표시합니다${ctx.mode === 'local' ? '(로컬)' : ''}`)
 }
 
-export const SETTING_KEYS: SettingsField[] = [
-  'branchTemplate',
-  'etcBranchName',
-  'worktreePath',
-  'mainClonePath',
-  'postCreateScript',
-  'postCreateScriptPosix',
-  'sparsePaths',
-]
+/** 로컬 모드: 로컬에서 고른 값을 지우고 서버 사본으로 돌아간다 */
+export async function reposReset(ctx: Ctx): Promise<void> {
+  await ctx.data.resetSelection()
+  const { repos, origin } = await ctx.data.getSelection()
+  ctx.out.log(`로컬 선택을 지웠습니다 — ${ORIGIN_LABEL[origin]}: ${repos === null ? '(전체)' : repos.join(', ') || '(없음)'}`)
+}
+
+export const SETTING_KEYS = SETTING_FIELDS
 
 export type ScopeOpts = { org?: string; project?: string }
 
@@ -78,50 +79,41 @@ function scopeOf(o: ScopeOpts): SettingsScope {
   return { kind: 'global' }
 }
 
-const scopeLabel = (s: SettingsScope) => (s.kind === 'global' ? '전역' : s.kind === 'org' ? `조직 ${s.owner}` : `프로젝트 ${s.owner}/${s.repo}`)
+const scopeLabel = (ctx: Ctx, s: SettingsScope) =>
+  `${ctx.mode === 'local' ? '로컬 ' : ''}${s.kind === 'global' ? '전역' : s.kind === 'org' ? `조직 ${s.owner}` : `프로젝트 ${s.owner}/${s.repo}`}`
+
+/** null 의 뜻: 서버 모드는 상속, 로컬 모드는 로컬 값 없음(서버 사본·기본값) */
+const unsetText = (ctx: Ctx) => (ctx.mode === 'local' ? '(사본/기본값)' : '(상속)')
 
 export async function configGet(ctx: Ctx, opts: ScopeOpts & { effective?: string; json?: boolean }): Promise<void> {
-  await requireLogin(ctx)
+  await ctx.data.ready()
   if (opts.effective) {
     const { owner, repo } = parseRepo(opts.effective)
-    const eff = await ctx.api.getEffective(owner, repo)
+    const eff = await ctx.data.getEffective(owner, repo).catch((e: unknown) => {
+      throw toCliError(e, ctx.server)
+    })
+    if (ctx.mode === 'server' && Object.values(eff.sources).includes('copy')) ctx.out.error('서버에 연결할 수 없어 마지막으로 받은 사본을 보여 줍니다')
+    // JSON 의 sources 는 코드 그대로(서버 모드: global·org·project — 이전과 같다)
     if (opts.json) return ctx.out.log(JSON.stringify(eff, null, 2))
-    for (const k of SETTING_KEYS) ctx.out.log(`${k} = ${JSON.stringify(eff.values[k])}  (${eff.sources[k]})`)
+    for (const k of SETTING_KEYS) ctx.out.log(`${k} = ${JSON.stringify(eff.values[k])}  (${SOURCE_LABEL[eff.sources[k]]})`)
     return
   }
   const scope = scopeOf(opts)
-  const rec = await ctx.api.getSettings(scope)
+  const rec = await ctx.data.getScope(scope)
   if (opts.json) return ctx.out.log(JSON.stringify(rec, null, 2))
-  ctx.out.log(`[${scopeLabel(scope)}]`)
-  for (const k of SETTING_KEYS) ctx.out.log(`${k} = ${rec[k] === null ? '(상속)' : JSON.stringify(rec[k])}`)
+  ctx.out.log(`[${scopeLabel(ctx, scope)}]`)
+  for (const k of SETTING_KEYS) ctx.out.log(`${k} = ${rec[k] === null ? unsetText(ctx) : JSON.stringify(rec[k])}`)
 }
 
 /**
- * 값 하나를 바꾼다. 서버 PUT 은 레코드 전체 교체라 현재 값을 읽어 그 키만 바꿔 보낸다.
- * value: 문자열, `@파일`(스크립트 등 여러 줄), `-`(조직·프로젝트에서 상속으로)
+ * 값 하나를 바꾼다.
+ * value: 문자열, `@파일`(스크립트 등 여러 줄), `-`(서버 모드: 조직·프로젝트에서 상속으로 · 로컬 모드: 로컬 값 지움)
  */
 export async function configSet(ctx: Ctx, key: string, value: string, opts: ScopeOpts): Promise<void> {
-  await requireLogin(ctx)
   if (!SETTING_KEYS.includes(key as SettingsField)) throw new CliError(`알 수 없는 설정입니다: ${key} (가능: ${SETTING_KEYS.join(', ')})`, 2)
   const scope = scopeOf(opts)
-  let v: string | null
-  if (value === '-') {
-    if (scope.kind === 'global') throw new CliError('전역 설정은 상속(-)할 수 없습니다', 2)
-    v = null
-  } else if (value.startsWith('@')) {
-    v = (await readFile(value.slice(1), 'utf8')).replace(/\r\n/g, '\n')
-  } else {
-    v = value
-  }
-  const rec = await ctx.api.getSettings(scope)
-  const input: SettingsInput = {}
-  for (const k of SETTING_KEYS) input[k] = rec[k]
-  input[key as SettingsField] = v
-  try {
-    await ctx.api.putSettings(scope, input)
-  } catch (e) {
-    if (e instanceof ApiError && e.field) throw new CliError(`${e.field} 값이 올바르지 않습니다(${e.code})`)
-    throw new CliError(serverErrorMessage(e, ctx.server))
-  }
-  ctx.out.log(`[${scopeLabel(scope)}] ${key} = ${v === null ? '(상속)' : JSON.stringify(v)}`)
+  await ctx.data.ready()
+  const v = value === '-' ? null : value.startsWith('@') ? (await readFile(value.slice(1), 'utf8')).replace(/\r\n/g, '\n') : value
+  await ctx.data.setSetting(scope, key as SettingsField, v)
+  ctx.out.log(`[${scopeLabel(ctx, scope)}] ${key} = ${v === null ? unsetText(ctx) : JSON.stringify(v)}`)
 }

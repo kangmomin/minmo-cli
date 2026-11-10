@@ -4,12 +4,13 @@ import { hostname } from 'node:os'
 
 import { ApiError } from '@minmo/api-client'
 
-import { CliError, requireLogin, serverErrorMessage } from '../context'
+import { CliError, GITHUB_AUTH_REQUIRED, requireLogin, serverErrorMessage } from '../context'
 import type { Ctx } from '../context'
 import { run } from '../host/proc'
 import { tmuxAvailable } from '../host/tmux'
 import { describeServer } from '../server'
 import { clearCredentials, saveCredentials } from '../store'
+import { MODE_LABEL, describeCopy } from './mode'
 
 export async function login(ctx: Ctx, code: string): Promise<void> {
   let session: string
@@ -28,6 +29,7 @@ export async function login(ctx: Ctx, code: string): Promise<void> {
   })
   await saveCredentials(ctx.paths, { session, login: me.githubLogin, savedAt: new Date().toISOString() })
   ctx.out.log(`로그인했습니다: ${me.githubLogin} (이 기기: ${hostname()})`)
+  if (ctx.mode === 'local') ctx.out.log('  지금은 로컬 모드입니다 — 서버 값을 쓰려면 `minmo mode server`')
 }
 
 export async function logout(ctx: Ctx): Promise<void> {
@@ -66,11 +68,10 @@ export async function revokeSession(ctx: Ctx, id: string): Promise<void> {
 
 type Check = { ok: boolean; label: string; hint?: string }
 
-/** 원격 사용에 필요한 것을 점검한다 — 하나라도 실패하면 종료 코드 1 */
-export async function doctor(ctx: Ctx): Promise<void> {
-  const checks: Check[] = []
-  const add = (ok: boolean, label: string, hint?: string) => checks.push({ ok, label, hint })
+type Add = (ok: boolean, label: string, hint?: string) => void
 
+/** 서버 모드 점검: 역터널 소켓·서버 응답·로그인. 서버가 응답하면 true */
+async function checkServer(ctx: Ctx, add: Add): Promise<boolean> {
   if (ctx.server.kind === 'socket' && !existsSync(ctx.server.path)) {
     add(false, `역터널 소켓 없음: ${ctx.server.path}`, 'PC 의 ~/.ssh/config 에 RemoteForward <이 경로> 127.0.0.1:8787 을 넣고 다시 접속하세요(원격 sshd 가 AllowStreamLocalForwarding 을 허용해야 함)')
   } else {
@@ -100,6 +101,17 @@ export async function doctor(ctx: Ctx): Promise<void> {
       add(false, e instanceof Error ? e.message : String(e))
     }
   }
+  return health
+}
+
+/** 원격 사용에 필요한 것을 점검한다 — 하나라도 실패하면 종료 코드 1 */
+export async function doctor(ctx: Ctx): Promise<void> {
+  const checks: Check[] = []
+  const add: Add = (ok, label, hint) => checks.push({ ok, label, hint })
+
+  add(true, `모드: ${MODE_LABEL[ctx.mode]}${ctx.mode === 'local' ? ` — ${describeCopy(ctx)}` : ''}`)
+  // 로컬 모드는 서버를 쓰지 않는다 — 터널·로그인 점검을 건너뛴다
+  const health = ctx.mode === 'server' ? await checkServer(ctx, add) : false
 
   const git = await run('git', ['--version'])
   const ver = /(\d+)\.(\d+)/.exec(git.stdout)
@@ -108,11 +120,16 @@ export async function doctor(ctx: Ctx): Promise<void> {
 
   const gh = await ctx.host.ghAvailable()
   const envToken = !!(process.env.GITHUB_TOKEN || process.env.GH_TOKEN)
-  add(
-    gh || envToken || health,
-    gh ? 'gh 로그인됨' : envToken ? 'GitHub 토큰: 환경 변수' : 'gh 미사용 — 서버 토큰으로 REST 사용',
-    gh ? undefined : 'private 저장소 clone 에는 `gh auth login` 후 `gh auth setup-git` 을 권장합니다',
-  )
+  if (ctx.mode === 'local') {
+    // 서버 토큰이 없으므로 gh 또는 환경 변수 토큰이 꼭 있어야 한다
+    add(gh || envToken, gh ? 'gh 로그인됨' : envToken ? 'GitHub 토큰: 환경 변수' : 'GitHub 인증 없음', GITHUB_AUTH_REQUIRED)
+  } else {
+    add(
+      gh || envToken || health,
+      gh ? 'gh 로그인됨' : envToken ? 'GitHub 토큰: 환경 변수' : 'gh 미사용 — 서버 토큰으로 REST 사용',
+      gh ? undefined : 'private 저장소 clone 에는 `gh auth login` 후 `gh auth setup-git` 을 권장합니다',
+    )
+  }
 
   const tmux = await tmuxAvailable()
   add(tmux, tmux ? 'tmux 있음' : 'tmux 없음', tmux ? undefined : '터미널(`minmo open`, TUI 의 t)에 tmux 가 필요합니다')

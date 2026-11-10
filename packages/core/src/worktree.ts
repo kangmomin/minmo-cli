@@ -120,7 +120,7 @@ export type DeleteResult = { status: 'deleted' } | ({ status: 'needs_confirmatio
 
 export interface WorktreeDeps {
   tauri: WorktreeHost
-  getEffective(owner: string, repo: string): Promise<Effective>
+  getEffective(owner: string, repo: string): Promise<Pick<Effective, 'values'>>
   defaultBranch(owner: string, repo: string): Promise<string>
   pathStore: WorktreePathStore
   home: string
@@ -249,7 +249,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     return res
   }
 
-  async function loadEffective(owner: string, repo: string): Promise<Effective> {
+  async function loadEffective(owner: string, repo: string): Promise<Pick<Effective, 'values'>> {
     try {
       return await deps.getEffective(owner, repo)
     } catch (e) {

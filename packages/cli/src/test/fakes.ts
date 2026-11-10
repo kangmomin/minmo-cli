@@ -1,5 +1,5 @@
 // CLI 테스트용 가짜 서버 API·GitHub·컨텍스트
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -14,7 +14,7 @@ import { createContext } from '../context'
 import type { Ctx, Out } from '../context'
 import type { NodeHost } from '../host/node'
 import { saveCredentials } from '../store'
-import type { Paths } from '../store'
+import type { Mode, Paths } from '../store'
 
 function mockAll<T extends object>(base: T, overrides: Partial<T>): Mocked<T> {
   const merged = { ...base, ...overrides }
@@ -128,18 +128,31 @@ export type TestCtx = Ctx & { api: Mocked<ApiClient>; github: Mocked<GitHubClien
 
 export async function tempPaths(): Promise<Paths> {
   const dir = await mkdtemp(join(tmpdir(), 'minmo-cli-test-'))
-  return { configDir: dir, credentials: join(dir, 'credentials.json'), state: join(dir, 'state.json'), socket: join(dir, 'no.sock') }
+  return { configDir: dir, credentials: join(dir, 'credentials.json'), config: join(dir, 'config.json'), state: join(dir, 'state.json'), socket: join(dir, 'no.sock') }
+}
+
+export type TestCtxOptions = {
+  api?: Partial<ApiClient>
+  github?: Partial<GitHubClient>
+  host?: Partial<NodeHost>
+  loggedIn?: boolean
+  /** config.json 의 모드(기본 server) */
+  mode?: Mode
+  env?: NodeJS.ProcessEnv
+  /** 같은 설정 폴더로 다시 만들 때(모드 전환 뒤 새 실행 흉내) */
+  paths?: Paths
 }
 
 /** 로그인된 상태의 테스트 컨텍스트(가짜 서버·GitHub·호스트, 설정 폴더는 임시 폴더) */
-export async function createTestCtx(o: { api?: Partial<ApiClient>; github?: Partial<GitHubClient>; host?: Partial<NodeHost>; loggedIn?: boolean } = {}): Promise<TestCtx> {
-  const paths = await tempPaths()
-  if (o.loggedIn !== false) await saveCredentials(paths, { session: 'sess', login: 'octocat', savedAt: '2026-11-10T00:00:00.000Z' })
+export async function createTestCtx(o: TestCtxOptions = {}): Promise<TestCtx> {
+  const paths = o.paths ?? (await tempPaths())
+  if (o.loggedIn !== false && !o.paths) await saveCredentials(paths, { session: 'sess', login: 'octocat', savedAt: '2026-11-10T00:00:00.000Z' })
+  if (o.mode) await writeFile(paths.config, JSON.stringify({ mode: o.mode }))
   const logs: string[] = []
   const errors: string[] = []
   const out: Out = { log: (s) => logs.push(s), error: (s) => errors.push(s) }
   const api = createFakeApi(o.api)
   const github = createFakeGitHub(o.github)
-  const ctx = await createContext({ env: {}, paths, api, github, host: createFakeHost(o.host) as unknown as NodeHost, out })
+  const ctx = await createContext({ env: o.env ?? {}, paths, api, github, host: createFakeHost(o.host) as unknown as NodeHost, out })
   return Object.assign(ctx, { logs, errors }) as TestCtx
 }

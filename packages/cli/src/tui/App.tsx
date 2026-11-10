@@ -8,8 +8,11 @@ import { isOwnerAllSelected, toggleOwnerAll, toggleRepo, worktreeId } from '@min
 import type { GitHubRepo, IssueTarget, RepoSelection, SetupLogEvent } from '@minmo/core'
 
 import { loadSelection } from '../commands/issues'
+import { SOURCE_LABEL } from '../backend'
 import { serverErrorMessage } from '../context'
 import type { Ctx } from '../context'
+import { NOTES_SERVER_ONLY } from '../errors'
+import { reloadState } from '../store'
 import { buildRows, expandSelection } from './model'
 import type { IssueItem, Row, TreeData } from './model'
 
@@ -30,7 +33,8 @@ export type ExitResult =
 
 export interface AppProps {
   ctx: Ctx
-  login: string
+  /** 서버 모드의 로그인 이름(로컬 모드는 null) */
+  login: string | null
   initial?: Snapshot
   onExit(r: ExitResult): void
   /** 터미널 높이(테스트 주입용) */
@@ -167,23 +171,21 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
 
   async function saveSelection(change: (cur: string[] | null) => string[] | null) {
     try {
-      const cur = await ctx.api.getVisibleRepos()
-      const saved = await ctx.api.putVisibleRepos({ repos: change(cur.repos), baseUpdatedAt: cur.updatedAt })
-      setSel(saved.repos)
-      setMessage('보일 저장소를 저장했습니다(데스크탑에도 반영)')
+      setSel(await ctx.data.updateSelection(change))
+      setMessage(ctx.mode === 'local' ? '보일 저장소를 저장했습니다(이 기기 로컬)' : '보일 저장소를 저장했습니다(데스크탑에도 반영)')
     } catch (e) {
-      setMessage(e instanceof ApiError && e.code === 'conflict' ? '다른 기기에서 먼저 바뀌었습니다 — r 로 새로고침 후 다시 시도하세요' : errText(e, ctx))
+      setMessage(errText(e, ctx))
     }
   }
 
   async function showSettings(repo: GitHubRepo) {
     try {
-      const eff = await ctx.api.getEffective(repo.owner, repo.name)
+      const eff = await ctx.data.getEffective(repo.owner, repo.name)
       setDetail([
         `설정 — ${repo.owner}/${repo.name} (값 · 출처)`,
-        ...Object.entries(eff.values).map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 60)} · ${eff.sources[k as keyof typeof eff.sources]}`),
+        ...Object.entries(eff.values).map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 60)} · ${SOURCE_LABEL[eff.sources[k as keyof typeof eff.sources]]}`),
         '',
-        '바꾸려면: minmo config set <key> <value> --project owner/repo',
+        `바꾸려면: minmo config set <key> <value> --project owner/repo${ctx.mode === 'local' ? ' (로컬 값)' : ''}`,
       ])
     } catch (e) {
       setMessage(errText(e, ctx))
@@ -221,7 +223,15 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
       setShowAll((v) => !v)
       return setMessage(showAll ? '보일 저장소만 표시' : '숨긴 저장소도 표시 — f 로 보이기/숨기기')
     }
-    if (input === 'r') return void refresh()
+    if (input === 'r') {
+      // 다른 SSH 세션·tmux 패널의 minmo 가 바꾼 worktree·로컬 값도 다시 읽는다
+      return void reloadState(ctx.paths, ctx.state, ctx.config)
+        .catch(() => undefined)
+        .then(() => {
+          syncWorktrees()
+          return refresh()
+        })
+    }
     if (!row) return
 
     if ((key.leftArrow || input === 'h') && row.kind !== 'issue' && row.kind !== 'note' && row.expanded) return toggleExpand(row.id, false)
@@ -264,7 +274,7 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
       })()
       return
     }
-    if (input === 'n') return quit({ kind: 'note', target: t, snapshot: snapshot() })
+    if (input === 'n') return ctx.mode === 'local' ? setMessage(NOTES_SERVER_ONLY) : quit({ kind: 'note', target: t, snapshot: snapshot() })
     if (input === 'd') {
       if (t.key === 'etc') return setMessage('★기타 worktree 는 삭제하지 않습니다')
       if (!row.worktree) return setMessage('이 기기에 worktree 가 없습니다')
@@ -338,7 +348,7 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
   return (
     <Box flexDirection="column">
       <Text>
-        <Text bold>minmo</Text> <Text dimColor>· {login} · {ctx.server.kind === 'socket' ? '역터널 소켓' : ctx.server.url}{sel === null ? '' : ' · 보일 저장소 필터'}{showAll ? ' · 숨긴 것 포함' : ''}{search ? ` · 검색 "${search}"` : ''}</Text>
+        <Text bold>minmo</Text> <Text dimColor>· {ctx.mode === 'local' ? '로컬 모드(서버 없이)' : `${login ?? ''} · ${ctx.server.kind === 'socket' ? '역터널 소켓' : ctx.server.url}`}{sel === null ? '' : ' · 보일 저장소 필터'}{showAll ? ' · 숨긴 것 포함' : ''}{search ? ` · 검색 "${search}"` : ''}</Text>
       </Text>
       <Box>
         <Box flexDirection="column" width="50%" borderStyle="round" paddingX={1}>

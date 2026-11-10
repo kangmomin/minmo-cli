@@ -6,22 +6,18 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 
 import { ApiError } from '@minmo/api-client'
-import { isOfflineError, isOwnerVisible, isRepoVisible, worktreeId } from '@minmo/core'
+import { isOwnerVisible, isRepoVisible, worktreeId } from '@minmo/core'
 import type { GitHubOwner, IssueTarget, RepoSelection, SetupLogEvent } from '@minmo/core'
 
-import { CliError, requireLogin, serverErrorMessage } from '../context'
+import { CliError, requireLogin, serverErrorMessage, toCliError } from '../context'
 import type { Ctx } from '../context'
+import { NOTES_SERVER_ONLY } from '../errors'
 import { attach, ensureSession, tmuxAvailable } from '../host/tmux'
 import { parseRef, resolveTarget } from '../refs'
 
-/** 보일 저장소 선택 — 서버에 닿지 않으면 전체 표시(목록이 비지 않게) */
+/** 보일 저장소 선택(모드에 따라 서버 값 또는 로컬 값·서버 사본) */
 export async function loadSelection(ctx: Ctx): Promise<RepoSelection> {
-  try {
-    return (await ctx.api.getVisibleRepos()).repos
-  } catch (e) {
-    if (isOfflineError(e)) return null
-    throw new CliError(serverErrorMessage(e, ctx.server))
-  }
+  return (await ctx.data.getSelection()).repos
 }
 
 const hasWorktree = (ctx: Ctx, owner: string, repo?: string) => {
@@ -68,7 +64,7 @@ export async function listIssueRows(ctx: Ctx, owner: string, repo: string): Prom
 }
 
 export async function ls(ctx: Ctx, target: string | undefined, opts: { json?: boolean; all?: boolean }): Promise<void> {
-  await requireLogin(ctx)
+  await ctx.data.ready()
   let rows: LsRow[]
   if (target?.includes('/')) {
     const [owner, repo] = target.split('/')
@@ -96,14 +92,14 @@ function printLog(ctx: Ctx) {
 }
 
 export async function openIssue(ctx: Ctx, refText: string, opts: { attach: boolean }): Promise<void> {
-  await requireLogin(ctx)
+  await ctx.data.ready()
   const target = await resolveTarget(ctx.github, parseRef(refText))
   ctx.onLog(printLog(ctx))
   let res
   try {
     res = await ctx.worktree.openIssue(target)
   } catch (e) {
-    throw new CliError(e instanceof ApiError ? serverErrorMessage(e, ctx.server) : e instanceof Error ? e.message : String(e))
+    throw toCliError(e, ctx.server)
   } finally {
     ctx.onLog(null)
   }
@@ -136,7 +132,7 @@ export async function removeWorktree(ctx: Ctx, target: IssueTarget, opts: { yes?
   // 호스트·git 오류(예: 지울 worktree 의 터미널 안에서 실행)는 스택 없이 안내만
   const del = (confirmed: boolean) =>
     ctx.worktree.deleteWorktree(target, { confirmed }).catch((e: unknown) => {
-      throw e instanceof CliError ? e : new CliError(e instanceof ApiError ? serverErrorMessage(e, ctx.server) : e instanceof Error ? e.message : String(e))
+      throw toCliError(e, ctx.server)
     })
   let res = await del(!!opts.yes)
   if (res.status === 'needs_confirmation') {
@@ -154,7 +150,7 @@ export async function removeWorktree(ctx: Ctx, target: IssueTarget, opts: { yes?
 }
 
 export async function rm(ctx: Ctx, refText: string, opts: { yes?: boolean }): Promise<void> {
-  await requireLogin(ctx)
+  await ctx.data.ready()
   const ref = parseRef(refText)
   // GitHub 이슈가 지워졌어도 로컬 worktree 는 지울 수 있게 — 저장된 대소문자로 찾는다
   const id = Object.keys(ctx.state.worktrees).find((k) => k.toLowerCase() === worktreeId(ref.owner, ref.repo, ref.key).toLowerCase())
@@ -183,6 +179,7 @@ export function editInEditor(initial: string, env: NodeJS.ProcessEnv = process.e
 }
 
 export async function note(ctx: Ctx, refText: string, opts: { edit?: (body: string) => Promise<string> } = {}): Promise<void> {
+  if (ctx.mode === 'local') throw new CliError(NOTES_SERVER_ONLY)
   await requireLogin(ctx)
   const ref = parseRef(refText)
   const cur = await ctx.api.getNotes(ref.owner, ref.repo, ref.key).catch((e: unknown) => {

@@ -127,6 +127,9 @@ func TestValidate_BranchTemplate_CT10(t *testing.T) {
 		ok("feat number", "feat/{number}"),
 		ok("title token", "{number}-{title}"),
 		ok("100 runes", "{number}"+strings.Repeat("a", 92)),
+		// packages/core settings.test.ts 와 같은 경계: U+FEFF 는 공백·제어문자가 아니고 C1 은 제어문자
+		ok("BOM", "issue/{number}\U0000FEFFx"),
+		bad("C1 control", "issue/{number}\u0085"),
 		bad("no number", "feat/x"),
 		bad("empty", ""),
 		bad("unknown token", "{number}-{foo}"),
@@ -228,6 +231,8 @@ func TestValidate_SparsePaths_CT40(t *testing.T) {
 		ok("empty = 전체", ""),
 		ok("dirs", "desktop\npackages/api-client/\n\n  server  "),
 		ok("crlf", "desktop\r\nserver"),
+		ok("NEL trimmed", "\u0085a"),
+		bad("BOM is not space", "\U0000FEFF\t\U0000FEFF"),
 		bad("absolute", "/etc"),
 		bad("drive", "C:/x"),
 		bad("backslash", `desktop\src`),
