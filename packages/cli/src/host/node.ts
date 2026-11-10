@@ -1,14 +1,15 @@
-// 원격 CLI 의 호스트 — @minmo/core 의 worktree·GitHub 로직이 쓰는 OS 기능을 Node 로 구현한다.
+// 원격 CLI 의 호스트 — @minmo/core 의 worktree·GitHub 로직이 쓰는 OS 기능을 Node 로 구현한다(Linux·macOS·Windows).
 import type { GhHost, WorktreeHost } from '@minmo/core'
 
 import { copyTree, exists, removeDir } from './fsops'
 import { run } from './proc'
 import { createScriptHost } from './script'
 import { killByCwd } from './tmux'
+import { killInDir } from './win'
 
 export type NodeHost = WorktreeHost & GhHost
 
-export function createNodeHost(env: NodeJS.ProcessEnv = process.env): NodeHost {
+export function createNodeHost(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): NodeHost {
   // 비대화형으로 — 자격 증명 프롬프트가 뜨면 SSH 세션이 멈춘다
   const gitEnv = { ...env, GIT_TERMINAL_PROMPT: '0' }
   const ghEnv = { ...env, GH_PROMPT_DISABLED: '1' }
@@ -20,7 +21,8 @@ export function createNodeHost(env: NodeJS.ProcessEnv = process.env): NodeHost {
     pathExists: exists,
     removeDir: (p) => removeDir(p),
     copyTree,
-    ...createScriptHost(),
-    ptyKillByCwd: killByCwd,
+    ...createScriptHost(platform),
+    // worktree 를 지우기 전 그 안의 터미널·프로세스 정리 — Windows 는 tmux·/proc 대신 명령줄로 찾는다
+    ptyKillByCwd: platform === 'win32' ? (p) => killInDir(p) : killByCwd,
   }
 }
