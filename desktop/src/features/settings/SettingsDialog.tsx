@@ -95,6 +95,77 @@ function initialScriptMode(scope: SettingsScope, v: string | null): ScriptMode {
   return v === '' ? 'none' : 'custom'
 }
 
+/** 생성 후 스크립트 3상태(상속/없음/직접 입력) — OS 별 두 벌에 같은 UI 를 쓴다 */
+function ScriptSection(props: {
+  idPrefix: string
+  title: string
+  contentLabel: string
+  shell: string
+  isGlobal: boolean
+  mode: ScriptMode
+  onModeChange(m: ScriptMode): void
+  value: string
+  onValueChange(v: string): void
+  inherited: string | undefined
+  error: string | undefined
+}) {
+  const { idPrefix: id, error } = props
+  return (
+    <div className="grid gap-2">
+      <span id={`${id}-group`} className="text-sm font-medium">
+        {props.title}
+      </span>
+      <RadioGroup
+        aria-labelledby={`${id}-group`}
+        value={props.mode}
+        onValueChange={(v) => props.onModeChange(v as ScriptMode)}
+        className="flex gap-4"
+      >
+        {!props.isGlobal && (
+          <div className="flex items-center gap-2">
+            <RadioGroupItem id={`${id}-inherit`} value="inherit" />
+            <Label htmlFor={`${id}-inherit`}>상속</Label>
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <RadioGroupItem id={`${id}-none`} value="none" />
+          <Label htmlFor={`${id}-none`}>없음</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <RadioGroupItem id={`${id}-custom`} value="custom" />
+          <Label htmlFor={`${id}-custom`}>직접 입력</Label>
+        </div>
+      </RadioGroup>
+      {props.mode === 'inherit' && props.inherited !== undefined && (
+        <p className="text-xs text-muted-foreground">상속: {props.inherited === '' ? '(없음)' : props.inherited.split('\n')[0]}</p>
+      )}
+      {props.mode === 'custom' && (
+        <div className="grid gap-1.5">
+          <Label htmlFor={id}>{props.contentLabel}</Label>
+          <Textarea
+            id={id}
+            value={props.value}
+            rows={5}
+            className="font-mono"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? `${id}-hint ${id}-error` : `${id}-hint`}
+            onChange={(e) => props.onValueChange(e.target.value)}
+            spellCheck={false}
+          />
+          <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+            {`worktree 생성 직후 1회 실행 (${props.shell}) · env MINMO_OWNER, MINMO_REPO, MINMO_BRANCH, MINMO_WORKTREE …`}
+          </p>
+          {error && (
+            <p id={`${id}-error`} role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function initialSparseMode(scope: SettingsScope, v: string | null): SparseMode {
   if (v === null) return scope.kind === 'global' ? 'all' : 'inherit'
   return v === '' ? 'all' : 'custom'
@@ -129,6 +200,8 @@ function SettingsForm(props: {
   }))
   const [scriptMode, setScriptMode] = useState<ScriptMode>(() => initialScriptMode(scope, record.postCreateScript))
   const [script, setScript] = useState(record.postCreateScript ?? '')
+  const [posixMode, setPosixMode] = useState<ScriptMode>(() => initialScriptMode(scope, record.postCreateScriptPosix))
+  const [posixScript, setPosixScript] = useState(record.postCreateScriptPosix ?? '')
   const [sparseMode, setSparseMode] = useState<SparseMode>(() => initialSparseMode(scope, record.sparsePaths))
   const [sparse, setSparse] = useState(record.sparsePaths ?? '')
   const [errors, setErrors] = useState<Partial<Record<keyof SettingsValues, string>>>({})
@@ -166,6 +239,7 @@ function SettingsForm(props: {
       worktreePath: value('worktreePath'),
       mainClonePath: value('mainClonePath'),
       postCreateScript: scriptMode === 'inherit' ? null : scriptMode === 'none' ? '' : script,
+      postCreateScriptPosix: posixMode === 'inherit' ? null : posixMode === 'none' ? '' : posixScript,
       sparsePaths: sparseMode === 'inherit' ? null : sparseMode === 'all' ? '' : sparse,
     }
     try {
@@ -211,60 +285,33 @@ function SettingsForm(props: {
           </div>
         ))}
 
-        <div className="grid gap-2">
-          <span id={fieldId('script-group')} className="text-sm font-medium">
-            생성 후 스크립트
-          </span>
-          <RadioGroup
-            aria-labelledby={fieldId('script-group')}
-            value={scriptMode}
-            onValueChange={(v) => setScriptMode(v as ScriptMode)}
-            className="flex gap-4"
-          >
-            {!isGlobal && (
-              <div className="flex items-center gap-2">
-                <RadioGroupItem id={fieldId('script-inherit')} value="inherit" />
-                <Label htmlFor={fieldId('script-inherit')}>상속</Label>
-              </div>
-            )}
-            <div className="flex items-center gap-2">
-              <RadioGroupItem id={fieldId('script-none')} value="none" />
-              <Label htmlFor={fieldId('script-none')}>없음</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <RadioGroupItem id={fieldId('script-custom')} value="custom" />
-              <Label htmlFor={fieldId('script-custom')}>직접 입력</Label>
-            </div>
-          </RadioGroup>
-          {scriptMode === 'inherit' && inherited && (
-            <p className="text-xs text-muted-foreground">
-              상속: {inherited.postCreateScript === '' ? '(없음)' : inherited.postCreateScript.split('\n')[0]}
-            </p>
-          )}
-          {scriptMode === 'custom' && (
-            <div className="grid gap-1.5">
-              <Label htmlFor={fieldId('script')}>스크립트 내용</Label>
-              <Textarea
-                id={fieldId('script')}
-                value={script}
-                rows={5}
-                className="font-mono"
-                aria-invalid={errors.postCreateScript ? true : undefined}
-                aria-describedby={errors.postCreateScript ? `${fieldId('script-hint')} ${fieldId('script-error')}` : fieldId('script-hint')}
-                onChange={(e) => setScript(e.target.value)}
-                spellCheck={false}
-              />
-              <p id={fieldId('script-hint')} className="text-xs text-muted-foreground">
-                {`worktree 생성 직후 1회 실행 (${platform === 'win32' ? 'PowerShell' : 'sh'}) · env MINMO_OWNER, MINMO_REPO, MINMO_BRANCH, MINMO_WORKTREE …`}
-              </p>
-              {errors.postCreateScript && (
-                <p id={fieldId('script-error')} role="alert" className="text-xs text-destructive">
-                  {errors.postCreateScript}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+        {/* 스크립트는 실행 셸이 OS 마다 달라 두 벌이다 — Windows 데스크탑은 PowerShell, macOS 데스크탑·원격 CLI 는 sh */}
+        <ScriptSection
+          idPrefix={fieldId('script')}
+          title="생성 후 스크립트"
+          contentLabel="스크립트 내용"
+          shell={`Windows · PowerShell${platform === 'win32' ? ' · 이 PC' : ''}`}
+          isGlobal={isGlobal}
+          mode={scriptMode}
+          onModeChange={setScriptMode}
+          value={script}
+          onValueChange={setScript}
+          inherited={inherited?.postCreateScript}
+          error={errors.postCreateScript}
+        />
+        <ScriptSection
+          idPrefix={fieldId('script-posix')}
+          title="생성 후 스크립트 (Linux/macOS)"
+          contentLabel="스크립트 내용 (Linux/macOS)"
+          shell={`sh · 원격 CLI${platform !== 'win32' ? ' · 이 PC' : ''}`}
+          isGlobal={isGlobal}
+          mode={posixMode}
+          onModeChange={setPosixMode}
+          value={posixScript}
+          onValueChange={setPosixScript}
+          inherited={inherited?.postCreateScriptPosix}
+          error={errors.postCreateScriptPosix}
+        />
 
         <div className="grid gap-2">
           <span id={fieldId('sparse-group')} className="text-sm font-medium">

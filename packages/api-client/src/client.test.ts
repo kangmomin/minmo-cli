@@ -34,6 +34,7 @@ const SETTINGS = {
   mainClonePath: null,
   postCreateScript: null,
   sparsePaths: null,
+  postCreateScriptPosix: null,
   updatedAt: null,
 }
 

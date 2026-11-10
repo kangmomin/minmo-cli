@@ -19,6 +19,7 @@ const GLOBAL: SettingsRecord = {
   mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
   postCreateScript: '',
   sparsePaths: '',
+  postCreateScriptPosix: '',
   updatedAt: '2026-11-09T00:00:00.000Z',
 }
 

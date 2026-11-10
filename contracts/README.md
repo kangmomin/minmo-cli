@@ -1,7 +1,8 @@
 # contracts/ — 공용 계약 fixture (오케스트레이터 소유)
 
-서버(Go)와 클라이언트(TS)가 **같은 fixture**를 읽어 Integration Contract v2.6을 고정한다.
+서버(Go)와 클라이언트(TS)가 **같은 fixture**를 읽어 Integration Contract v2.7을 고정한다.
 (v2.6: 설정에 `sparsePaths` 추가 — 줄바꿈 구분 상대 디렉터리, `""` = 전체 체크아웃. 전역 PUT 에서 생략·null 이면 저장된 값 유지, 없으면 `""`)
+(v2.7: 보일 저장소 E15/E16, 원격 CLI 로그인·세션 E17~E20, 설정 `postCreateScriptPosix` — Linux/macOS(sh) 생성 후 스크립트, `postCreateScript` 는 Windows(PowerShell). 전역 PUT 에서 생략·null 이면 저장된 값 유지)
 도메인 구현 에이전트는 이 디렉터리와 두 계약 테스트
 (`server/internal/httpapi/contract_test.go`, `packages/api-client/src/contract.test.ts`)를 수정하지 않는다.
 

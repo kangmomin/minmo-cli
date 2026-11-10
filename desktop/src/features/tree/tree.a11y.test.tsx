@@ -26,6 +26,7 @@ const SCOPE_EMPTY = {
   mainClonePath: null,
   postCreateScript: null,
   sparsePaths: null,
+  postCreateScriptPosix: null,
   updatedAt: null,
 }
 const GLOBAL = {
@@ -35,6 +36,7 @@ const GLOBAL = {
   mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
   postCreateScript: '',
   sparsePaths: '',
+  postCreateScriptPosix: '',
   updatedAt: '2026-11-09T00:00:00.000Z',
 }
 

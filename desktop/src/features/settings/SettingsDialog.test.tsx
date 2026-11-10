@@ -24,6 +24,7 @@ const GLOBAL: SettingsRecord = {
   mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
   postCreateScript: '',
   sparsePaths: '',
+  postCreateScriptPosix: '',
   updatedAt: '2026-11-09T00:00:00.000Z',
 }
 const EMPTY: SettingsRecord = {
@@ -33,6 +34,7 @@ const EMPTY: SettingsRecord = {
   mainClonePath: null,
   postCreateScript: null,
   sparsePaths: null,
+  postCreateScriptPosix: null,
   updatedAt: null,
 }
 const PROJECT: SettingsScope = { kind: 'project', owner: 'MyOrg', repo: 'Repo-A' }
@@ -146,11 +148,37 @@ describe('CT-08 전역 400 global_requires_all_fields → 인라인 오류', () 
     setup({ scope: { kind: 'global' } })
     await field('브랜치 템플릿')
     expect(screen.queryByRole('radio', { name: '상속' })).toBeNull()
-    await waitFor(() => expect(screen.getByRole('radio', { name: '없음' })).toBeChecked())
+    await waitFor(() => expect(within(group('생성 후 스크립트')).getByRole('radio', { name: '없음' })).toBeChecked())
   })
 })
 
 const group = (name: string) => screen.getByRole('radiogroup', { name })
+
+describe('v2.7 생성 후 스크립트 OS 분리', () => {
+  it('Linux/macOS(sh) 스크립트는 별도 그룹 — 직접 입력하면 postCreateScriptPosix 로 저장, Windows 쪽은 그대로 상속', async () => {
+    const { api, user } = setup({ scope: ORG })
+    await field('브랜치 템플릿')
+    await user.click(within(group('생성 후 스크립트 (Linux/macOS)')).getByRole('radio', { name: '직접 입력' }))
+    await replace(user, await field('스크립트 내용 (Linux/macOS)'), 'npm ci')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1))
+    const sent = api.putSettings.mock.calls[0][1]
+    expect(sent.postCreateScriptPosix).toBe('npm ci')
+    expect(sent.postCreateScript ?? null).toBeNull()
+  })
+
+  it('400 script_too_large field=postCreateScriptPosix → Linux/macOS 칸에 인라인 오류', async () => {
+    const { api, user } = setup({ scope: ORG })
+    await field('브랜치 템플릿')
+    await user.click(within(group('생성 후 스크립트 (Linux/macOS)')).getByRole('radio', { name: '직접 입력' }))
+    const posix = await field('스크립트 내용 (Linux/macOS)')
+    api.putSettings.mockImplementation(async () => {
+      throw apiError(400, 'script_too_large', { field: 'postCreateScriptPosix' })
+    })
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(posix).toHaveAttribute('aria-invalid', 'true'))
+  })
+})
 
 describe('CT-40 sparsePaths 3상태', () => {
   it('전역 기본은 "전체" — 상속 선택지 없음, "" 로 저장', async () => {
@@ -195,7 +223,7 @@ describe('CT-28 postCreateScript 3상태 · etcBranchName 오류', () => {
   it('"없음" 선택 → postCreateScript "" 로 저장(override)', async () => {
     const { api, user } = setup({ scope: ORG })
     await field('브랜치 템플릿')
-    await user.click(screen.getByRole('radio', { name: '없음' }))
+    await user.click(within(group('생성 후 스크립트')).getByRole('radio', { name: '없음' }))
     await user.click(screen.getByRole('button', { name: '저장' }))
     await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1))
     expect(api.putSettings.mock.calls[0][1].postCreateScript).toBe('')
@@ -204,7 +232,7 @@ describe('CT-28 postCreateScript 3상태 · etcBranchName 오류', () => {
   it('"직접 입력" 선택 → 스크립트 내용으로 저장', async () => {
     const { api, user } = setup({ scope: ORG })
     await field('브랜치 템플릿')
-    await user.click(screen.getByRole('radio', { name: '직접 입력' }))
+    await user.click(within(group('생성 후 스크립트')).getByRole('radio', { name: '직접 입력' }))
     await replace(user, await field('스크립트 내용'), 'npm ci')
     await user.click(screen.getByRole('button', { name: '저장' }))
     await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1))
@@ -221,12 +249,12 @@ describe('CT-28 postCreateScript 3상태 · etcBranchName 오류', () => {
 
   it('저장된 "" 은 "없음", 저장된 본문은 "직접 입력" 으로 표시', async () => {
     setup({ scope: ORG, org: { ...EMPTY, postCreateScript: '', updatedAt: '2026-11-09T00:00:01.000Z' } })
-    await waitFor(() => expect(screen.getByRole('radio', { name: '없음' })).toBeChecked())
+    await waitFor(() => expect(within(group('생성 후 스크립트')).getByRole('radio', { name: '없음' })).toBeChecked())
   })
 
   it('저장된 스크립트 본문 → "직접 입력" + 내용 표시', async () => {
     setup({ scope: PROJECT, project: { ...EMPTY, postCreateScript: 'npm ci', updatedAt: '2026-11-09T00:00:01.000Z' } })
-    await waitFor(() => expect(screen.getByRole('radio', { name: '직접 입력' })).toBeChecked())
+    await waitFor(() => expect(within(group('생성 후 스크립트')).getByRole('radio', { name: '직접 입력' })).toBeChecked())
     expect(await field('스크립트 내용')).toHaveValue('npm ci')
   })
 
@@ -263,7 +291,7 @@ describe('AX 오류 안내 연결', () => {
       },
     })
     await field('브랜치 템플릿')
-    await user.click(screen.getByRole('radio', { name: '직접 입력' }))
+    await user.click(within(group('생성 후 스크립트')).getByRole('radio', { name: '직접 입력' }))
     const script = await field('스크립트 내용')
     expect(script).toHaveAccessibleDescription(/worktree 생성 직후 1회 실행/)
     await replace(user, script, 'echo hi')
@@ -333,7 +361,7 @@ describe('AX 오류 안내 연결', () => {
       },
     })
     await field('브랜치 템플릿')
-    await user.click(screen.getByRole('radio', { name: '직접 입력' }))
+    await user.click(within(group('생성 후 스크립트')).getByRole('radio', { name: '직접 입력' }))
     const script = await field('스크립트 내용')
     const hintId = script.getAttribute('aria-describedby')!
     await replace(user, script, 'echo hi')

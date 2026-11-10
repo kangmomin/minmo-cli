@@ -162,6 +162,11 @@ export function sparseDirs(v: string): string[] {
     .filter(Boolean)
 }
 
+/** 생성 후 스크립트는 실행 셸이 OS 마다 달라 두 벌이다 — Windows 는 PowerShell, 그 외(macOS·원격 CLI)는 sh */
+export function scriptFor(values: Pick<SettingsValues, 'postCreateScript' | 'postCreateScriptPosix'>, platform: Platform): string {
+  return platform === 'win32' ? values.postCreateScript : values.postCreateScriptPosix
+}
+
 /** worktreePathMap 키 */
 export function worktreeId(owner: string, repo: string, key: string): string {
   return `${owner}/${repo}#${key}`
@@ -477,9 +482,10 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
 
     // A-14: 생성 후 스크립트는 worktree 를 새로 만들었을 때 1회만
     let script = SKIPPED
-    if (p.values.postCreateScript.trim() !== '') {
+    const postCreate = scriptFor(p.values, platform)
+    if (postCreate.trim() !== '') {
       defaultBranch ??= await resolveDefaultBranch(t, p.main)
-      script = await runScript(issueId, t, { cwd: p.path, branch: outcome.branch, main: p.main, defaultBranch }, p.values.postCreateScript)
+      script = await runScript(issueId, t, { cwd: p.path, branch: outcome.branch, main: p.main, defaultBranch }, postCreate)
     }
     return { issueId, path: p.path, branch: outcome.branch, created: true, pathChanged: false, script }
   }
@@ -528,7 +534,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       if (!entry) throw new WorktreeError('not_found', { message: 'worktree 가 없습니다' })
       const p = await plan(t)
       const defaultBranch = await resolveDefaultBranch(t, p.main)
-      return runScript(issueId, t, { cwd: entry.path, branch: entry.branch, main: p.main, defaultBranch }, p.values.postCreateScript)
+      return runScript(issueId, t, { cwd: entry.path, branch: entry.branch, main: p.main, defaultBranch }, scriptFor(p.values, platform))
     },
 
     inspect,

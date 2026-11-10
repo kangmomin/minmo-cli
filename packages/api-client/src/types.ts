@@ -7,11 +7,13 @@ export type SettingsValues = {
   postCreateScript: string
   /** v2.6: 줄바꿈 구분 sparse-checkout 디렉터리, "" = 전체 체크아웃 */
   sparsePaths: string
+  /** v2.7: Linux/macOS(sh) 생성 후 스크립트. postCreateScript 는 Windows(PowerShell) 용 */
+  postCreateScriptPosix: string
 }
 export type SettingsField = keyof SettingsValues
 // 전역은 null 없음
 export type SettingsRecord = { [K in keyof SettingsValues]: SettingsValues[K] | null } & { updatedAt: string | null }
-// 전역 PUT 은 5개 필드가 string 필수, sparsePaths 는 생략·null 이면 ""
+// 전역 PUT 은 5개 필드가 string 필수, sparsePaths·postCreateScriptPosix 는 생략·null 이면 저장값 유지(없으면 "")
 export type SettingsInput = { [K in keyof SettingsValues]?: string | null }
 export type SettingsSource = 'global' | 'org' | 'project'
 export type Effective = { values: SettingsValues; sources: Record<keyof SettingsValues, SettingsSource> }

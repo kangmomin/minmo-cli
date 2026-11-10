@@ -11,7 +11,7 @@ import (
 // ErrGlobalMissing 는 세션이 있는 사용자에게 전역 설정 행이 없는 불변식 위반이다(로그인 시 항상 생성).
 var ErrGlobalMissing = errors.New("전역 설정 행 없음")
 
-const selectColumns = `branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, updated_at`
+const selectColumns = `branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, post_create_script_posix, updated_at`
 
 // Get 은 (userID, scope, owner, repo) 행을 조회한다. 행이 없으면 모든 필드 nil 인 Record.
 // owner/repo 는 호출자가 소문자로 정규화해 넘기며, global 은 둘 다 "", org 는 repo "".
@@ -34,8 +34,8 @@ func Get(ctx context.Context, db *sql.DB, userID string, scope Scope, owner, rep
 func Upsert(ctx context.Context, db *sql.DB, userID string, scope Scope, owner, repo string, in Input, now time.Time) (Record, error) {
 	row := db.QueryRowContext(ctx, `
 		INSERT INTO settings (user_id, scope, owner, repo,
-			branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, post_create_script_posix, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (user_id, scope, owner, repo) DO UPDATE SET
 			branch_template = excluded.branch_template,
 			etc_branch_name = excluded.etc_branch_name,
@@ -43,10 +43,11 @@ func Upsert(ctx context.Context, db *sql.DB, userID string, scope Scope, owner, 
 			main_clone_path = excluded.main_clone_path,
 			post_create_script = excluded.post_create_script,
 			sparse_paths = excluded.sparse_paths,
+			post_create_script_posix = excluded.post_create_script_posix,
 			updated_at = excluded.updated_at
 		RETURNING `+selectColumns,
 		userID, string(scope), owner, repo,
-		in.BranchTemplate, in.EtcBranchName, in.WorktreePath, in.MainClonePath, in.PostCreateScript, in.SparsePaths,
+		in.BranchTemplate, in.EtcBranchName, in.WorktreePath, in.MainClonePath, in.PostCreateScript, in.SparsePaths, in.PostCreateScriptPosix,
 		now.UnixMilli())
 	rec, err := scanRecord(row)
 	if err != nil {
@@ -60,11 +61,11 @@ func EnsureGlobalDefaults(ctx context.Context, db *sql.DB, userID string, now ti
 	d := Defaults()
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO settings (user_id, scope, owner, repo,
-			branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, updated_at)
-		VALUES (?, ?, '', '', ?, ?, ?, ?, ?, ?, ?)
+			branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, post_create_script_posix, updated_at)
+		VALUES (?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (user_id, scope, owner, repo) DO NOTHING`,
 		userID, string(ScopeGlobal),
-		d.BranchTemplate, d.EtcBranchName, d.WorktreePath, d.MainClonePath, d.PostCreateScript, d.SparsePaths,
+		d.BranchTemplate, d.EtcBranchName, d.WorktreePath, d.MainClonePath, d.PostCreateScript, d.SparsePaths, d.PostCreateScriptPosix,
 		now.UnixMilli())
 	if err != nil {
 		return fmt.Errorf("전역 기본 설정 생성 실패: %w", err)
@@ -91,7 +92,7 @@ func GetEffective(ctx context.Context, db *sql.DB, userID, owner, repo string) (
 		var scope string
 		var rec Record
 		if err := rows.Scan(&scope, &rec.BranchTemplate, &rec.EtcBranchName, &rec.WorktreePath,
-			&rec.MainClonePath, &rec.PostCreateScript, &rec.SparsePaths, &rec.UpdatedAt); err != nil {
+			&rec.MainClonePath, &rec.PostCreateScript, &rec.SparsePaths, &rec.PostCreateScriptPosix, &rec.UpdatedAt); err != nil {
 			return Effective{}, fmt.Errorf("effective 조회 실패: %w", err)
 		}
 		switch Scope(scope) {
@@ -120,7 +121,7 @@ func GetEffective(ctx context.Context, db *sql.DB, userID, owner, repo string) (
 }
 
 // Values 는 전역 행을 Values 로 변환한다. 5필드는 DB CHECK 로 NOT NULL 이 보장되고,
-// 0002 에서 추가된 sparse_paths 는 NULL 일 수 있어 ""(전체 체크아웃)로 읽는다.
+// 0002·0005 에서 추가된 sparse_paths·post_create_script_posix 는 NULL 일 수 있어 "" 로 읽는다.
 func (r Record) Values() Values {
 	deref := func(p *string) string {
 		if p == nil {
@@ -129,18 +130,19 @@ func (r Record) Values() Values {
 		return *p
 	}
 	return Values{
-		BranchTemplate:   deref(r.BranchTemplate),
-		EtcBranchName:    deref(r.EtcBranchName),
-		WorktreePath:     deref(r.WorktreePath),
-		MainClonePath:    deref(r.MainClonePath),
-		PostCreateScript: deref(r.PostCreateScript),
-		SparsePaths:      deref(r.SparsePaths),
+		BranchTemplate:        deref(r.BranchTemplate),
+		EtcBranchName:         deref(r.EtcBranchName),
+		WorktreePath:          deref(r.WorktreePath),
+		MainClonePath:         deref(r.MainClonePath),
+		PostCreateScript:      deref(r.PostCreateScript),
+		SparsePaths:           deref(r.SparsePaths),
+		PostCreateScriptPosix: deref(r.PostCreateScriptPosix),
 	}
 }
 
 func scanRecord(row *sql.Row) (Record, error) {
 	var rec Record
 	err := row.Scan(&rec.BranchTemplate, &rec.EtcBranchName, &rec.WorktreePath,
-		&rec.MainClonePath, &rec.PostCreateScript, &rec.SparsePaths, &rec.UpdatedAt)
+		&rec.MainClonePath, &rec.PostCreateScript, &rec.SparsePaths, &rec.PostCreateScriptPosix, &rec.UpdatedAt)
 	return rec, err
 }

@@ -87,7 +87,7 @@ describe('contract: 성공 응답 ↔ fixture (CT-05, 07, 09, 13, 14, 22)', () =
     const got = await api.getEffective('acme', 'widgets')
     expect(got).toEqual(eff)
     expect(Object.keys(got.sources).sort()).toEqual(
-      ['branchTemplate', 'etcBranchName', 'mainClonePath', 'postCreateScript', 'sparsePaths', 'worktreePath'].sort(),
+      ['branchTemplate', 'etcBranchName', 'mainClonePath', 'postCreateScript', 'postCreateScriptPosix', 'sparsePaths', 'worktreePath'].sort(),
     )
     expect(calls[0].url).toBe(`${BASE}/projects/acme/widgets/settings/effective`)
   })
@@ -124,6 +124,7 @@ describe('contract: 설정 PUT 전송 형식 (E7/E9/E11)', () => {
       mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
       postCreateScript: '',
       sparsePaths: '',
+      postCreateScriptPosix: '',
     }
     const { api, calls } = client(() => json(200, fx('settings-global-default.json')))
     await api.putSettings({ kind: 'global' }, input)

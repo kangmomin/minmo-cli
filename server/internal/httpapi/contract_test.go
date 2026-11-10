@@ -580,7 +580,7 @@ func TestCT09_ProjectOverrideEffective(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("PUT project %d %v", status, m)
 	}
-	ctMatch(t, "record", map[string]any{"branchTemplate": "feat/{number}", "etcBranchName": nil, "worktreePath": nil, "mainClonePath": nil, "postCreateScript": nil, "sparsePaths": nil, "updatedAt": "<ts>"}, m)
+	ctMatch(t, "record", map[string]any{"branchTemplate": "feat/{number}", "etcBranchName": nil, "worktreePath": nil, "mainClonePath": nil, "postCreateScript": nil, "sparsePaths": nil, "postCreateScriptPosix": nil, "updatedAt": "<ts>"}, m)
 	status, m = e.doJSON("GET", "/projects/acme/widgets/settings/effective", token, nil)
 	if status != 200 {
 		t.Fatalf("GET effective %d %v", status, m)

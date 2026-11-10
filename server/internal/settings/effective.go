@@ -1,11 +1,11 @@
 package settings
 
 // Merge 는 global ← org ← project 순으로 non-nil 값을 덮어써 effective 값과 출처를 계산한다.
-// `""`(postCreateScript·sparsePaths)도 non-nil 이므로 override 로 취급한다.
+// `""`(postCreateScript·sparsePaths·postCreateScriptPosix)도 non-nil 이므로 override 로 취급한다.
 func Merge(global Values, org, project Input) Effective {
 	e := Effective{
 		Values:  global,
-		Sources: Sources{ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal},
+		Sources: Sources{ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal},
 	}
 	for _, layer := range []struct {
 		scope Scope
@@ -17,6 +17,7 @@ func Merge(global Values, org, project Input) Effective {
 		apply(&e.Values.MainClonePath, &e.Sources.MainClonePath, layer.in.MainClonePath, layer.scope)
 		apply(&e.Values.PostCreateScript, &e.Sources.PostCreateScript, layer.in.PostCreateScript, layer.scope)
 		apply(&e.Values.SparsePaths, &e.Sources.SparsePaths, layer.in.SparsePaths, layer.scope)
+		apply(&e.Values.PostCreateScriptPosix, &e.Sources.PostCreateScriptPosix, layer.in.PostCreateScriptPosix, layer.scope)
 	}
 	return e
 }

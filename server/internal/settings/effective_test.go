@@ -7,16 +7,17 @@ import (
 )
 
 var testGlobal = Values{
-	BranchTemplate:   "issue/{number}-{slug}",
-	EtcBranchName:    "etc",
-	WorktreePath:     "~/minmo-workspaces/{owner}/{repo}/{branch}",
-	MainClonePath:    "~/minmo-workspaces/{owner}/{repo}/_main",
-	PostCreateScript: "",
-	SparsePaths:      "",
+	BranchTemplate:        "issue/{number}-{slug}",
+	EtcBranchName:         "etc",
+	WorktreePath:          "~/minmo-workspaces/{owner}/{repo}/{branch}",
+	MainClonePath:         "~/minmo-workspaces/{owner}/{repo}/_main",
+	PostCreateScript:      "",
+	SparsePaths:           "",
+	PostCreateScriptPosix: "",
 }
 
 func allGlobal() Sources {
-	return Sources{ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal}
+	return Sources{ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal}
 }
 
 // CT-07: 전역 기본값 = `issue/{number}-{slug}` · `etc` · `~/minmo-workspaces/{owner}/{repo}/{branch}` · `~/minmo-workspaces/{owner}/{repo}/_main` · `""`
@@ -72,7 +73,7 @@ func TestMerge_EmptyScriptIsOverride_CT28(t *testing.T) {
 	}
 }
 
-// CT-09·CT-12: E12 응답 shape — values·sources 각각 camelCase 6키, sources 값은 global|org|project
+// CT-09·CT-12: E12 응답 shape — values·sources 각각 camelCase 7키, sources 값은 global|org|project
 func TestEffective_JSONShape_CT09_CT12(t *testing.T) {
 	b, err := json.Marshal(Merge(testGlobal, Input{EtcBranchName: sp("misc")}, Input{BranchTemplate: sp("feat/{number}")}))
 	if err != nil {
@@ -84,14 +85,14 @@ func TestEffective_JSONShape_CT09_CT12(t *testing.T) {
 	}
 	wantSources := map[string]string{
 		"branchTemplate": "project", "etcBranchName": "org", "worktreePath": "global",
-		"mainClonePath": "global", "postCreateScript": "global", "sparsePaths": "global",
+		"mainClonePath": "global", "postCreateScript": "global", "sparsePaths": "global", "postCreateScriptPosix": "global",
 	}
 	if !reflect.DeepEqual(m["sources"], wantSources) {
 		t.Errorf("sources = %v, want %v", m["sources"], wantSources)
 	}
 	wantValues := map[string]string{
 		"branchTemplate": "feat/{number}", "etcBranchName": "misc", "worktreePath": testGlobal.WorktreePath,
-		"mainClonePath": testGlobal.MainClonePath, "postCreateScript": "", "sparsePaths": "",
+		"mainClonePath": testGlobal.MainClonePath, "postCreateScript": "", "sparsePaths": "", "postCreateScriptPosix": "",
 	}
 	if !reflect.DeepEqual(m["values"], wantValues) {
 		t.Errorf("values = %v, want %v", m["values"], wantValues)
