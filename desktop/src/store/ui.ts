@@ -61,7 +61,9 @@ export const useUiStore = create<UiState>()(
           for (const pane of leafIds(s.panes[id]?.tree ?? null)) delete terminalIds[pane]
           const panes = { ...s.panes }
           delete panes[id]
-          return { worktreePathMap, terminalIds, panes }
+          // 다시 만들면 패널 번호가 1부터 다시 시작한다 — 남은 요청이 새 터미널을 자동 포커스하지 않게 지운다
+          const focusRequest = s.focusRequest?.paneId.startsWith(`${id}::`) ? null : s.focusRequest
+          return { worktreePathMap, terminalIds, panes, focusRequest }
         }),
       setTheme: (theme) => set({ theme }),
       ensurePanes: (issueId) =>

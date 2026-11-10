@@ -12,7 +12,12 @@ export interface PaneKeyActions {
   close(): void
 }
 
-const isKey = (e: KeyboardEvent, letter: string) => e.code === `Key${letter.toUpperCase()}` || e.key.toLowerCase() === letter
+/** 입력된 문자(e.key)를 우선한다 — Dvorak 등에서 물리 키(e.code)로 비교하면 다른 단축키(Ctrl+E 등)를 가로챈다.
+ *  한글 IME 처럼 e.key 가 라틴 문자가 아닐 때만 물리 키로 판단한다 */
+function isKey(e: KeyboardEvent, letter: string): boolean {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : ''
+  return /^[a-z]$/.test(k) ? k === letter : e.code === `Key${letter.toUpperCase()}`
+}
 
 /**
  * xterm attachCustomKeyEventHandler 용. false 를 돌려주면 xterm 이 키를 처리(셸 전송)하지 않는다.

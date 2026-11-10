@@ -1,5 +1,6 @@
 // 터미널 탭 — 리소스 정리(CR-01~03)·초기 출력/종료 처리(CR-07·08·18·19)·접근성(AX-02·18·34·35·39). xterm 은 jsdom 에서 렌더할 수 없어 가짜로 대체한다.
 import { act, fireEvent, screen, within } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 
@@ -448,6 +449,9 @@ describe('패널 분할 (Ctrl+D / Ctrl+Shift+D / Ctrl+W)', () => {
     expect([panes.splitRight.mock.calls.length, panes.splitDown.mock.calls.length, panes.close.mock.calls.length]).toEqual([1, 1, 1])
     expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(true)
     expect(h(key({ key: 'd', code: 'KeyD', altKey: true }))).toBe(true)
+    // Dvorak: 물리 KeyD 자리에서 'e' 가 입력되면 Ctrl+E(줄 끝)로 셸에 보낸다 · 한글 IME 는 물리 키로 판단
+    expect(h(key({ key: 'e', code: 'KeyD' }))).toBe(true)
+    expect(h(key({ key: 'ㅇ', code: 'KeyD' }))).toBe(false)
     // 패널 동작을 넘기지 않으면(기존 호출) Ctrl+D 는 셸로 간다
     expect(createTerminalKeyHandler(vi.fn())(key({ key: 'd', code: 'KeyD' }))).toBe(true)
   })
@@ -497,6 +501,46 @@ describe('패널 분할 (Ctrl+D / Ctrl+Shift+D / Ctrl+W)', () => {
     const again = screen.getByRole('button', { name: '새 터미널' })
     fireEvent.click(again)
     await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(3))
+  })
+
+  it('StrictMode(개발 실행)에서도 새 패널 xterm 이 포커스를 받는다', async () => {
+    let n = 0
+    const fake = createFakeTauri({ ptySpawn: async () => `pty-${++n}` })
+    renderWithDeps(
+      <StrictMode>
+        <TerminalTab sessions={[A]} activeId={A.issueId} visible />
+      </StrictMode>,
+      makeDeps({ tauri: fake.tauri }),
+    )
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalled())
+    const before = xterm.instances.length
+    press(before - 1, { key: 'd', code: 'KeyD' })
+    await vi.waitFor(() => expect(xterm.instances.length).toBeGreaterThan(before))
+    // StrictMode 는 effect 를 두 번 돌려 xterm 을 다시 만든다 — 실제로 남는 마지막 인스턴스가 포커스를 받아야 한다
+    expect(xterm.instances.at(-1)!.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('패널 상태가 지워져도(마운트 유지) 새 패널을 다시 만든다 — 빈 화면에 갇히지 않음', async () => {
+    let n = 0
+    const t = setup({ ptySpawn: async () => `pty-${++n}` })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    act(() => useUiStore.getState().removeWorktree(A.issueId))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1')
+    expect(screen.getAllByTestId('terminal-pane')).toHaveLength(1)
+  })
+
+  it('removeWorktree 는 그 이슈의 패널·PTY id·남은 포커스 요청을 지운다', () => {
+    useUiStore.setState({
+      panes: { [A.issueId]: { tree: { kind: 'leaf', id: `${A.issueId}::2` }, focused: null, seq: 2 } },
+      terminalIds: { [`${A.issueId}::2`]: 'pty-9', 'x::1': 'pty-1' },
+      focusRequest: { paneId: `${A.issueId}::2`, token: 3 },
+    })
+    useUiStore.getState().removeWorktree(A.issueId)
+    const s = useUiStore.getState()
+    expect(s.panes).toEqual({})
+    expect(s.terminalIds).toEqual({ 'x::1': 'pty-1' })
+    expect(s.focusRequest).toBeNull()
   })
 
   it('터미널 입력에 포커스가 들어오면 그 패널이 분할·닫기 대상이 된다', async () => {

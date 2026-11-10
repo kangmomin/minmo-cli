@@ -83,7 +83,10 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
   const panes = useUiStore((s) => s.panes[spec.issueId])
   const ensurePanes = useUiStore((s) => s.ensurePanes)
   const newPane = useUiStore((s) => s.newPane)
-  useEffect(() => ensurePanes(spec.issueId), [ensurePanes, spec.issueId])
+  // panes 가 사라지면(worktree 기록 삭제 등) 마운트된 채로도 다시 만든다 — 빈 화면에 갇히지 않게
+  useEffect(() => {
+    if (!panes) ensurePanes(spec.issueId)
+  }, [ensurePanes, panes, spec.issueId])
   if (!panes) return null
   const rects = layoutPanes(panes.tree)
   const multiple = rects.length > 1
@@ -111,7 +114,15 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
   )
 }
 
-type TermState = { t: Terminal; fit: FitAddon; ptyId: string | null; ended: boolean; end(): void }
+type TermState = {
+  t: Terminal
+  fit: FitAddon
+  ptyId: string | null
+  ended: boolean
+  end(): void
+  /** 이 xterm 이 처리한 마지막 포커스 요청 — 인스턴스마다 둬야 StrictMode 재마운트로 새로 만든 xterm 도 포커스를 받는다 */
+  focusToken?: number
+}
 
 function TerminalSession({
   spec,
@@ -266,11 +277,17 @@ function TerminalSession({
   }, [tauri, spec.cwd, spec.issueId, paneId, hintId, gen])
 
   // 분할·닫기·[새 터미널] 처럼 사용자가 패널을 바꿨을 때만 대상 패널로 포커스를 옮긴다(AX-02 자동 포커스 금지 유지)
-  const handledFocus = useRef(0)
   useEffect(() => {
-    if (!focusRequest || focusRequest.paneId !== paneId || focusRequest.token === handledFocus.current) return
-    handledFocus.current = focusRequest.token
-    term.current?.t.focus()
+    const cur = term.current
+    if (!cur || !focusRequest || focusRequest.paneId !== paneId || cur.focusToken === focusRequest.token) return
+    cur.focusToken = focusRequest.token
+    cur.t.focus()
+    // 처리한 요청은 지운다 — 같은 패널 번호가 나중에 다시 마운트될 때 묵은 요청으로 포커스를 뺏지 않게(AX-02).
+    // StrictMode 는 같은 커밋에서 effect 를 다시 돌리므로 그 뒤(다음 tick)에 지운다
+    const token = focusRequest.token
+    setTimeout(() => {
+      if (useUiStore.getState().focusRequest?.token === token) useUiStore.setState({ focusRequest: null })
+    }, 0)
   }, [focusRequest, paneId, gen])
 
   // 테마 전환을 열린 터미널에도 반영
