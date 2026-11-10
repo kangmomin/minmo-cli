@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
 import { tempPaths } from './test/fakes'
-import { loadState, reloadState, saveCredentials, statePathStore, updateState } from './store'
+import { loadConfig, loadState, reloadState, saveCredentials, statePathStore, updateConfig, updateState } from './store'
 
 describe('로컬 상태 저장', () => {
   it('다른 프로세스가 그 사이 쓴 worktree 를 덮어쓰지 않는다(파일을 다시 읽어 내 변경만 얹는다)', async () => {
@@ -30,6 +30,23 @@ describe('로컬 상태 저장', () => {
     store.delete('a#1')
     await updateState(p, state, () => {})
     expect(Object.keys(JSON.parse(await readFile(p.state, 'utf8')).worktrees)).toEqual(['b#1'])
+  })
+
+  it('config.json: 없으면 서버 모드·빈 로컬 값, 다른 프로세스가 쓴 로컬 값을 덮어쓰지 않는다', async () => {
+    const p = await tempPaths()
+    const mine = await loadConfig(p)
+    expect(mine).toEqual({ mode: 'server', local: { global: {}, orgs: {}, projects: {} } })
+    // 다른 minmo(예: tmux 패널의 `minmo config set`)가 먼저 저장 — 이상한 mode 값은 server 로 읽는다
+    await writeFile(p.config, JSON.stringify({ mode: 'ssh', local: { global: { etcBranchName: 'misc' }, visibleRepos: null } }))
+    await updateConfig(p, mine, (c) => {
+      c.local.projects['o/r'] = { sparsePaths: 'a' }
+    })
+    const disk = await loadConfig(p)
+    expect(disk).toEqual({ mode: 'server', local: { global: { etcBranchName: 'misc' }, orgs: {}, projects: { 'o/r': { sparsePaths: 'a' } }, visibleRepos: null } })
+    // TUI 복귀 때 로컬 값도 다시 읽는다
+    const state = await loadState(p)
+    await reloadState(p, state, mine)
+    expect(mine.local.visibleRepos).toBeNull()
   })
 
   it.skipIf(process.platform === 'win32')('자격 증명은 0600', async () => {
