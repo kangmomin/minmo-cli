@@ -82,6 +82,9 @@ func NewHandler(cfg Config, db *sql.DB, now func() time.Time) http.Handler {
 	mux.HandleFunc("GET /projects/{owner}/{repo}/issues/{key}/notes", a.authed(a.getNotes))
 	mux.HandleFunc("PUT /projects/{owner}/{repo}/issues/{key}/notes", a.authed(a.putNotes))
 
+	mux.HandleFunc("GET /me/visible-repos", a.authed(a.getVisibleRepos))
+	mux.HandleFunc("PUT /me/visible-repos", a.authed(a.putVisibleRepos))
+
 	var h http.Handler = jsonFallback(mux)
 	h = cors(cfg.CORSOrigins, h)
 	h = noStore(h)

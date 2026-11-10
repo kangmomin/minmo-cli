@@ -25,5 +25,7 @@
 | `notes-empty.json` | E13 · CT-13 |
 | `notes-saved.json` | E14 · CT-14 |
 | `notes-conflict.json` | E14 409 · CT-15 |
+| `visible-repos-default.json` | E15 (선택 없음 = 전체 표시) · CT-41 |
+| `visible-repos-saved.json` | E16 · CT-41 |
 | `errors.json` | 공통 에러 body 예시 · CT-04/08/10/11/19/20/27/28/29 |
 | `template-vectors.json` | 템플릿 치환 golden · CT-34 (TS) / Go `validate_test`는 `refCases`·`branchCases[].expected` 소비 |

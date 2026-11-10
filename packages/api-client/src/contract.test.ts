@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { ApiError, createApiClient } from './index'
-import type { Effective, Me, Notes, SettingsInput, SettingsRecord } from './index'
+import type { Effective, Me, Notes, SettingsInput, SettingsRecord, VisibleRepos } from './index'
 
 const FIXTURES = resolve(__dirname, '../../../contracts/fixtures')
 const fx = <T = unknown>(name: string): T => JSON.parse(readFileSync(resolve(FIXTURES, name), 'utf8')) as T
@@ -49,7 +49,9 @@ const _global: SettingsRecord = fx<SettingsRecord>('settings-global-default.json
 const _empty: SettingsRecord = fx<SettingsRecord>('settings-scope-empty.json')
 const _eff: Effective = fx<Effective>('effective-project-override.json')
 const _notes: Notes = fx<Notes>('notes-empty.json')
-void [_me, _global, _empty, _eff, _notes]
+const _vrDefault: VisibleRepos = fx<VisibleRepos>('visible-repos-default.json')
+const _vrSaved: VisibleRepos = fx<VisibleRepos>('visible-repos-saved.json')
+void [_me, _global, _empty, _eff, _notes, _vrDefault, _vrSaved]
 
 describe('contract: 성공 응답 ↔ fixture (CT-05, 07, 09, 13, 14, 22)', () => {
   it('GET /me → Me (CT-05)', async () => {
@@ -249,5 +251,35 @@ describe('contract: 인증 헤더·토큰 override·무인증 경로', () => {
     await expect(ok.api.logout()).resolves.toBeUndefined()
     const gone = client(() => json(401, { error: 'unauthorized' }))
     await expect(gone.api.logout()).resolves.toBeUndefined()
+  })
+})
+
+describe('contract: 보일 저장소 (E15/E16, CT-41)', () => {
+  it('GET /me/visible-repos → 기본 null(전체 표시)', async () => {
+    const def = fx('visible-repos-default.json')
+    const { api, calls } = client(() => json(200, def))
+    await expect(api.getVisibleRepos()).resolves.toEqual(def)
+    expect(calls[0]).toMatchObject({ method: 'GET', url: `${BASE}/me/visible-repos` })
+    expect(calls[0].headers.authorization).toBe('Bearer tok')
+  })
+
+  it('PUT 은 repos·baseUpdatedAt 을 그대로, base 생략이면 키를 보내지 않는다', async () => {
+    const saved = fx('visible-repos-saved.json')
+    const { api, calls } = client(() => json(200, saved))
+    await api.putVisibleRepos({ repos: ['acme/*'], baseUpdatedAt: null })
+    await api.putVisibleRepos({ repos: null })
+    expect(calls[0]).toMatchObject({ method: 'PUT', url: `${BASE}/me/visible-repos` })
+    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ repos: ['acme/*'], baseUpdatedAt: null })
+    expect(JSON.parse(calls[1].body ?? '{}')).toEqual({ repos: null })
+  })
+
+  it('400 invalid_visible_repos → field repos · 409 conflict', async () => {
+    const errors = fx<Record<string, { error: string; field?: string }>>('errors.json')
+    let { api } = client(() => json(400, errors.invalid_visible_repos))
+    let err = (await api.putVisibleRepos({ repos: ['x'] }).catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 400, code: 'invalid_visible_repos', field: 'repos' })
+    ;({ api } = client(() => json(409, { error: 'conflict' })))
+    err = (await api.putVisibleRepos({ repos: [], baseUpdatedAt: '2026-11-10T00:00:00.000Z' }).catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 409, code: 'conflict' })
   })
 })

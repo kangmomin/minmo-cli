@@ -842,3 +842,47 @@ func TestCT31_SameMillisecond(t *testing.T) {
 	status, m = e.doJSON("PUT", path, token, map[string]any{"body": "3", "baseUpdatedAt": t1})
 	ctExpectError(t, status, m, 409, "conflict", "")
 }
+
+// CT-41: E15/E16 보일 저장소 — 기본은 전체 표시(null), 저장 시 소문자·정렬·중복 제거, baseUpdatedAt 충돌 409, 사용자 격리
+func TestCT41_VisibleRepos(t *testing.T) {
+	e := ctNewEnv(t)
+	token, _ := e.login("ct-code-ok")
+	status, m := e.doJSON("GET", "/me/visible-repos", token, nil)
+	if status != 200 {
+		t.Fatalf("GET %d %v", status, m)
+	}
+	ctMatch(t, "default", ctFixture(t, "visible-repos-default.json"), m)
+
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": []string{"Acme/Widgets", "acme/*", "acme/widgets"}, "baseUpdatedAt": nil})
+	if status != 200 {
+		t.Fatalf("PUT %d %v", status, m)
+	}
+	ctMatch(t, "saved", ctFixture(t, "visible-repos-saved.json"), m)
+	t1, _ := m["updatedAt"].(string)
+
+	// 다른 기기가 먼저 저장 → 오래된 base 로 저장하면 409
+	e.now = e.now.Add(time.Second)
+	if status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": nil}); status != 200 || m["repos"] != nil {
+		t.Fatalf("PUT null %d %v", status, m)
+	}
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": []string{}, "baseUpdatedAt": t1})
+	ctExpectError(t, status, m, 409, "conflict", "")
+
+	// 검증
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": []string{"acme/../x"}})
+	ctExpectError(t, status, m, 400, "invalid_visible_repos", "repos")
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{})
+	ctExpectError(t, status, m, 400, "invalid_json", "repos")
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": nil, "baseUpdatedAt": "yesterday"})
+	ctExpectError(t, status, m, 400, "invalid_base_updated_at", "")
+	status, m = e.doJSON("GET", "/me/visible-repos", "", nil)
+	ctExpectError(t, status, m, 401, "unauthorized", "")
+
+	// 다른 사용자는 자기 선택(기본값)을 본다
+	other, _ := e.login("ct-code-user2")
+	status, m = e.doJSON("GET", "/me/visible-repos", other, nil)
+	if status != 200 {
+		t.Fatalf("GET other %d", status)
+	}
+	ctMatch(t, "other", ctFixture(t, "visible-repos-default.json"), m)
+}

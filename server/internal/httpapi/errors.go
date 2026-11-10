@@ -2,7 +2,7 @@ package httpapi
 
 import "net/http"
 
-// ErrorCode 는 에러 body `{"error": <code>}` 값이다. 정본: Integration Contract v2.6 `ErrorCode` union(1:1).
+// ErrorCode 는 에러 body `{"error": <code>}` 값이다. 정본: Integration Contract v2.7 `ErrorCode` union(1:1).
 type ErrorCode string
 
 const (
@@ -24,6 +24,7 @@ const (
 	CodeInvalidPathTemplate      ErrorCode = "invalid_path_template"
 	CodeScriptTooLarge           ErrorCode = "script_too_large"
 	CodeInvalidSparsePaths       ErrorCode = "invalid_sparse_paths"
+	CodeInvalidVisibleRepos      ErrorCode = "invalid_visible_repos"
 	CodeInvalidIssueKey          ErrorCode = "invalid_issue_key"
 	CodeBodyTooLarge             ErrorCode = "body_too_large"
 	CodeInvalidBaseUpdatedAt     ErrorCode = "invalid_base_updated_at"

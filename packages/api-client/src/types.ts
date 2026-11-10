@@ -1,4 +1,4 @@
-// Integration Contract v2.6 "타입" 블록 그대로. 필드 추가만 허용(Breaking 없음).
+// Integration Contract v2.7 "타입" 블록 그대로. 필드 추가만 허용(Breaking 없음).
 export type SettingsValues = {
   branchTemplate: string
   etcBranchName: string
@@ -18,6 +18,9 @@ export type Effective = { values: SettingsValues; sources: Record<keyof Settings
 export type Me = { id: string; githubLogin: string; avatarUrl: string | null }
 export type Notes = { body: string; updatedAt: string | null }
 export type NotesInput = { body: string; baseUpdatedAt?: string | null }
+/** v2.7: 보일 저장소. repos null = 전체 표시, 원소는 소문자 "owner/repo" 또는 "owner/*" */
+export type VisibleRepos = { repos: string[] | null; updatedAt: string | null }
+export type VisibleReposInput = { repos: string[] | null; baseUpdatedAt?: string | null }
 export type ErrorCode =
   | 'unauthorized'
   | 'not_found'
@@ -37,6 +40,7 @@ export type ErrorCode =
   | 'invalid_path_template'
   | 'script_too_large'
   | 'invalid_sparse_paths'
+  | 'invalid_visible_repos'
   | 'invalid_issue_key'
   | 'body_too_large'
   | 'invalid_base_updated_at'
