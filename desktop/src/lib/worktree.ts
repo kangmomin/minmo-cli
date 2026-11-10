@@ -136,6 +136,8 @@ export interface WorktreeService {
   rerunScript(t: IssueTarget): Promise<ScriptOutcome>
   inspect(t: IssueTarget): Promise<DeleteCheck>
   deleteWorktree(t: IssueTarget, opts?: { confirmed?: boolean }): Promise<DeleteResult>
+  /** 이 저장소의 로컬 파일 보관 폴더 — worktree 가 있으면 그 메인 clone 기준(설정 변경과 무관) */
+  localFilesDirFor(t: IssueTarget): Promise<string>
 }
 
 /** 미커밋·미push 가 있거나 개수를 확인하지 못했으면 사용자 확인이 필요하다 */
@@ -526,6 +528,12 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     },
 
     inspect,
+
+    async localFilesDirFor(t) {
+      const entry = deps.pathStore.get(worktreeId(t.owner, t.repo, t.key))
+      const main = entry ? await mainCloneFor(t, entry.path) : (await plan(t)).main
+      return localFilesDir(main, platform)
+    },
 
     async deleteWorktree(t, opts) {
       // EC-16: ★기타는 삭제하지 않는다
