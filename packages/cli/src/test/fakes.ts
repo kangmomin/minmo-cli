@@ -153,6 +153,7 @@ export async function createTestCtx(o: TestCtxOptions = {}): Promise<TestCtx> {
   const out: Out = { log: (s) => logs.push(s), error: (s) => errors.push(s) }
   const api = createFakeApi(o.api)
   const github = createFakeGitHub(o.github)
-  const ctx = await createContext({ env: o.env ?? {}, paths, api, github, host: createFakeHost(o.host) as unknown as NodeHost, out })
+  // 어느 OS 에서 돌려도 같은 안내 문구가 나오게 서버 대상을 고정한다(Windows 기본은 MINMO_SERVER 필요)
+  const ctx = await createContext({ env: o.env ?? {}, paths, serverTarget: { kind: 'socket', path: paths.socket }, api, github, host: createFakeHost(o.host) as unknown as NodeHost, out })
   return Object.assign(ctx, { logs, errors }) as TestCtx
 }

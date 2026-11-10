@@ -8,7 +8,7 @@ import { CliError, GITHUB_AUTH_REQUIRED, requireLogin, serverErrorMessage } from
 import type { Ctx } from '../context'
 import { run } from '../host/proc'
 import { tmuxAvailable } from '../host/tmux'
-import { describeServer } from '../server'
+import { WINDOWS_SERVER_HINT, describeServer } from '../server'
 import { clearCredentials, saveCredentials } from '../store'
 import { MODE_LABEL, describeCopy } from './mode'
 
@@ -72,6 +72,11 @@ type Add = (ok: boolean, label: string, hint?: string) => void
 
 /** 서버 모드 점검: 역터널 소켓·서버 응답·로그인. 서버가 응답하면 true */
 async function checkServer(ctx: Ctx, add: Add): Promise<boolean> {
+  if (ctx.server.kind === 'unset') {
+    // Windows: 주소가 없으면 연결해 볼 곳도 없다
+    add(false, 'MINMO_SERVER 미설정', WINDOWS_SERVER_HINT)
+    return false
+  }
   if (ctx.server.kind === 'socket' && !existsSync(ctx.server.path)) {
     add(false, `역터널 소켓 없음: ${ctx.server.path}`, 'PC 의 ~/.ssh/config 에 RemoteForward <이 경로> 127.0.0.1:8787 을 넣고 다시 접속하세요(원격 sshd 가 AllowStreamLocalForwarding 을 허용해야 함)')
   } else {
@@ -131,8 +136,14 @@ export async function doctor(ctx: Ctx): Promise<void> {
     )
   }
 
-  const tmux = await tmuxAvailable()
-  add(tmux, tmux ? 'tmux 있음' : 'tmux 없음', tmux ? undefined : '터미널(`minmo open`, TUI 의 t)에 tmux 가 필요합니다')
+  if (process.platform === 'win32') {
+    // 터미널·생성 후 스크립트가 PowerShell 을 쓴다(세션 유지는 없다 — 필요하면 WSL 의 Linux 버전)
+    const ps = (await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'])).stdout.trim()
+    add(ps !== '', ps ? `PowerShell ${ps}` : 'PowerShell 없음', ps ? undefined : '터미널(`minmo open`, TUI 의 t)과 생성 후 스크립트에 PowerShell 이 필요합니다')
+  } else {
+    const tmux = await tmuxAvailable()
+    add(tmux, tmux ? 'tmux 있음' : 'tmux 없음', tmux ? undefined : '터미널(`minmo open`, TUI 의 t)에 tmux 가 필요합니다')
+  }
 
   for (const c of checks) {
     ctx.out.log(`${c.ok ? '✓' : '✗'} ${c.label}`)

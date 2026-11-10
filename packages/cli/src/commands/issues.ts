@@ -12,7 +12,7 @@ import type { GitHubOwner, IssueTarget, RepoSelection, SetupLogEvent } from '@mi
 import { CliError, requireLogin, serverErrorMessage, toCliError } from '../context'
 import type { Ctx } from '../context'
 import { NOTES_SERVER_ONLY } from '../errors'
-import { attach, ensureSession, tmuxAvailable } from '../host/tmux'
+import { openTerminal, terminalAvailable } from '../host/terminal'
 import { parseRef, resolveTarget } from '../refs'
 
 /** 보일 저장소 선택(모드에 따라 서버 값 또는 로컬 값·서버 사본) */
@@ -107,11 +107,11 @@ export async function openIssue(ctx: Ctx, refText: string, opts: { attach: boole
   if (res.pathChanged) ctx.out.log('  (설정의 worktree 경로가 바뀌었지만 기존 위치를 그대로 씁니다)')
   if (res.script.status === 'failed') ctx.out.log(`  생성 후 스크립트 실패(종료 코드 ${res.script.exitCode ?? '?'}) — worktree 는 그대로입니다`)
   if (!opts.attach) return
-  if (!(await tmuxAvailable())) {
+  if (!(await terminalAvailable())) {
     ctx.out.log(`tmux 가 없어 터미널을 열 수 없습니다 — cd ${res.path}`)
     return
   }
-  attach(await ensureSession(res.path, `${target.repo}#${target.key}`))
+  await openTerminal(res.path, `${target.repo}#${target.key}`)
 }
 
 async function confirm(question: string): Promise<boolean> {
@@ -165,7 +165,7 @@ export function editInEditor(initial: string, env: NodeJS.ProcessEnv = process.e
     const file = join(dir, 'note.md')
     try {
       await writeFile(file, initial)
-      const editor = env.VISUAL || env.EDITOR || 'vi'
+      const editor = env.VISUAL || env.EDITOR || (process.platform === 'win32' ? 'notepad' : 'vi')
       // "code --wait" 처럼 인자가 붙은 편집기는 셸로 실행하고, 파일 경로는 따옴표로 감싼다
       const r = /\s/.test(editor)
         ? spawnSync(`${editor} ${JSON.stringify(file)}`, { stdio: 'inherit', shell: true })

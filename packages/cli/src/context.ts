@@ -52,6 +52,8 @@ export type CreateContextOptions = {
   fetch?: typeof fetch
   api?: ApiClient
   github?: GitHubClient
+  /** 테스트용: 서버 연결 대상(기본은 OS·env 로 결정) */
+  serverTarget?: ServerTarget
 }
 
 export const GITHUB_AUTH_REQUIRED = 'GitHub 인증이 필요합니다 — `gh auth login` 후 `gh auth setup-git`(권장) 또는 GITHUB_TOKEN 환경 변수'
@@ -63,7 +65,7 @@ export async function createContext(o: CreateContextOptions = {}): Promise<Ctx> 
   const state = await loadState(paths)
   const config = await loadConfig(paths)
   const mode = config.mode
-  const server = resolveServer(paths.socket, env)
+  const server = o.serverTarget ?? resolveServer(paths.socket, env)
   const session = creds?.session ?? null
   const api = o.api ?? createServerApi(server, () => session)
   const host = o.host ?? createNodeHost(env)

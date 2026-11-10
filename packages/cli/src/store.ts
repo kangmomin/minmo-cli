@@ -21,8 +21,10 @@ export type Paths = {
   socket: string
 }
 
-export function defaultPaths(env: NodeJS.ProcessEnv = process.env, home = homedir()): Paths {
-  const configDir = join(env.XDG_CONFIG_HOME || join(home, '.config'), 'minmo')
+export function defaultPaths(env: NodeJS.ProcessEnv = process.env, home = homedir(), platform: NodeJS.Platform = process.platform): Paths {
+  // Windows 는 관례대로 %APPDATA%\minmo (XDG_CONFIG_HOME 이 있으면 그것)
+  const base = env.XDG_CONFIG_HOME || (platform === 'win32' && env.APPDATA ? env.APPDATA : join(home, '.config'))
+  const configDir = join(base, 'minmo')
   return {
     configDir,
     credentials: join(configDir, 'credentials.json'),

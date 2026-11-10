@@ -1,4 +1,4 @@
-// TUI 실행 루프: 화면 → (tmux·편집기로 넘어감) → 돌아오면 같은 상태로 다시 그린다.
+// TUI 실행 루프: 화면 → (터미널·편집기로 넘어감) → 돌아오면 같은 상태로 다시 그린다.
 // ink 는 일시 정지가 없어 언마운트 후 터미널을 넘겨주고 다시 render 한다.
 import { render } from 'ink'
 
@@ -7,7 +7,7 @@ import { ApiError } from '@minmo/api-client'
 import { editInEditor } from '../commands/issues'
 import { CliError } from '../context'
 import type { Ctx } from '../context'
-import { attach, ensureSession, tmuxAvailable } from '../host/tmux'
+import { openTerminal, terminalAvailable } from '../host/terminal'
 import { reloadState } from '../store'
 import { App } from './App'
 import type { ExitResult, Snapshot } from './App'
@@ -29,7 +29,7 @@ export async function runTui(ctx: Ctx): Promise<void> {
     snapshot = r.snapshot
     if (r.kind === 'attach') {
       try {
-        if (await tmuxAvailable()) attach(await ensureSession(r.path, r.title))
+        if (await terminalAvailable()) await openTerminal(r.path, r.title)
         else snapshot = { ...snapshot, message: `tmux 가 없어 터미널을 열 수 없습니다 — cd ${r.path}` }
       } catch (e) {
         snapshot = { ...snapshot, message: e instanceof Error ? e.message : String(e) }
