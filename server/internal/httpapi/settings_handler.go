@@ -84,18 +84,25 @@ func (a *api) putSettings(scope settings.Scope) func(http.ResponseWriter, *http.
 			writeError(w, http.StatusBadRequest, ErrorCode(code), field)
 			return
 		}
-		if scope == settings.ScopeGlobal && in.SparsePaths == nil {
-			// v2.6 이전 클라이언트는 sparsePaths 를 보내지 않는다 — 저장된 값을 유지하고, 없으면 ""(전체 체크아웃)
+		if scope == settings.ScopeGlobal && (in.SparsePaths == nil || in.PostCreateScriptPosix == nil) {
+			// 나중에 추가된 필드는 이전 클라이언트가 보내지 않는다 — 전역은 저장된 값을 유지하고, 없으면 ""
 			cur, err := settings.Get(r.Context(), a.db, s.userID, scope, owner, repo)
 			if err != nil {
 				a.internal(w, r, err)
 				return
 			}
-			keep := ""
-			if cur.SparsePaths != nil {
-				keep = *cur.SparsePaths
+			keep := func(in **string, stored *string) {
+				if *in != nil {
+					return
+				}
+				v := ""
+				if stored != nil {
+					v = *stored
+				}
+				*in = &v
 			}
-			in.SparsePaths = &keep
+			keep(&in.SparsePaths, cur.SparsePaths)
+			keep(&in.PostCreateScriptPosix, cur.PostCreateScriptPosix)
 		}
 		rec, err := settings.Upsert(r.Context(), a.db, s.userID, scope, owner, repo, in, a.now())
 		if err != nil {

@@ -12,6 +12,7 @@
 //     · TokenOK → {id: 583231, login: "octocat", avatar_url: "https://avatars.githubusercontent.com/u/583231?v=4"}
 //     · TokenUser2 → {id: 480938, login: "hubot", avatar_url: null}
 //     · 그 외 → 401
+//   - E2E 용 조직·저장소·이슈 목록은 repos.go
 package githubmock
 
 import (
@@ -52,6 +53,7 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("GET /login/oauth/authorize", m.authorize)
 	mux.HandleFunc("POST /login/oauth/access_token", m.accessToken)
 	mux.HandleFunc("GET /user", m.user)
+	registerRepoRoutes(mux)
 	return mux
 }
 

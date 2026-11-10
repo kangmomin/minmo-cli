@@ -121,3 +121,51 @@ func TestSession_Delete_CT06(t *testing.T) {
 		t.Errorf("second Delete err = %v, want ErrInvalidSession", err)
 	}
 }
+
+// 원격 CLI 세션: 종류·이름 저장, 목록(만료 제외·최근 순), last_used_at 1분 단위 갱신, 본인 세션만 폐기
+func TestSessionKindListRevoke(t *testing.T) {
+	ctx := context.Background()
+	conn := openWithUser(t)
+	t0 := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+
+	desk, _ := auth.Create(ctx, conn, testUserID, t0)
+	cli, err := auth.CreateKind(ctx, conn, testUserID, auth.KindCLI, "devbox", t0.Add(time.Second))
+	if err != nil {
+		t.Fatalf("CreateKind: %v", err)
+	}
+	s, err := auth.LookupSession(ctx, conn, cli, t0.Add(2*time.Second))
+	if err != nil || s.Kind != auth.KindCLI || s.Label == nil || *s.Label != "devbox" || s.LastUsedAt == nil {
+		t.Fatalf("LookupSession = %+v %v", s, err)
+	}
+	first := *s.LastUsedAt
+	// 1분 안의 재사용은 갱신하지 않는다
+	s, _ = auth.LookupSession(ctx, conn, cli, t0.Add(30*time.Second))
+	if *s.LastUsedAt != first {
+		t.Errorf("1분 안에는 그대로여야 한다: %d → %d", first, *s.LastUsedAt)
+	}
+	s, _ = auth.LookupSession(ctx, conn, cli, t0.Add(2*time.Minute))
+	if *s.LastUsedAt == first {
+		t.Error("1분이 지나면 갱신")
+	}
+
+	list, err := auth.List(ctx, conn, testUserID, t0.Add(3*time.Minute))
+	if err != nil || len(list) != 2 || list[0].Kind != auth.KindCLI || list[1].Kind != auth.KindDesktop || list[1].Label != nil {
+		t.Fatalf("List = %+v %v", list, err)
+	}
+	if l, _ := auth.List(ctx, conn, testUserID, t0.Add(auth.SessionTTL+time.Hour)); len(l) != 0 {
+		t.Errorf("만료된 세션은 목록에서 뺀다: %+v", l)
+	}
+
+	if err := auth.DeleteByID(ctx, conn, "usr_other", list[0].ID); !errors.Is(err, auth.ErrInvalidSession) {
+		t.Errorf("다른 사용자 폐기: %v", err)
+	}
+	if err := auth.DeleteByID(ctx, conn, testUserID, list[0].ID); err != nil {
+		t.Fatalf("DeleteByID: %v", err)
+	}
+	if _, err := auth.Lookup(ctx, conn, cli, t0.Add(4*time.Minute)); !errors.Is(err, auth.ErrInvalidSession) {
+		t.Errorf("폐기한 세션은 401: %v", err)
+	}
+	if _, err := auth.Lookup(ctx, conn, desk, t0.Add(4*time.Minute)); err != nil {
+		t.Errorf("데스크탑 세션은 유지: %v", err)
+	}
+}

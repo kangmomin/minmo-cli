@@ -2,7 +2,7 @@ import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query'
 
 import { createAppApi } from '../lib/api'
 import { expireSession, handleApiError, shouldRetry } from '../lib/apiErrors'
-import { createGitHubClient } from '../lib/github'
+import { createGitHubClient } from '@minmo/core'
 import { cachedGithubToken, rememberGithubToken } from '../lib/githubToken'
 import { KEYCHAIN_KEYS, getTauri } from '../lib/tauri'
 import type { AppDeps } from './deps'

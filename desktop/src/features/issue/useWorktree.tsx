@@ -7,9 +7,9 @@ import { ApiError } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
 import { fetchEffective } from '../../lib/effective'
-import { GitHubError } from '../../lib/github'
-import { WorktreeError, createWorktreeService, worktreeId } from '../../lib/worktree'
-import type { DeleteResult, IssueTarget, WorktreeService } from '../../lib/worktree'
+import { GitHubError } from '@minmo/core'
+import { WorktreeError, createWorktreeService, worktreeId } from '@minmo/core'
+import type { DeleteResult, IssueTarget, WorktreeService } from '@minmo/core'
 import { useSetupStore } from '../../store/setup'
 import { uiWorktreePathStore, useUiStore } from '../../store/ui'
 

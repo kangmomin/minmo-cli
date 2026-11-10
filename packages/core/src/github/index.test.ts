@@ -2,8 +2,8 @@
 // 근거: EC-01, EC-02, EC-18, AC-03(개인 계정 첫 노드·closed+worktree 보충), UI State "GitHub 목록 상한", 비즈니스 규칙 "이슈 = Issue(PR 제외)"
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createFakeTauri, fail, ok } from '../../test/fakes'
-import type { TauriApi } from '../tauri'
+import { createFakeHost, fail, ok } from '../testing'
+import type { GhHost } from '../host'
 import { GitHubError, createGitHubClient } from './index'
 
 const API = 'https://api.github.com'
@@ -36,16 +36,16 @@ const issue = (n: number, state: 'open' | 'closed' = 'open', extra: Record<strin
   ...extra,
 })
 
-function setup(opts: { ghAvailable?: boolean; ghRun?: TauriApi['ghRun']; route?: (url: URL, call: FetchCall) => Response | Promise<Response> } = {}) {
-  const fake = createFakeTauri({
+function setup(opts: { ghAvailable?: boolean; ghRun?: GhHost['ghRun']; route?: (url: URL, call: FetchCall) => Response | Promise<Response> } = {}) {
+  const tauri = createFakeHost({
     ghAvailable: async () => opts.ghAvailable ?? false,
     ...(opts.ghRun ? { ghRun: opts.ghRun } : {}),
   })
   const rest = restFetch(opts.route ?? (() => json([])))
   const onUnauthorized = vi.fn()
   const getToken = vi.fn(async () => 'gho_server')
-  const gh = createGitHubClient({ tauri: fake.tauri, fetch: rest.fetch, getToken, onUnauthorized })
-  return { gh, tauri: fake.tauri, rest, onUnauthorized, getToken }
+  const gh = createGitHubClient({ tauri, fetch: rest.fetch, getToken, onUnauthorized })
+  return { gh, tauri, rest, onUnauthorized, getToken }
 }
 
 afterEach(() => {
@@ -212,7 +212,7 @@ describe('PF-01 개별 보충 중 삭제·이전된 이슈(404/410) → 그 번�
     ['HTTP 404', 'gh: Not Found (HTTP 404)'],
     ['HTTP 410', 'gh: This issue was deleted (HTTP 410)'],
   ])('gh stderr %s → not_found 로 건너뛰고 REST 재조회 없음', async (_l, stderr) => {
-    const ghRun = vi.fn<TauriApi['ghRun']>(async (args) => {
+    const ghRun = vi.fn<GhHost['ghRun']>(async (args) => {
       const path = args[args.length - 1]
       if (path === 'repos/o/r/issues/777') return fail(stderr)
       if (path === 'repos/o/r/issues/888') return ok(JSON.stringify(issue(888, 'closed')))
@@ -232,5 +232,23 @@ describe('PF-01 개별 보충 중 삭제·이전된 이슈(404/410) → 그 번�
     expect(err).toBeInstanceOf(GitHubError)
     expect((err as GitHubError).code).toBe('not_found')
     expect(t.rest.fn).not.toHaveBeenCalled()
+  })
+})
+
+describe('getRepo · getIssue (원격 CLI 의 이슈 지정용)', () => {
+  it('getRepo 는 GitHub 표기(대소문자)로, getIssue 는 PR 이면 not_found', async () => {
+    const t = setup({
+      route: (u) =>
+        u.pathname === '/repos/acme/widgets'
+          ? json({ name: 'Widgets', owner: { login: 'Acme' }, default_branch: 'main' })
+          : u.pathname === '/repos/acme/widgets/issues/7'
+            ? json({ number: 7, title: 'Seven', state: 'open', html_url: 'u7' })
+            : u.pathname === '/repos/acme/widgets/issues/8'
+              ? json({ number: 8, title: 'PR', state: 'open', html_url: 'u8', pull_request: {} })
+              : json({}, { status: 404 }),
+    })
+    await expect(t.gh.getRepo('acme', 'widgets')).resolves.toEqual({ owner: 'Acme', name: 'Widgets', defaultBranch: 'main' })
+    await expect(t.gh.getIssue('acme', 'widgets', 7)).resolves.toEqual({ number: 7, title: 'Seven', state: 'open', htmlUrl: 'u7' })
+    await expect(t.gh.getIssue('acme', 'widgets', 8)).rejects.toMatchObject({ code: 'not_found' })
   })
 })

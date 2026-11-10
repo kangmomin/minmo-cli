@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { ApiError, createApiClient } from './index'
-import type { Effective, Me, Notes, SettingsInput, SettingsRecord } from './index'
+import type { CliCode, CliExchange, Effective, Me, Notes, Sessions, SettingsInput, SettingsRecord, VisibleRepos } from './index'
 
 const FIXTURES = resolve(__dirname, '../../../contracts/fixtures')
 const fx = <T = unknown>(name: string): T => JSON.parse(readFileSync(resolve(FIXTURES, name), 'utf8')) as T
@@ -49,7 +49,12 @@ const _global: SettingsRecord = fx<SettingsRecord>('settings-global-default.json
 const _empty: SettingsRecord = fx<SettingsRecord>('settings-scope-empty.json')
 const _eff: Effective = fx<Effective>('effective-project-override.json')
 const _notes: Notes = fx<Notes>('notes-empty.json')
-void [_me, _global, _empty, _eff, _notes]
+const _vrDefault: VisibleRepos = fx<VisibleRepos>('visible-repos-default.json')
+const _vrSaved: VisibleRepos = fx<VisibleRepos>('visible-repos-saved.json')
+const _cliCode: CliCode = fx<CliCode>('cli-code.json')
+const _cliEx: CliExchange = fx<CliExchange>('cli-exchange.json')
+const _sessions: Sessions = fx<Sessions>('sessions.json')
+void [_me, _global, _empty, _eff, _notes, _vrDefault, _vrSaved, _cliCode, _cliEx, _sessions]
 
 describe('contract: 성공 응답 ↔ fixture (CT-05, 07, 09, 13, 14, 22)', () => {
   it('GET /me → Me (CT-05)', async () => {
@@ -82,7 +87,7 @@ describe('contract: 성공 응답 ↔ fixture (CT-05, 07, 09, 13, 14, 22)', () =
     const got = await api.getEffective('acme', 'widgets')
     expect(got).toEqual(eff)
     expect(Object.keys(got.sources).sort()).toEqual(
-      ['branchTemplate', 'etcBranchName', 'mainClonePath', 'postCreateScript', 'sparsePaths', 'worktreePath'].sort(),
+      ['branchTemplate', 'etcBranchName', 'mainClonePath', 'postCreateScript', 'postCreateScriptPosix', 'sparsePaths', 'worktreePath'].sort(),
     )
     expect(calls[0].url).toBe(`${BASE}/projects/acme/widgets/settings/effective`)
   })
@@ -119,6 +124,7 @@ describe('contract: 설정 PUT 전송 형식 (E7/E9/E11)', () => {
       mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
       postCreateScript: '',
       sparsePaths: '',
+      postCreateScriptPosix: '',
     }
     const { api, calls } = client(() => json(200, fx('settings-global-default.json')))
     await api.putSettings({ kind: 'global' }, input)
@@ -153,6 +159,12 @@ describe('contract: 에러 → ApiError (CT-21)', () => {
     const { api } = client(() => json(400, errors.global_requires_all_fields))
     const err = (await api.putSettings({ kind: 'global' }, {}).catch((e: unknown) => e)) as ApiError
     expect(err).toMatchObject({ status: 400, code: 'global_requires_all_fields', field: 'worktreePath' })
+  })
+
+  it('400 invalid_sparse_paths → code·field (v2.6)', async () => {
+    const { api } = client(() => json(400, errors.invalid_sparse_paths))
+    const err = (await api.putSettings({ kind: 'org', owner: 'acme' }, { sparsePaths: 'a/../b' }).catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 400, code: 'invalid_sparse_paths', field: 'sparsePaths' })
   })
 
   it('401 unauthorized', async () => {
@@ -243,5 +255,62 @@ describe('contract: 인증 헤더·토큰 override·무인증 경로', () => {
     await expect(ok.api.logout()).resolves.toBeUndefined()
     const gone = client(() => json(401, { error: 'unauthorized' }))
     await expect(gone.api.logout()).resolves.toBeUndefined()
+  })
+})
+
+describe('contract: 보일 저장소 (E15/E16, CT-41)', () => {
+  it('GET /me/visible-repos → 기본 null(전체 표시)', async () => {
+    const def = fx('visible-repos-default.json')
+    const { api, calls } = client(() => json(200, def))
+    await expect(api.getVisibleRepos()).resolves.toEqual(def)
+    expect(calls[0]).toMatchObject({ method: 'GET', url: `${BASE}/me/visible-repos` })
+    expect(calls[0].headers.authorization).toBe('Bearer tok')
+  })
+
+  it('PUT 은 repos·baseUpdatedAt 을 그대로, base 생략이면 키를 보내지 않는다', async () => {
+    const saved = fx('visible-repos-saved.json')
+    const { api, calls } = client(() => json(200, saved))
+    await api.putVisibleRepos({ repos: ['acme/*'], baseUpdatedAt: null })
+    await api.putVisibleRepos({ repos: null })
+    expect(calls[0]).toMatchObject({ method: 'PUT', url: `${BASE}/me/visible-repos` })
+    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ repos: ['acme/*'], baseUpdatedAt: null })
+    expect(JSON.parse(calls[1].body ?? '{}')).toEqual({ repos: null })
+  })
+
+  it('400 invalid_visible_repos → field repos · 409 conflict', async () => {
+    const errors = fx<Record<string, { error: string; field?: string }>>('errors.json')
+    let { api } = client(() => json(400, errors.invalid_visible_repos))
+    let err = (await api.putVisibleRepos({ repos: ['x'] }).catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 400, code: 'invalid_visible_repos', field: 'repos' })
+    ;({ api } = client(() => json(409, { error: 'conflict' })))
+    err = (await api.putVisibleRepos({ repos: [], baseUpdatedAt: '2026-11-10T00:00:00.000Z' }).catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 409, code: 'conflict' })
+  })
+})
+
+describe('contract: 원격 CLI 로그인·세션 (E17~E20, CT-42)', () => {
+  it('코드 발급(인증) → 교환(무인증, code·label) → 세션 목록 → 폐기(204)', async () => {
+    const responses = [json(200, fx('cli-code.json')), json(200, fx('cli-exchange.json')), json(200, fx('sessions.json')), new Response(null, { status: 204 })]
+    const { api, calls } = client(() => responses.shift()!)
+    await expect(api.issueCliCode()).resolves.toEqual(fx('cli-code.json'))
+    await expect(api.exchangeCliCode('abcd-efgh', 'devbox')).resolves.toEqual(fx('cli-exchange.json'))
+    await expect(api.listSessions()).resolves.toEqual(fx('sessions.json'))
+    await expect(api.revokeSession('id/1')).resolves.toBeUndefined()
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `POST ${BASE}/me/cli-codes`,
+      `POST ${BASE}/auth/cli/exchange`,
+      `GET ${BASE}/me/sessions`,
+      `DELETE ${BASE}/me/sessions/id%2F1`,
+    ])
+    expect(calls[0].headers.authorization).toBe('Bearer tok')
+    expect(calls[1].headers.authorization).toBeUndefined()
+    expect(JSON.parse(calls[1].body ?? '{}')).toEqual({ code: 'abcd-efgh', label: 'devbox' })
+  })
+
+  it('400 invalid_cli_code', async () => {
+    const errors = fx<Record<string, { error: string }>>('errors.json')
+    const { api } = client(() => json(400, errors.invalid_cli_code))
+    const err = (await api.exchangeCliCode('x', 'h').catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 400, code: 'invalid_cli_code' })
   })
 })

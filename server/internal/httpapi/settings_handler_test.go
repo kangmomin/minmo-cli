@@ -11,18 +11,19 @@ import (
 
 var reTS = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
 
-var settingsFields = []string{"branchTemplate", "etcBranchName", "worktreePath", "mainClonePath", "postCreateScript", "sparsePaths"}
+var settingsFields = []string{"branchTemplate", "etcBranchName", "worktreePath", "mainClonePath", "postCreateScript", "sparsePaths", "postCreateScriptPosix"}
 
 // requiredGlobalFields 는 전역 PUT 에서 생략·null 이 400 인 필드(sparsePaths 는 v2.6 호환을 위해 제외)
 var requiredGlobalFields = settingsFields[:5]
 
 var defaultGlobal = map[string]any{
-	"branchTemplate":   "issue/{number}-{slug}",
-	"etcBranchName":    "etc",
-	"worktreePath":     "~/minmo-workspaces/{owner}/{repo}/{branch}",
-	"mainClonePath":    "~/minmo-workspaces/{owner}/{repo}/_main",
-	"postCreateScript": "",
-	"sparsePaths":      "",
+	"branchTemplate":        "issue/{number}-{slug}",
+	"etcBranchName":         "etc",
+	"worktreePath":          "~/minmo-workspaces/{owner}/{repo}/{branch}",
+	"mainClonePath":         "~/minmo-workspaces/{owner}/{repo}/_main",
+	"postCreateScript":      "",
+	"sparsePaths":           "",
+	"postCreateScriptPosix": "",
 }
 
 func globalWith(over map[string]any) map[string]any {
@@ -42,8 +43,8 @@ func expectEmptyScope(t *testing.T, name string, status int, m map[string]any) {
 		t.Errorf("%s: status %d %v", name, status, m)
 		return
 	}
-	if len(m) != 7 {
-		t.Errorf("%s: want 7 keys, got %v", name, m)
+	if len(m) != 8 {
+		t.Errorf("%s: want 8 keys, got %v", name, m)
 	}
 	for _, k := range append(append([]string{}, settingsFields...), "updatedAt") {
 		if v, ok := m[k]; !ok || v != nil {
@@ -52,12 +53,12 @@ func expectEmptyScope(t *testing.T, name string, status int, m map[string]any) {
 	}
 }
 
-// CT-07: 신규 사용자 E6 → 6필드 기본값 정확히 + updatedAt(ms 포맷), 키는 정확히 7개
+// CT-07: 신규 사용자 E6 → 7필드 기본값 정확히 + updatedAt(ms 포맷), 키는 정확히 8개
 func TestSettings_GlobalDefaults_CT07(t *testing.T) {
 	s := testutil.NewTestServer(t)
 	token, _ := s.Login(githubmock.CodeOK)
 	status, m := s.DoJSON("GET", "/settings", token, nil)
-	if status != 200 || len(m) != 7 {
+	if status != 200 || len(m) != 8 {
 		t.Fatalf("GET /settings %d %v", status, m)
 	}
 	for k, v := range defaultGlobal {
@@ -108,13 +109,14 @@ func TestSettings_GlobalExplicitNull_CT29(t *testing.T) {
 		}
 	}
 	// 저장된 값이 있으면 생략한 PUT(이전 클라이언트)이 지우지 않는다
-	if status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"sparsePaths": "desktop"})); status != 200 || m["sparsePaths"] != "desktop" {
+	if status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"sparsePaths": "desktop", "postCreateScriptPosix": "npm ci"})); status != 200 || m["sparsePaths"] != "desktop" {
 		t.Fatalf("PUT sparsePaths: %d %v", status, m)
 	}
 	body := globalWith(map[string]any{"etcBranchName": "misc"})
 	delete(body, "sparsePaths")
-	if status, m := s.DoJSON("PUT", "/settings", token, body); status != 200 || m["sparsePaths"] != "desktop" || m["etcBranchName"] != "misc" {
-		t.Errorf("omitted sparsePaths should keep stored value: %d %v", status, m)
+	delete(body, "postCreateScriptPosix")
+	if status, m := s.DoJSON("PUT", "/settings", token, body); status != 200 || m["sparsePaths"] != "desktop" || m["postCreateScriptPosix"] != "npm ci" || m["etcBranchName"] != "misc" {
+		t.Errorf("omitted v2.6+ fields should keep stored value: %d %v", status, m)
 	}
 	s.DoJSON("PUT", "/settings", token, globalWith(nil))
 	// 전역은 postCreateScript "" 허용 — 저장 후 그대로 반환

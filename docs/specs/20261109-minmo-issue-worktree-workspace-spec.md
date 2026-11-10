@@ -120,6 +120,12 @@ minmo-cli/
 | GET | `/projects/{owner}/{repo}/settings/effective` | 3단계 병합 결과 + 필드별 출처(scope) | 세션 |
 | GET | `/projects/{owner}/{repo}/issues/{key}/notes` | 메모 (key = 이슈 번호 또는 `etc`) | 세션 |
 | PUT | `/projects/{owner}/{repo}/issues/{key}/notes` | 메모 저장(전체 치환) | 세션 |
+| GET | `/me/visible-repos` | (v2.7, E15) 보일 저장소 `{repos: string[]\|null, updatedAt}` — null = 전체 표시 | 세션 |
+| PUT | `/me/visible-repos` | (v2.7, E16) 전체 교체 `{repos, baseUpdatedAt?}` — 소문자 `owner/repo`·`owner/*`, ≤1000, 409 conflict | 세션 |
+| POST | `/me/cli-codes` | (v2.7, E17) 원격 CLI 1회용 로그인 코드 `{code, expiresAt}`(10분, 사용자당 1개) | 세션 |
+| POST | `/auth/cli/exchange` | (v2.7, E18) `{code, label}` → `{session}`(kind=cli). 실패 400 `invalid_cli_code` | 없음 |
+| GET | `/me/sessions` | (v2.7, E19) 세션 목록 `{sessions:[{id, kind, label, createdAt, lastUsedAt, current}]}` | 세션 |
+| DELETE | `/me/sessions/{id}` | (v2.7, E20) 본인 세션 폐기(204), 없으면 404 | 세션 |
 
 ### Request/Response — settings 공통 필드
 | 필드 | 타입 | 전역 필수 | 검증 |
@@ -130,12 +136,13 @@ minmo-cli/
 | mainClonePath | string? | ✔ | 토큰 `~` `{owner}` `{repo}`, `{branch}`·`{key}` 금지, ≤512자 |
 | postCreateScript | string? | ✔(빈 문자열 허용) | ≤64KB |
 | sparsePaths (v2.6) | string? | 전역 PUT 에서 생략·null 이면 저장값 유지(없으면 `""`) | 줄바꿈 구분 저장소 기준 상대 폴더(cone sparse-checkout), 빈 줄 무시, 절대 경로·`..`·`\`·`:`·glob(`*?[]`)·`!`·`#`·`-` 시작 금지, ≤100줄·≤4KB. `""` = 전체 체크아웃. 오류 `invalid_sparse_paths` |
+| postCreateScriptPosix (v2.7) | string? | 전역 PUT 에서 생략·null 이면 저장값 유지(없으면 `""`) | ≤64KB. Linux/macOS(sh) 생성 후 스크립트 — macOS 데스크탑·원격 CLI 가 쓴다. `postCreateScript` 는 Windows(PowerShell) 용 |
 | updatedAt | string | — | 응답 전용, nullable |
 
 - 전역 초기 레코드 기본값: `issue/{number}-{slug}`, `etc`, `~/minmo-workspaces/{owner}/{repo}/{branch}`,
   `~/minmo-workspaces/{owner}/{repo}/_main`, `""`
 - 조직·프로젝트 scope에서 null = 상속
-- effective 응답: `{ values: {branchTemplate, etcBranchName, worktreePath, mainClonePath, postCreateScript, sparsePaths}, sources: { <field>: "global"|"org"|"project" } }`
+- effective 응답: `{ values: {branchTemplate, etcBranchName, worktreePath, mainClonePath, postCreateScript, sparsePaths, postCreateScriptPosix}, sources: { <field>: "global"|"org"|"project" } }`
 - 경로 토큰 치환은 데스크탑에서 수행. `~`는 홈 디렉터리, `{branch}`의 `/`는 `--`로 치환(A-06). `{key}` = 이슈 번호 또는 `etc`
 
 ### Request — PUT notes
@@ -154,6 +161,11 @@ minmo-cli/
 | 필드 | 타입 | nullable | 설명 |
 |------|------|----------|------|
 | id, githubLogin, avatarUrl | string | avatarUrl ✔ | |
+
+### 원격 CLI (v2.7, 후속 추가)
+- 원격 호스트에 `minmo-cli`(tgz) 를 설치해 SSH 로 쓴다. 서버는 loopback 에 두고, 이 PC 의 `ssh` 가 원격 `~/.minmo/server.sock` 으로 역터널한다(`RemoteForward`).
+- 로그인은 데스크탑이 발급한 1회용 코드(E17→E18). CLI 는 시작 시 `/me` 계정이 저장된 로그인과 같은지 확인한다.
+- worktree·GitHub 로직은 `@minmo/core` 를 데스크탑과 공유한다. 원격의 생성 후 스크립트는 `postCreateScriptPosix`(sh).
 
 ## 비즈니스 규칙
 - 조직 목록 = 개인 계정(최상단) + `/user/orgs`. 프로젝트 = 저장소, 이슈 = GitHub Issue(PR 제외)

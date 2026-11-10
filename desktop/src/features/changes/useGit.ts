@@ -4,11 +4,11 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { useDeps } from '../../app/deps'
-import { GitHubError } from '../../lib/github'
-import type { GitHubClient } from '../../lib/github'
+import { GitHubError } from '@minmo/core'
+import type { GitHubClient } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
 import type { TauriApi } from '../../lib/tauri'
-import { countUnpushed } from '../../lib/worktree'
+import { countUnpushed } from '@minmo/core'
 
 export type FileChange = {
   path: string

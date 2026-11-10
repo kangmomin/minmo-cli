@@ -1,0 +1,4 @@
+{
+  "repos": ["acme/*", "acme/widgets"],
+  "updatedAt": "<ts>"
+}

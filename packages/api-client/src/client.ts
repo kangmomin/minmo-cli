@@ -1,6 +1,8 @@
 import { ApiError } from './errors'
 import type {
   ApiErrorCode,
+  CliCode,
+  CliExchange,
   Effective,
   ErrorCode,
   GithubToken,
@@ -12,7 +14,10 @@ import type {
   SettingsInput,
   SettingsRecord,
   SettingsScope,
+  Sessions,
   TokenOverride,
+  VisibleRepos,
+  VisibleReposInput,
 } from './types'
 
 export type ApiClientOptions = {
@@ -34,6 +39,15 @@ export interface ApiClient {
   getEffective(owner: string, repo: string): Promise<Effective>
   getNotes(owner: string, repo: string, key: string): Promise<Notes>
   putNotes(owner: string, repo: string, key: string, input: NotesInput): Promise<Notes>
+  getVisibleRepos(): Promise<VisibleRepos>
+  /** 409 conflict 면 다른 기기가 먼저 저장한 것 — 다시 조회해 반영한다 */
+  putVisibleRepos(input: VisibleReposInput): Promise<VisibleRepos>
+  /** 데스크탑: 원격 CLI 로그인 코드 발급 */
+  issueCliCode(): Promise<CliCode>
+  /** CLI: 코드 → 새 CLI 세션(무인증). label 은 보통 호스트명 */
+  exchangeCliCode(code: string, label: string): Promise<CliExchange>
+  listSessions(): Promise<Sessions>
+  revokeSession(id: string): Promise<void>
 }
 
 // 계약 ErrorCode union 과 1:1. 응답 body.error 가 여기에 속할 때만 그대로 쓴다.
@@ -55,6 +69,9 @@ const ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'invalid_template',
   'invalid_path_template',
   'script_too_large',
+  'invalid_sparse_paths',
+  'invalid_visible_repos',
+  'invalid_cli_code',
   'invalid_issue_key',
   'body_too_large',
   'invalid_base_updated_at',
@@ -173,5 +190,15 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
       if (input.baseUpdatedAt !== undefined) body.baseUpdatedAt = input.baseUpdatedAt
       return request<Notes>(notesPath(owner, repo, key), { method: 'PUT', body })
     },
+    getVisibleRepos: () => request<VisibleRepos>('/me/visible-repos'),
+    putVisibleRepos: (input) => {
+      const body: VisibleReposInput = { repos: input.repos }
+      if (input.baseUpdatedAt !== undefined) body.baseUpdatedAt = input.baseUpdatedAt
+      return request<VisibleRepos>('/me/visible-repos', { method: 'PUT', body })
+    },
+    issueCliCode: () => request<CliCode>('/me/cli-codes', { method: 'POST' }),
+    exchangeCliCode: (code, label) => request<CliExchange>('/auth/cli/exchange', { method: 'POST', auth: false, body: { code, label } }),
+    listSessions: () => request<Sessions>('/me/sessions'),
+    revokeSession: (id) => request<void>(`/me/sessions/${seg(id)}`, { method: 'DELETE' }),
   }
 }

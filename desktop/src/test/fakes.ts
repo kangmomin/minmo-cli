@@ -5,7 +5,7 @@ import type { Mock } from 'vitest'
 import { ApiError } from '@minmo/api-client'
 import type { ApiClient, ApiErrorCode, Notes } from '@minmo/api-client'
 
-import type { GitHubClient } from '../lib/github'
+import type { GitHubClient } from '@minmo/core'
 import type { TauriApi } from '../lib/tauri'
 import { ok } from '../lib/tauri.mock'
 
@@ -86,6 +86,13 @@ export function createFakeApi(overrides: Partial<ApiClient> = {}): Mocked<ApiCli
     getEffective: unexpected('getEffective'),
     getNotes: unexpected('getNotes'),
     putNotes: unexpected('putNotes'),
+    // 트리는 항상 보일 저장소를 조회하므로 기본은 "선택 없음 = 전체 표시"
+    getVisibleRepos: async () => ({ repos: null, updatedAt: null }),
+    putVisibleRepos: unexpected('putVisibleRepos'),
+    issueCliCode: unexpected('issueCliCode'),
+    exchangeCliCode: unexpected('exchangeCliCode'),
+    listSessions: unexpected('listSessions'),
+    revokeSession: unexpected('revokeSession'),
   }
   return mockAll(base, overrides)
 }
@@ -97,6 +104,8 @@ export function createFakeGitHub(overrides: Partial<GitHubClient> = {}): Mocked<
     listRepos: async () => [],
     listIssues: async () => [],
     defaultBranch: async () => 'main',
+    getRepo: async (owner, name) => ({ owner, name, defaultBranch: 'main' }),
+    getIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'open', htmlUrl: '' }),
     openPrForBranch: async () => null,
     createPr: async () => ({ number: 1, url: 'https://github.com/o/r/pull/1' }),
   }

@@ -11,7 +11,7 @@ const (
 	ScopeProject Scope = "project"
 )
 
-// Values 는 6개 필드가 모두 확정된 설정 값(전역 레코드, effective.values).
+// Values 는 7개 필드가 모두 확정된 설정 값(전역 레코드, effective.values).
 type Values struct {
 	BranchTemplate   string `json:"branchTemplate"`
 	EtcBranchName    string `json:"etcBranchName"`
@@ -20,16 +20,19 @@ type Values struct {
 	PostCreateScript string `json:"postCreateScript"`
 	// SparsePaths 는 줄바꿈으로 구분한 sparse-checkout(cone) 디렉터리 목록. 빈 값이면 전체 체크아웃
 	SparsePaths string `json:"sparsePaths"`
+	// PostCreateScriptPosix 는 Linux/macOS(sh) 생성 후 스크립트. PostCreateScript 는 Windows(PowerShell) 용이다
+	PostCreateScriptPosix string `json:"postCreateScriptPosix"`
 }
 
-// Input 은 nullable 6필드(nil = 상속/미지정). org/project 저장 행과 PUT 입력 모두에 쓴다.
+// Input 은 nullable 7필드(nil = 상속/미지정). org/project 저장 행과 PUT 입력 모두에 쓴다.
 type Input struct {
-	BranchTemplate   *string `json:"branchTemplate"`
-	EtcBranchName    *string `json:"etcBranchName"`
-	WorktreePath     *string `json:"worktreePath"`
-	MainClonePath    *string `json:"mainClonePath"`
-	PostCreateScript *string `json:"postCreateScript"`
-	SparsePaths      *string `json:"sparsePaths"`
+	BranchTemplate        *string `json:"branchTemplate"`
+	EtcBranchName         *string `json:"etcBranchName"`
+	WorktreePath          *string `json:"worktreePath"`
+	MainClonePath         *string `json:"mainClonePath"`
+	PostCreateScript      *string `json:"postCreateScript"`
+	SparsePaths           *string `json:"sparsePaths"`
+	PostCreateScriptPosix *string `json:"postCreateScriptPosix"`
 }
 
 // Record 는 저장된 설정 행이다. 행이 없으면 모든 필드 nil · UpdatedAt nil.
@@ -38,14 +41,15 @@ type Record struct {
 	UpdatedAt *int64 // epoch ms
 }
 
-// Sources 는 effective 의 필드별 출처. 6키가 항상 존재한다.
+// Sources 는 effective 의 필드별 출처. 7키가 항상 존재한다.
 type Sources struct {
-	BranchTemplate   Scope `json:"branchTemplate"`
-	EtcBranchName    Scope `json:"etcBranchName"`
-	WorktreePath     Scope `json:"worktreePath"`
-	MainClonePath    Scope `json:"mainClonePath"`
-	PostCreateScript Scope `json:"postCreateScript"`
-	SparsePaths      Scope `json:"sparsePaths"`
+	BranchTemplate        Scope `json:"branchTemplate"`
+	EtcBranchName         Scope `json:"etcBranchName"`
+	WorktreePath          Scope `json:"worktreePath"`
+	MainClonePath         Scope `json:"mainClonePath"`
+	PostCreateScript      Scope `json:"postCreateScript"`
+	SparsePaths           Scope `json:"sparsePaths"`
+	PostCreateScriptPosix Scope `json:"postCreateScriptPosix"`
 }
 
 // Effective 는 E12 응답 본문 `{values, sources}` 이다.
@@ -57,11 +61,12 @@ type Effective struct {
 // Defaults 는 신규 사용자 전역 설정 기본값을 반환한다(계약 "전역 기본값").
 func Defaults() Values {
 	return Values{
-		BranchTemplate:   "issue/{number}-{slug}",
-		EtcBranchName:    "etc",
-		WorktreePath:     "~/minmo-workspaces/{owner}/{repo}/{branch}",
-		MainClonePath:    "~/minmo-workspaces/{owner}/{repo}/_main",
-		PostCreateScript: "",
-		SparsePaths:      "",
+		BranchTemplate:        "issue/{number}-{slug}",
+		EtcBranchName:         "etc",
+		WorktreePath:          "~/minmo-workspaces/{owner}/{repo}/{branch}",
+		MainClonePath:         "~/minmo-workspaces/{owner}/{repo}/_main",
+		PostCreateScript:      "",
+		SparsePaths:           "",
+		PostCreateScriptPosix: "",
 	}
 }

@@ -31,14 +31,14 @@ var (
 )
 
 // ValidateInput 은 계약 검증 규칙표를 선언 순서(branchTemplate → etcBranchName → worktreePath →
-// mainClonePath → postCreateScript → sparsePaths)로 적용해 첫 위반 1건의 (code, field)를 반환한다. 위반이 없으면 ("", "").
+// mainClonePath → postCreateScript → sparsePaths → postCreateScriptPosix)로 적용해 첫 위반 1건의 (code, field)를 반환한다. 위반이 없으면 ("", "").
 // scope 가 global 이면 nil 필드는 global_requires_all_fields 이다(sparsePaths 는 예외 — nil 은 "").
 func ValidateInput(scope Scope, in Input) (code, field string) {
 	fields := []struct {
 		name  string
 		value *string
 		check func(string) string
-		// optional: 전역에서도 nil 을 허용한다 — v2.6 에 추가된 필드라 이전 클라이언트의 전역 PUT 을 깨지 않도록 nil 은 "" 로 읽는다
+		// optional: 전역에서도 nil 을 허용한다 — v2.6 이후 추가된 필드라 이전 클라이언트의 전역 PUT 을 깨지 않도록(저장값 유지)
 		optional bool
 	}{
 		{"branchTemplate", in.BranchTemplate, checkBranchTemplate, false},
@@ -47,6 +47,7 @@ func ValidateInput(scope Scope, in Input) (code, field string) {
 		{"mainClonePath", in.MainClonePath, checkMainClonePath, false},
 		{"postCreateScript", in.PostCreateScript, checkPostCreateScript, false},
 		{"sparsePaths", in.SparsePaths, checkSparsePaths, true},
+		{"postCreateScriptPosix", in.PostCreateScriptPosix, checkPostCreateScript, true},
 	}
 	for _, f := range fields {
 		if f.value == nil {

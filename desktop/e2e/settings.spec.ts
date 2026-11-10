@@ -23,7 +23,7 @@ test('프로젝트 설정: 상속 placeholder, 브랜치 템플릿 feat/{number}
   await expect(dialog).toBeHidden()
 
   const put = calls.find((c) => c.method === 'PUT' && c.path === '/projects/my-org/widgets/settings')
-  expect(put?.body).toEqual({ branchTemplate: 'feat/{number}', etcBranchName: null, worktreePath: null, mainClonePath: null, postCreateScript: null, sparsePaths: null })
+  expect(put?.body).toEqual({ branchTemplate: 'feat/{number}', etcBranchName: null, worktreePath: null, mainClonePath: null, postCreateScript: null, sparsePaths: null, postCreateScriptPosix: null })
 })
 
 test('조직 설정: 400 field 오류는 인라인(aria-invalid), 저장 버튼 유지', async ({ page }) => {

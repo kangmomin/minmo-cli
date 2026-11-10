@@ -87,7 +87,7 @@ func fillGlobal(in Input) Input {
 	def := map[string]string{
 		"branchTemplate": "issue/{number}-{slug}", "etcBranchName": "etc",
 		"worktreePath": "~/minmo-workspaces/{owner}/{repo}/{branch}", "mainClonePath": "~/minmo-workspaces/{owner}/{repo}/_main",
-		"postCreateScript": "", "sparsePaths": "",
+		"postCreateScript": "", "sparsePaths": "", "postCreateScriptPosix": "",
 	}
 	if in.BranchTemplate == nil {
 		in.BranchTemplate = sp(def["branchTemplate"])
@@ -106,6 +106,9 @@ func fillGlobal(in Input) Input {
 	}
 	if in.SparsePaths == nil {
 		in.SparsePaths = sp(def["sparsePaths"])
+	}
+	if in.PostCreateScriptPosix == nil {
+		in.PostCreateScriptPosix = sp(def["postCreateScriptPosix"])
 	}
 	return in
 }
@@ -207,6 +210,11 @@ func TestValidate_PostCreateScript_CT28(t *testing.T) {
 		ok("65536 bytes", strings.Repeat("x", 65536)),
 		bad("65537 bytes", strings.Repeat("x", 65537)),
 		bad("multibyte over limit", strings.Repeat("가", 21846)), // 65,538 bytes, 21,846 rune
+	})
+	// v2.7 postCreateScriptPosix 도 같은 크기 규칙
+	runValidate(t, allScopes, []vcase{
+		{name: "posix ok", in: Input{PostCreateScriptPosix: sp("npm ci")}},
+		{name: "posix too large", in: Input{PostCreateScriptPosix: sp(strings.Repeat("x", 65537))}, code: "script_too_large", field: "postCreateScriptPosix"},
 	})
 }
 

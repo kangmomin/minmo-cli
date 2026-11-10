@@ -1,5 +1,5 @@
 // GitHubClient — gh(우선) / REST(폴백). 서버 캐시 없음(D-22).
-import type { TauriApi } from '../tauri'
+import type { GhHost } from '../host'
 import { GhFailure, createGhTransport } from './ghCli'
 import { createRestTransport } from './rest'
 import type { GitHubTransport } from './transport'
@@ -13,7 +13,7 @@ export const PER_PAGE = 100
 export const MAX_PAGES = 5
 
 export interface GitHubClientDeps {
-  tauri: Pick<TauriApi, 'ghAvailable' | 'ghRun'>
+  tauri: Pick<GhHost, 'ghAvailable' | 'ghRun'>
   fetch: typeof fetch
   /** 서버 E4 로 받은 GitHub 토큰 (REST 폴백용) */
   getToken(): Promise<string>
@@ -31,6 +31,10 @@ export interface GitHubClient {
   /** state=all, per_page=100, ≤5페이지, PR 제외. ensureNumbers 중 목록에 없는 번호는 개별 조회로 보충 */
   listIssues(owner: string, repo: string, opts?: { ensureNumbers?: number[] }): Promise<GitHubIssue[]>
   defaultBranch(owner: string, repo: string): Promise<string>
+  /** 저장소 하나 — 대소문자를 GitHub 표기(canonical)로 맞출 때 쓴다 */
+  getRepo(owner: string, repo: string): Promise<GitHubRepo>
+  /** 이슈 하나(PR 이면 not_found) */
+  getIssue(owner: string, repo: string, number: number): Promise<GitHubIssue>
   openPrForBranch(owner: string, repo: string, branch: string): Promise<GitHubPr | null>
   createPr(input: CreatePrInput): Promise<GitHubPr>
 }
@@ -142,6 +146,15 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
 
     defaultBranch: (owner, repo) =>
       withTransport(async (t) => ((await t.get(`repos/${enc(owner)}/${enc(repo)}`)).data as RawRepo).default_branch),
+
+    getRepo: (owner, repo) => withTransport(async (t) => toRepo((await t.get(`repos/${enc(owner)}/${enc(repo)}`)).data as RawRepo)),
+
+    getIssue: (owner, repo, number) =>
+      withTransport(async (t) => {
+        const r = (await t.get(`repos/${enc(owner)}/${enc(repo)}/issues/${number}`)).data as RawIssue
+        if (r.pull_request !== undefined) throw new GitHubError('not_found', { message: `#${number} 은 PR 입니다` })
+        return toIssue(r)
+      }),
 
     openPrForBranch: (owner, repo, branch) =>
       withTransport(async (t) => {

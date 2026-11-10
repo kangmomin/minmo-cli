@@ -1,10 +1,10 @@
 // 이슈 열기(openIssue)·worktree 삭제(deleteWorktree) 도메인 서비스.
-// Frontend Plan "src/lib/worktree.ts" 규칙을 따른다. 모든 OS 접근은 TauriApi 경유.
+// Frontend Plan "src/lib/worktree.ts" 규칙을 따른다. 모든 OS 접근은 호스트 인터페이스(데스크탑 Tauri·CLI Node) 경유.
 import { TemplateError, isSameOrInside, normalizePath, renderBranch, renderPath, slug as slugOf } from '@minmo/api-client'
 import type { Effective, PathContext, Platform, SettingsValues } from '@minmo/api-client'
 
 import { isOfflineError } from './apiErrors'
-import type { CmdResult, ScriptRunResult, TauriApi } from './tauri'
+import type { CmdResult, GitHost, ScriptRunResult, WorktreeHost } from './host'
 
 export type IssueTarget = {
   owner: string
@@ -50,7 +50,7 @@ export function issueBranchContext(
 }
 
 /** origin 어느 브랜치에도 없는 HEAD 커밋 수. git 실패 시 null(개수 불명) */
-async function tryCountUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promise<number | null> {
+async function tryCountUnpushed(gitRun: GitHost['gitRun'], cwd: string): Promise<number | null> {
   const r = await gitRun(['-C', cwd, 'rev-list', '--count', 'HEAD', '--not', '--remotes=origin'])
   if (r.code !== 0) return null
   const n = Number.parseInt(r.stdout.trim(), 10)
@@ -58,7 +58,7 @@ async function tryCountUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promis
 }
 
 /** 변경 탭 "미push" 표시용. 실패 시 0 — 삭제 판단에는 쓰지 않는다(inspect 는 실패를 null 로 구분) */
-export async function countUnpushed(gitRun: TauriApi['gitRun'], cwd: string): Promise<number> {
+export async function countUnpushed(gitRun: GitHost['gitRun'], cwd: string): Promise<number> {
   return (await tryCountUnpushed(gitRun, cwd)) ?? 0
 }
 
@@ -86,6 +86,7 @@ export type WorktreeErrorCode =
   | 'server_required'
   | 'etc_not_deletable'
   | 'not_found'
+  | 'path_not_absolute'
 
 export class WorktreeError extends Error {
   code: WorktreeErrorCode
@@ -118,7 +119,7 @@ export type DeleteCheck = { uncommitted: number | null; unpushed: number | null 
 export type DeleteResult = { status: 'deleted' } | ({ status: 'needs_confirmation' } & DeleteCheck)
 
 export interface WorktreeDeps {
-  tauri: TauriApi
+  tauri: WorktreeHost
   getEffective(owner: string, repo: string): Promise<Effective>
   defaultBranch(owner: string, repo: string): Promise<string>
   pathStore: WorktreePathStore
@@ -160,6 +161,16 @@ export function sparseDirs(v: string): string[] {
     .split(/\r?\n/)
     .map((l) => l.trim().replace(/\/+$/, ''))
     .filter(Boolean)
+}
+
+/** 생성 후 스크립트는 실행 셸이 OS 마다 달라 두 벌이다 — Windows 는 PowerShell, 그 외(macOS·원격 CLI)는 sh */
+export function scriptFor(values: Pick<SettingsValues, 'postCreateScript' | 'postCreateScriptPosix'>, platform: Platform): string {
+  return platform === 'win32' ? values.postCreateScript : values.postCreateScriptPosix
+}
+
+/** 렌더한 경로가 이 OS 의 절대 경로인지 — Windows 는 드라이브·UNC, 그 외는 / 시작 */
+export function isAbsoluteFor(path: string, platform: Platform): boolean {
+  return platform === 'win32' ? /^[A-Za-z]:[\\/]/.test(path) || /^\\\\[^\\]/.test(path) : path.startsWith('/')
 }
 
 /** worktreePathMap 키 */
@@ -267,6 +278,16 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     const { branch, ctx } = resolved
     const main = renderPath(values.mainClonePath, ctx)
     const path = renderPath(values.worktreePath, ctx)
+    // 설정은 기기 간 공유된다 — 다른 OS 용 절대 경로(예: Linux 에서 C:\...)로는 clone 하지 않는다
+    for (const p of [main, path]) {
+      if (!isAbsoluteFor(p, platform)) {
+        log(issueId, 'effective', 'error', `이 OS 에서 쓸 수 없는 경로입니다: ${p}`)
+        throw new WorktreeError('path_not_absolute', {
+          path: p,
+          message: `이 OS 에서 쓸 수 없는 경로입니다(절대 경로 아님): ${p} — 설정의 경로는 ~ 로 시작하게 하세요`,
+        })
+      }
+    }
     // EC-23: worktree 가 메인 clone 과 같거나 그 하위면 중단
     if (isSameOrInside(path, main, platform)) {
       log(issueId, 'effective', 'error', `worktree 경로가 메인 clone 과 겹칩니다: ${path}`)
@@ -477,9 +498,10 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
 
     // A-14: 생성 후 스크립트는 worktree 를 새로 만들었을 때 1회만
     let script = SKIPPED
-    if (p.values.postCreateScript.trim() !== '') {
+    const postCreate = scriptFor(p.values, platform)
+    if (postCreate.trim() !== '') {
       defaultBranch ??= await resolveDefaultBranch(t, p.main)
-      script = await runScript(issueId, t, { cwd: p.path, branch: outcome.branch, main: p.main, defaultBranch }, p.values.postCreateScript)
+      script = await runScript(issueId, t, { cwd: p.path, branch: outcome.branch, main: p.main, defaultBranch }, postCreate)
     }
     return { issueId, path: p.path, branch: outcome.branch, created: true, pathChanged: false, script }
   }
@@ -528,7 +550,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       if (!entry) throw new WorktreeError('not_found', { message: 'worktree 가 없습니다' })
       const p = await plan(t)
       const defaultBranch = await resolveDefaultBranch(t, p.main)
-      return runScript(issueId, t, { cwd: entry.path, branch: entry.branch, main: p.main, defaultBranch }, p.values.postCreateScript)
+      return runScript(issueId, t, { cwd: entry.path, branch: entry.branch, main: p.main, defaultBranch }, scriptFor(p.values, platform))
     },
 
     inspect,

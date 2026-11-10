@@ -5,10 +5,10 @@ import { useCallback, useMemo } from 'react'
 
 import { isOfflineError } from '../../lib/apiErrors'
 import { useDeps } from '../../app/deps'
-import { GitHubError } from '../../lib/github'
-import type { GitHubIssue, GitHubOwner } from '../../lib/github'
+import { GitHubError } from '@minmo/core'
+import type { GitHubIssue, GitHubOwner } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
-import { worktreeId } from '../../lib/worktree'
+import { worktreeId } from '@minmo/core'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 

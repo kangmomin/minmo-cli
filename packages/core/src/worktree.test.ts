@@ -5,9 +5,9 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { Effective, SettingsValues } from '@minmo/api-client'
 
-import { createFakeTauri, deferred, fail, flush, ok } from '../test/fakes'
-import type { CmdResult, RunOptions, ScriptRunResult } from './tauri'
-import { createWorktreeService, localFilesDir, sparseDirs, worktreeId } from './worktree'
+import { createFakeHost, deferred, fail, flush, ok } from './testing'
+import type { CmdResult, RunOptions, ScriptRunResult } from './host'
+import { createWorktreeService, isAbsoluteFor, localFilesDir, scriptFor, sparseDirs, worktreeId } from './worktree'
 import type { IssueTarget, SetupLogEvent, WorktreeEntry } from './worktree'
 
 const HOME = '/home/u'
@@ -27,11 +27,12 @@ const DEFAULTS: SettingsValues = {
   mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
   postCreateScript: '',
   sparsePaths: '',
+  postCreateScriptPosix: '',
 }
 
 const effective = (v: Partial<SettingsValues> = {}): Effective => ({
   values: { ...DEFAULTS, ...v },
-  sources: { branchTemplate: 'global', etcBranchName: 'global', worktreePath: 'global', mainClonePath: 'global', postCreateScript: 'global', sparsePaths: 'global' },
+  sources: { branchTemplate: 'global', etcBranchName: 'global', worktreePath: 'global', mainClonePath: 'global', postCreateScript: 'global', sparsePaths: 'global', postCreateScriptPosix: 'global' },
 })
 
 // ── git 시뮬레이터 ───────────────────────────────────────────────
@@ -211,7 +212,7 @@ function setup(o: SetupOpts = {}) {
     sim.existing.add(MAIN)
     sim.mainIsRepo = o.sim?.mainIsRepo ?? true
   }
-  const fake = createFakeTauri({
+  const tauri = createFakeHost({
     gitRun: (args, opts) => simGit(sim, args, opts),
     pathExists: async (p) => sim.existing.has(p),
     removeDir: async (p) => {
@@ -236,7 +237,7 @@ function setup(o: SetupOpts = {}) {
   const logs: SetupLogEvent[] = []
   let n = 0
   const svc = createWorktreeService({
-    tauri: fake.tauri,
+    tauri,
     getEffective,
     defaultBranch,
     pathStore,
@@ -245,7 +246,6 @@ function setup(o: SetupOpts = {}) {
     onLog: (e) => logs.push(e),
     newRunId: () => `run-${++n}`,
   })
-  const tauri = fake.tauri
   const cmds = () => tauri.gitRun.mock.calls.map(([args, opts]) => normalize(args, opts)[0])
   const find = (pred: (a: string[]) => boolean) => cmds().filter(pred)
   const isAdd = (a: string[]) => a[0] === 'worktree' && a[1] === 'add'
@@ -358,7 +358,7 @@ describe('openIssue — AC-06 기존 worktree 전환 / EC-24 경로 변경', () 
   it('AC-06 이미 worktree 가 있으면 생성·스크립트 없이 전환', async () => {
     const t = setup({
       mainExists: true,
-      values: { postCreateScript: 'npm ci' },
+      values: { postCreateScriptPosix: 'npm ci' },
       sim: { worktrees: new Map([[WT42, BR42]]), local: new Set([BR42]) },
       entries: [[ID42, { path: WT42, branch: BR42 }]],
     })
@@ -442,7 +442,7 @@ describe('openIssue — 중단 조건', () => {
 describe('openIssue — EC-10 부분 실패 정리: 이번 실행이 새로 만든 경로만', () => {
   it('clone 네트워크 실패 → stderr 로그, 새로 만든 _main 정리, worktree·스크립트 없음', async () => {
     const stderr = "fatal: unable to access 'https://github.com/MyOrg/Repo-A.git/': Could not resolve host: github.com"
-    const t = setup({ sim: { failClone: stderr }, values: { postCreateScript: 'npm ci' } })
+    const t = setup({ sim: { failClone: stderr }, values: { postCreateScriptPosix: 'npm ci' } })
     await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'git_failed' })
     expect(t.logs.some((l) => l.status === 'error' && (l.message ?? '').includes('Could not resolve host'))).toBe(true)
     expect(t.tauri.removeDir).toHaveBeenCalledWith(MAIN)
@@ -460,7 +460,7 @@ describe('openIssue — EC-10 부분 실패 정리: 이번 실행이 새로 만�
   })
 
   it('worktree add 실패 → 남은 worktree 디렉터리만 정리, 기존 _main 은 보존', async () => {
-    const t = setup({ mainExists: true, sim: { failWorktreeAdd: 'fatal: could not create leading directories' }, values: { postCreateScript: 'npm ci' } })
+    const t = setup({ mainExists: true, sim: { failWorktreeAdd: 'fatal: could not create leading directories' }, values: { postCreateScriptPosix: 'npm ci' } })
     await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'git_failed' })
     expect(t.tauri.removeDir).toHaveBeenCalledWith(WT42)
     expect(t.tauri.removeDir).not.toHaveBeenCalledWith(MAIN)
@@ -494,9 +494,27 @@ describe('openIssue — 동시성 (repo mutex · 이슈별 중복 제거)', () =
   })
 })
 
+describe('openIssue — 생성 후 스크립트 OS 분리 (v2.7)', () => {
+  it('Windows 는 postCreateScript(PowerShell), 그 외는 postCreateScriptPosix(sh) 를 실행한다', async () => {
+    const values = { postCreateScript: 'npm.cmd ci', postCreateScriptPosix: 'npm ci' }
+    const linux = setup({ values })
+    await linux.svc.openIssue(ISSUE42)
+    expect(linux.tauri.scriptRun.mock.calls[0][0].script).toBe('npm ci')
+    expect(scriptFor(values, 'darwin')).toBe('npm ci')
+    expect(scriptFor(values, 'win32')).toBe('npm.cmd ci')
+  })
+
+  it('이 OS 용 스크립트가 비어 있으면 다른 OS 스크립트를 대신 돌리지 않는다', async () => {
+    const t = setup({ values: { postCreateScript: 'npm.cmd ci', postCreateScriptPosix: '' } })
+    const res = await t.svc.openIssue(ISSUE42)
+    expect(res.script.status).toBe('skipped')
+    expect(t.tauri.scriptRun).not.toHaveBeenCalled()
+  })
+})
+
 describe('openIssue — 생성 후 스크립트 (AC-16, EC-19, EC-21)', () => {
   it('AC-16 worktree add 뒤 worktree cwd 에서 1회 실행, MINMO_* env 주입, 성공 → succeeded', async () => {
-    const t = setup({ mainExists: true, values: { postCreateScript: 'npm ci' } })
+    const t = setup({ mainExists: true, values: { postCreateScriptPosix: 'npm ci' } })
     const res = await t.svc.openIssue(ISSUE42)
     expect(t.tauri.scriptRun).toHaveBeenCalledTimes(1)
     expect(t.tauri.scriptRun.mock.calls[0][0]).toMatchObject({
@@ -518,7 +536,7 @@ describe('openIssue — 생성 후 스크립트 (AC-16, EC-19, EC-21)', () => {
   })
 
   it('EC-19 종료 코드 ≠ 0 → worktree 유지, failed + exitCode, 이슈는 열림', async () => {
-    const t = setup({ mainExists: true, values: { postCreateScript: 'exit 3' }, scriptRun: async () => ({ exitCode: 3, cancelled: false }) })
+    const t = setup({ mainExists: true, values: { postCreateScriptPosix: 'exit 3' }, scriptRun: async () => ({ exitCode: 3, cancelled: false }) })
     const res = await t.svc.openIssue(ISSUE42)
     expect(res).toMatchObject({ path: WT42, created: true, script: { status: 'failed', exitCode: 3 } })
     expect(t.find(t.isRemove)).toHaveLength(0)
@@ -530,7 +548,7 @@ describe('openIssue — 생성 후 스크립트 (AC-16, EC-19, EC-21)', () => {
     const run = deferred<ScriptRunResult>()
     const t = setup({
       mainExists: true,
-      values: { postCreateScript: 'sleep 100' },
+      values: { postCreateScriptPosix: 'sleep 100' },
       scriptRun: () => run.promise,
       scriptCancel: async () => run.resolve({ exitCode: null, cancelled: true }),
     })
@@ -545,7 +563,7 @@ describe('openIssue — 생성 후 스크립트 (AC-16, EC-19, EC-21)', () => {
   })
 
   it('A-14 스크립트는 생성 시 1회만 — 기존 worktree 재열기는 실행하지 않음, [다시 실행]은 수동', async () => {
-    const t = setup({ mainExists: true, values: { postCreateScript: 'npm ci' } })
+    const t = setup({ mainExists: true, values: { postCreateScriptPosix: 'npm ci' } })
     await t.svc.openIssue(ISSUE42)
     await t.svc.openIssue(ISSUE42)
     expect(t.tauri.scriptRun).toHaveBeenCalledTimes(1)
@@ -625,7 +643,7 @@ describe('openIssue — 레포별 로컬 파일 보관 폴더(_local)', () => {
   it('새 worktree 에 _local 을 복사한 뒤 생성 후 스크립트를 실행한다', async () => {
     const order: string[] = []
     const t = setup({
-      values: { postCreateScript: 'npm ci' },
+      values: { postCreateScriptPosix: 'npm ci' },
       copyTree: async (src, dst) => {
         order.push(`copy ${src} -> ${dst}`)
         return 2
@@ -714,7 +732,7 @@ describe('deleteWorktree (AC-14, EC-15, EC-16, EC-24, PTY 선종료)', () => {
     const run = deferred<ScriptRunResult>()
     const t = setup({
       mainExists: true,
-      values: { postCreateScript: 'npm run dev' },
+      values: { postCreateScriptPosix: 'npm run dev' },
       scriptRun: () => run.promise,
       scriptCancel: async () => run.resolve({ exitCode: null, cancelled: true }),
     })
@@ -768,5 +786,22 @@ describe('F-4 EC-15 삭제 전 검사 실패 → 개수 불명으로 확인 요�
     const t = setupFailing('status')
     await expect(t.svc.deleteWorktree(ISSUE42, { confirmed: true })).resolves.toEqual({ status: 'deleted' })
     expect(t.find(t.isRemove)[0]).toContain(P)
+  })
+})
+
+describe('openIssue — 설정 경로가 이 OS 의 절대 경로가 아니면 중단(기기 간 설정 공유)', () => {
+  it('Linux 에서 Windows 경로 → path_not_absolute, clone 하지 않음', async () => {
+    const t = setup({ values: { mainClonePath: 'C:/ws/{owner}/{repo}/_main' } })
+    await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'path_not_absolute' })
+    expect(t.find((a) => a[0] === 'clone')).toHaveLength(0)
+  })
+
+  it('isAbsoluteFor: Windows 는 드라이브·UNC, 그 외는 / 시작', () => {
+    expect(isAbsoluteFor('C:/x', 'win32')).toBe(true)
+    expect(isAbsoluteFor('c:\\x', 'win32')).toBe(true)
+    expect(isAbsoluteFor('\\\\server\\share', 'win32')).toBe(true)
+    expect(isAbsoluteFor('/x', 'win32')).toBe(false)
+    expect(isAbsoluteFor('/home/u/x', 'linux')).toBe(true)
+    expect(isAbsoluteFor('C:/x', 'darwin')).toBe(false)
   })
 })

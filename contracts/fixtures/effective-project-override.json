@@ -5,7 +5,8 @@
     "worktreePath": "~/minmo-workspaces/{owner}/{repo}/{branch}",
     "mainClonePath": "~/minmo-workspaces/{owner}/{repo}/_main",
     "postCreateScript": "",
-    "sparsePaths": ""
+    "sparsePaths": "",
+    "postCreateScriptPosix": ""
   },
   "sources": {
     "branchTemplate": "project",
@@ -13,6 +14,7 @@
     "worktreePath": "global",
     "mainClonePath": "global",
     "postCreateScript": "global",
-    "sparsePaths": "global"
+    "sparsePaths": "global",
+    "postCreateScriptPosix": "global"
   }
 }

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -278,6 +279,15 @@ func ctMatch(t *testing.T, path string, want, got any) {
 			if _, ok := w[k]; !ok {
 				t.Errorf("%s.%s: unexpected field", path, k)
 			}
+		}
+	case []any:
+		g, ok := got.([]any)
+		if !ok || len(g) != len(w) {
+			t.Errorf("%s: want array of %d, got %v", path, len(w), got)
+			return
+		}
+		for i := range w {
+			ctMatch(t, fmt.Sprintf("%s[%d]", path, i), w[i], g[i])
 		}
 	case nil:
 		if got != nil {
@@ -570,7 +580,7 @@ func TestCT09_ProjectOverrideEffective(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("PUT project %d %v", status, m)
 	}
-	ctMatch(t, "record", map[string]any{"branchTemplate": "feat/{number}", "etcBranchName": nil, "worktreePath": nil, "mainClonePath": nil, "postCreateScript": nil, "sparsePaths": nil, "updatedAt": "<ts>"}, m)
+	ctMatch(t, "record", map[string]any{"branchTemplate": "feat/{number}", "etcBranchName": nil, "worktreePath": nil, "mainClonePath": nil, "postCreateScript": nil, "sparsePaths": nil, "postCreateScriptPosix": nil, "updatedAt": "<ts>"}, m)
 	status, m = e.doJSON("GET", "/projects/acme/widgets/settings/effective", token, nil)
 	if status != 200 {
 		t.Fatalf("GET effective %d %v", status, m)
@@ -611,6 +621,9 @@ func TestCT10_CT11_CT28_Validation(t *testing.T) {
 	}
 	status, m = e.doJSON("PUT", "/orgs/acme/settings", token, map[string]any{"postCreateScript": strings.Repeat("x", 65537)})
 	ctExpectError(t, status, m, 400, "script_too_large", "postCreateScript")
+	// v2.6 sparsePaths
+	status, m = e.doJSON("PUT", "/orgs/acme/settings", token, map[string]any{"sparsePaths": "a/../b"})
+	ctExpectError(t, status, m, 400, "invalid_sparse_paths", "sparsePaths")
 	status, m = e.doJSON("PUT", "/orgs/acme/settings", token, map[string]any{"postCreateScript": strings.Repeat("x", 65536)})
 	if status != 200 {
 		t.Errorf("65536B script: %d %v", status, m)
@@ -838,4 +851,108 @@ func TestCT31_SameMillisecond(t *testing.T) {
 	}
 	status, m = e.doJSON("PUT", path, token, map[string]any{"body": "3", "baseUpdatedAt": t1})
 	ctExpectError(t, status, m, 409, "conflict", "")
+}
+
+// CT-41: E15/E16 보일 저장소 — 기본은 전체 표시(null), 저장 시 소문자·정렬·중복 제거, baseUpdatedAt 충돌 409, 사용자 격리
+func TestCT41_VisibleRepos(t *testing.T) {
+	e := ctNewEnv(t)
+	token, _ := e.login("ct-code-ok")
+	status, m := e.doJSON("GET", "/me/visible-repos", token, nil)
+	if status != 200 {
+		t.Fatalf("GET %d %v", status, m)
+	}
+	ctMatch(t, "default", ctFixture(t, "visible-repos-default.json"), m)
+
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": []string{"Acme/Widgets", "acme/*", "acme/widgets"}, "baseUpdatedAt": nil})
+	if status != 200 {
+		t.Fatalf("PUT %d %v", status, m)
+	}
+	ctMatch(t, "saved", ctFixture(t, "visible-repos-saved.json"), m)
+	t1, _ := m["updatedAt"].(string)
+
+	// 다른 기기가 먼저 저장 → 오래된 base 로 저장하면 409
+	e.now = e.now.Add(time.Second)
+	if status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": nil}); status != 200 || m["repos"] != nil {
+		t.Fatalf("PUT null %d %v", status, m)
+	}
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": []string{}, "baseUpdatedAt": t1})
+	ctExpectError(t, status, m, 409, "conflict", "")
+
+	// 검증
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": []string{"acme/../x"}})
+	ctExpectError(t, status, m, 400, "invalid_visible_repos", "repos")
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{})
+	ctExpectError(t, status, m, 400, "invalid_json", "repos")
+	status, m = e.doJSON("PUT", "/me/visible-repos", token, map[string]any{"repos": nil, "baseUpdatedAt": "yesterday"})
+	ctExpectError(t, status, m, 400, "invalid_base_updated_at", "")
+	status, m = e.doJSON("GET", "/me/visible-repos", "", nil)
+	ctExpectError(t, status, m, 401, "unauthorized", "")
+
+	// 다른 사용자는 자기 선택(기본값)을 본다
+	other, _ := e.login("ct-code-user2")
+	status, m = e.doJSON("GET", "/me/visible-repos", other, nil)
+	if status != 200 {
+		t.Fatalf("GET other %d", status)
+	}
+	ctMatch(t, "other", ctFixture(t, "visible-repos-default.json"), m)
+}
+
+// CT-42: E17~E20 원격 CLI 로그인 코드·세션 목록·폐기
+func TestCT42_CLILoginAndSessions(t *testing.T) {
+	e := ctNewEnv(t)
+	desktop, _ := e.login("ct-code-ok")
+
+	status, m := e.doJSON("POST", "/me/cli-codes", desktop, nil)
+	if status != 200 {
+		t.Fatalf("issue %d %v", status, m)
+	}
+	ctMatch(t, "code", ctFixture(t, "cli-code.json"), m)
+	code, _ := m["code"].(string)
+	if !regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$`).MatchString(code) {
+		t.Errorf("code format %q", code)
+	}
+	status, m = e.doJSON("POST", "/me/cli-codes", "", nil)
+	ctExpectError(t, status, m, 401, "unauthorized", "")
+
+	// 교환: 무인증, 소문자·하이픈 없이도 받는다
+	e.now = e.now.Add(time.Second)
+	status, m = e.doJSON("POST", "/auth/cli/exchange", "", map[string]any{"code": strings.ToLower(strings.ReplaceAll(code, "-", "")), "label": " devbox "})
+	if status != 200 {
+		t.Fatalf("exchange %d %v", status, m)
+	}
+	ctMatch(t, "exchange", ctFixture(t, "cli-exchange.json"), m)
+	cli, _ := m["session"].(string)
+	// 1회용
+	status, m = e.doJSON("POST", "/auth/cli/exchange", "", map[string]any{"code": code})
+	ctExpectError(t, status, m, 400, "invalid_cli_code", "")
+	status, m = e.doJSON("POST", "/auth/cli/exchange", "", map[string]any{})
+	ctExpectError(t, status, m, 400, "invalid_json", "code")
+
+	// CLI 세션으로 같은 사용자 API 사용 가능
+	if status, m = e.doJSON("GET", "/me", cli, nil); status != 200 {
+		t.Fatalf("me via cli %d %v", status, m)
+	}
+	status, m = e.doJSON("GET", "/me/sessions", cli, nil)
+	if status != 200 {
+		t.Fatalf("sessions %d %v", status, m)
+	}
+	ctMatch(t, "sessions", ctFixture(t, "sessions.json"), m)
+
+	// 데스크탑에서 CLI 세션 폐기 → CLI 는 401, 없는 id 는 404
+	list, _ := m["sessions"].([]any)
+	cliID, _ := list[0].(map[string]any)["id"].(string)
+	if status, _ := e.doJSON("DELETE", "/me/sessions/"+cliID, desktop, nil); status != 204 {
+		t.Fatalf("revoke %d", status)
+	}
+	status, m = e.doJSON("GET", "/me", cli, nil)
+	ctExpectError(t, status, m, 401, "unauthorized", "")
+	status, m = e.doJSON("DELETE", "/me/sessions/"+cliID, desktop, nil)
+	ctExpectError(t, status, m, 404, "not_found", "")
+
+	// 다른 사용자의 세션은 폐기할 수 없다
+	other, _ := e.login("ct-code-user2")
+	_, m = e.doJSON("GET", "/me/sessions", desktop, nil)
+	desktopID := m["sessions"].([]any)[0].(map[string]any)["id"].(string)
+	status, m = e.doJSON("DELETE", "/me/sessions/"+desktopID, other, nil)
+	ctExpectError(t, status, m, 404, "not_found", "")
 }

@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 
 import type { ApiClient, Platform } from '@minmo/api-client'
 
-import type { GitHubClient } from '../lib/github'
+import type { GitHubClient } from '@minmo/core'
 import type { TauriApi } from '../lib/tauri'
 
 export interface AppDeps {

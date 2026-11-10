@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { Workspace } from '../../app/Workspace'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import type { TauriApi } from '../../lib/tauri'
-import { worktreeId } from '../../lib/worktree'
+import { worktreeId } from '@minmo/core'
 import { useSessionStore } from '../../store/session'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
@@ -26,6 +26,7 @@ const SCOPE_EMPTY = {
   mainClonePath: null,
   postCreateScript: null,
   sparsePaths: null,
+  postCreateScriptPosix: null,
   updatedAt: null,
 }
 const GLOBAL = {
@@ -35,6 +36,7 @@ const GLOBAL = {
   mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main',
   postCreateScript: '',
   sparsePaths: '',
+  postCreateScriptPosix: '',
   updatedAt: '2026-11-09T00:00:00.000Z',
 }
 
