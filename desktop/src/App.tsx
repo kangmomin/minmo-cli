@@ -10,6 +10,7 @@ import { TooltipProvider } from './components/ui/tooltip'
 import { LoginPage } from './features/auth/LoginPage'
 import { useAuth, useAuthController } from './features/auth/useAuth'
 import { WorktreeProvider } from './features/issue/useWorktree'
+import { useApplyTheme } from './lib/theme'
 
 export type Route = '/login' | '/'
 
@@ -51,6 +52,7 @@ export function App() {
   const [queryClient] = useState(createAppQueryClient)
   const [deps, setDeps] = useState<AppDeps | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
+  useApplyTheme()
 
   useEffect(() => {
     let cancelled = false

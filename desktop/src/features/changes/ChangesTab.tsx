@@ -150,7 +150,7 @@ export function ChangesTab({ target }: ChangesTabProps) {
 
       {/* 성공은 polite(status) — 컨테이너를 항상 두어야 스크린 리더가 내용 변화를 읽는다. 실패는 즉시(alert) */}
       <div role="status" className="empty:sr-only">
-        {feedback?.kind === 'ok' && <div className="rounded bg-emerald-50 p-2 text-sm text-emerald-800">{feedback.text}</div>}
+        {feedback?.kind === 'ok' && <div className="rounded bg-emerald-50 p-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">{feedback.text}</div>}
       </div>
       {feedback?.kind === 'error' && (
         <div role="alert" className="rounded bg-destructive/10 p-2 text-sm text-destructive">

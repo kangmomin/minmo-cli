@@ -1,6 +1,7 @@
 import { LogInIcon, Loader2Icon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { ThemeToggle } from '../../components/ThemeToggle'
 import { Button } from '../../components/ui/button'
 import { useSessionStore } from '../../store/session'
 import { useAuth } from './useAuth'
@@ -23,7 +24,10 @@ export function LoginPage() {
   const timedOut = pending !== null && now - pending.startedAt > LOGIN_WAIT_TIMEOUT_MS
 
   return (
-    <div className="flex h-full items-center justify-center bg-muted/40" data-testid="login-page">
+    <div className="relative flex h-full items-center justify-center bg-muted/40" data-testid="login-page">
+      <div className="absolute top-2 right-2">
+        <ThemeToggle />
+      </div>
       <div className="grid w-full max-w-sm gap-4 rounded-lg border bg-background p-8 shadow-sm">
         <div>
           <h1 className="text-xl font-semibold">minmo</h1>
@@ -31,7 +35,7 @@ export function LoginPage() {
         </div>
 
         {auth.notice && (
-          <div className="flex items-start gap-2 rounded bg-amber-100 p-2 text-sm text-amber-950" role="status">
+          <div className="flex items-start gap-2 rounded bg-amber-100 p-2 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-100" role="status">
             <span className="flex-1">{auth.notice}</span>
             <button type="button" className="text-xs underline" onClick={() => setNotice(null)}>
               닫기

@@ -45,7 +45,7 @@ export function OfflineBanner() {
   return (
     <div role="status">
       {status === 'offline' && (
-        <div data-testid="offline-banner" className="flex items-center gap-3 border-t bg-amber-100 px-4 py-2 text-sm text-amber-950">
+        <div data-testid="offline-banner" className="flex items-center gap-3 border-t bg-amber-100 px-4 py-2 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-100">
           <WifiOffIcon className="size-4" aria-hidden="true" />
           <span className="flex-1">서버에 연결할 수 없습니다 — 메모·설정 편집이 비활성화되고 마지막으로 불러온 내용을 표시합니다.</span>
           <Button size="sm" variant="outline" onClick={() => void check()} disabled={checking}>

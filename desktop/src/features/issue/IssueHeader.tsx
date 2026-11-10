@@ -39,7 +39,7 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
             {state.path}
           </span>
           {state.pathChanged && (
-            <Badge variant="outline" className="border-amber-500 text-amber-700">
+            <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-400">
               경로 변경됨
             </Badge>
           )}

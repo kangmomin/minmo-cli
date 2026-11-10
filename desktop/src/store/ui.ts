@@ -4,6 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 import type { WorktreeEntry, WorktreePathStore } from '../lib/worktree'
 
 export type WorkTab = 'terminal' | 'changes' | 'notes'
+export type Theme = 'black' | 'light'
 
 export interface UiState {
   expanded: Record<string, boolean>
@@ -12,12 +13,14 @@ export interface UiState {
   /** EC-24: worktreeId(owner,repo,key) → 생성 당시 {path, branch} (persist) */
   worktreePathMap: Record<string, WorktreeEntry>
   terminalIds: Record<string, string>
+  theme: Theme
 
   setExpanded(id: string, v: boolean): void
   selectIssue(id: string | null): void
   setTab(t: WorkTab): void
   setWorktree(id: string, e: WorktreeEntry): void
   removeWorktree(id: string): void
+  setTheme(t: Theme): void
 }
 
 export const useUiStore = create<UiState>()(
@@ -28,6 +31,7 @@ export const useUiStore = create<UiState>()(
       tab: 'terminal',
       worktreePathMap: {},
       terminalIds: {},
+      theme: 'black',
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
       selectIssue: (selectedIssueId) => set({ selectedIssueId }),
       setTab: (tab) => set({ tab }),
@@ -40,6 +44,7 @@ export const useUiStore = create<UiState>()(
           delete terminalIds[id]
           return { worktreePathMap, terminalIds }
         }),
+      setTheme: (theme) => set({ theme }),
     }),
     {
       name: 'minmo-ui',
@@ -50,6 +55,7 @@ export const useUiStore = create<UiState>()(
         selectedIssueId: s.selectedIssueId,
         tab: s.tab,
         worktreePathMap: s.worktreePathMap,
+        theme: s.theme,
       }),
     },
   ),

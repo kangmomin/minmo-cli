@@ -3,6 +3,7 @@ import { useState } from 'react'
 
 import type { SettingsScope } from '@minmo/api-client'
 
+import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useAuth } from '../features/auth/useAuth'
@@ -36,6 +37,7 @@ export function Workspace() {
         <span className="font-semibold">minmo</span>
         <span className="flex-1" />
         {auth.me && <span className="text-sm text-muted-foreground">{auth.me.githubLogin}</span>}
+        <ThemeToggle />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -55,7 +57,7 @@ export function Workspace() {
       </header>
 
       {notice && (
-        <div className="flex items-center gap-2 bg-amber-100 px-4 py-1.5 text-sm text-amber-950" role="status">
+        <div className="flex items-center gap-2 bg-amber-100 px-4 py-1.5 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-100" role="status">
           <span className="flex-1">{notice}</span>
           <button type="button" className="text-xs underline" onClick={() => setNotice(null)}>
             닫기
