@@ -41,6 +41,8 @@ const runes = (s: string) => Array.from(s).length
 const bytes = (s: string) => new TextEncoder().encode(s).length
 // Go unicode.IsControl 과 같은 범위(C0·DEL·C1)
 const CONTROL = /\p{Cc}/u
+// Go strings.TrimSpace — JS trim() 은 U+FEFF 를 지우고 U+0085 를 남겨 서버와 어긋난다
+const trimSpace = (s: string) => s.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
 
 /** `{name}` 토큰 목록. 닫히지 않은 `{` 가 있으면 null(홀로 닫는 `}` 는 허용 — 서버와 같다) */
 function parseTokens(s: string): string[] | null {
@@ -94,7 +96,7 @@ function checkSparsePaths(v: string): SettingErrorCode | null {
   const lines = v.split('\n')
   if (lines.length > MAX_SPARSE_LINES) return 'invalid_sparse_paths'
   for (const line of lines) {
-    const p = line.trim()
+    const p = trimSpace(line)
     if (p === '') continue
     if (/^[/!#-]/.test(p) || /[\\:*?[\]]/.test(p)) return 'invalid_sparse_paths'
     for (const seg of p.replace(/\/$/, '').split('/')) {

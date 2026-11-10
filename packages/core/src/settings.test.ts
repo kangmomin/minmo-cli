@@ -29,6 +29,9 @@ describe('validateSettingValue (서버 규칙과 동일)', () => {
     ['leading slash', '/{number}', false],
     ['trailing .lock', '{number}.lock', false],
     ['101 runes', '{number}' + 'a'.repeat(93), false],
+    // Go IsSpace·IsControl 과 같은 범위: C1 제어문자는 거부, U+FEFF 는 허용
+    ['C1 control', 'issue/{number}\u0085', false],
+    ['BOM', 'issue/{number}\u{feff}x', true],
   ])
 
   table('etcBranchName', 'invalid_template', [
@@ -94,6 +97,9 @@ describe('validateSettingValue (서버 규칙과 동일)', () => {
     ['101 lines', 'a\n'.repeat(100) + 'a', false],
     ['4097 bytes', 'a'.repeat(4097), false],
     ['control char', 'a\u0085b', false],
+    // Go TrimSpace 와 같은 공백 범위: U+0085 는 지우고 U+FEFF 는 남긴다
+    ['NEL 은 앞뒤 공백', '\u0085a', true],
+    ['BOM 은 공백 아님(안의 탭은 제어문자)', '\u{feff}\t\u{feff}', false],
   ])
 
   it('기본값은 모두 통과한다', () => {

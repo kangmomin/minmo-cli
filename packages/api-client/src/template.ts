@@ -28,9 +28,9 @@ export class TemplateError extends Error {
   }
 }
 
-// 서버 ref 규칙표: 공백·제어문자·`~^:?*[\` 금지
-// eslint-disable-next-line no-control-regex
-const REF_FORBIDDEN_CHAR = /[\s\x00-\x1f\x7f~^:?*[\\]/
+// 서버 ref 규칙표: 공백·제어문자·`~^:?*[\` 금지 — Go unicode.IsSpace(=White_Space)·IsControl(=Cc)과 같은 범위
+// (JS \s 는 U+FEFF 를 포함하고 C1 제어문자를 빼서 서버와 어긋난다)
+const REF_FORBIDDEN_CHAR = /[\p{White_Space}\p{Cc}~^:?*[\\]/u
 // eslint-disable-next-line no-control-regex
 const REF_FORBIDDEN_CHARS_G = /[\x00-\x1f\x7f~^:?*[\\]/g
 
