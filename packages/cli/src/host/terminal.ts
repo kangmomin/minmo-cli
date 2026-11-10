@@ -11,11 +11,22 @@ export type TerminalDeps = {
   spawn?: typeof spawnSync
 }
 
-/** pwsh(PowerShell 7) 가 있으면 그것, 없으면 Windows 기본 powershell.exe */
-export function windowsShell(spawn: typeof spawnSync = spawnSync): string {
+let shellCache: string | null = null
+
+/** pwsh(PowerShell 7) 가 있으면 그것, 없으면 Windows 기본 powershell.exe — 한 번만 확인한다 */
+export function windowsShell(spawn: typeof spawnSync = spawnSync, cache = true): string {
+  if (cache && shellCache) return shellCache
   const r = spawn('pwsh', ['-NoLogo', '-NoProfile', '-Command', 'exit 0'], { stdio: 'ignore', windowsHide: true })
-  return r.status === 0 ? 'pwsh' : 'powershell.exe'
+  const shell = r.status === 0 ? 'pwsh' : 'powershell.exe'
+  if (cache) shellCache = shell
+  return shell
 }
+
+/**
+ * 셸 인자 — 경로를 명령줄에 남긴다. PowerShell 의 cd 는 프로세스 cwd 를 바꾸지 않아 셸이 폴더를 계속 잡고 있으므로,
+ * worktree 를 지울 때 명령줄로 이 셸을 찾아(win.ts) 정리하거나, 이 셸 안에서 지우려 하면 막을 수 있게 한다.
+ */
+export const windowsShellArgs = (path: string) => ['-NoLogo', '-NoExit', '-Command', `Set-Location -LiteralPath '${path.replace(/'/g, "''")}'`]
 
 export async function terminalAvailable(platform: NodeJS.Platform = process.platform): Promise<boolean> {
   return platform === 'win32' ? true : tmuxAvailable()
@@ -30,7 +41,15 @@ export async function openTerminal(path: string, title: string, d: TerminalDeps 
   const env = d.env ?? process.env
   const spawn = d.spawn ?? spawnSync
   if (platform !== 'win32') return attach(await ensureSession(path, title), env)
-  // 터미널 안의 프로세스가 어느 worktree 소속인지 알 수 있게 남긴다
-  const r = spawn(windowsShell(spawn), ['-NoLogo'], { cwd: path, stdio: 'inherit', env: { ...env, MINMO_WORKTREE: path } })
-  return r.status ?? 1
+  // 같은 콘솔이라 셸 안에서 Ctrl+C(예: npm run dev 멈추기)를 누르면 minmo 에도 전달된다 — 그동안 무시해 TUI 가 살아 있게
+  const ignore = () => {}
+  process.on('SIGINT', ignore)
+  try {
+    // 주입된 spawn(테스트)으로는 결과를 캐시하지 않는다
+    const r = spawn(windowsShell(spawn, d.spawn === undefined), windowsShellArgs(path), { cwd: path, stdio: 'inherit', env: { ...env, MINMO_WORKTREE: path } })
+    if (r.error) throw new Error(`터미널을 열 수 없습니다: ${r.error.message}`)
+    return r.status ?? 1
+  } finally {
+    process.off('SIGINT', ignore)
+  }
 }

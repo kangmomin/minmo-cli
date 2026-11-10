@@ -1,25 +1,42 @@
-// 자식 프로세스 실행과 프로세스 트리 정리(Linux·macOS).
+// 자식 프로세스 실행과 프로세스 트리 정리(트리·/proc 은 Linux·macOS, Windows 는 win.ts).
 import { spawn } from 'node:child_process'
 import { readFile, readdir, readlink, stat } from 'node:fs/promises'
 
 import type { CmdResult } from '@minmo/core'
 
-/** 명령을 셸 없이 실행한다. 0 이 아닌 종료도 reject 하지 않고 code 로 돌려준다(없는 명령은 127) */
-export function run(cmd: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv; stdin?: string } = {}): Promise<CmdResult> {
+export type RunOptions = { cwd?: string; env?: NodeJS.ProcessEnv; stdin?: string; /** 넘으면 끝내고 code 124 */ timeoutMs?: number }
+
+/** 명령을 셸 없이 실행한다. 0 이 아닌 종료도 reject 하지 않고 code 로 돌려준다(없는 명령은 127, 시간 초과는 124) */
+export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise<CmdResult> {
   return new Promise((resolve) => {
     let child
     try {
-      child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: [opts.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] })
+      child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: [opts.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], windowsHide: true })
     } catch (e) {
       resolve({ code: 127, stdout: '', stderr: e instanceof Error ? e.message : String(e) })
       return
     }
     const out: Buffer[] = []
     const err: Buffer[] = []
+    let timedOut = false
+    const timer =
+      opts.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true
+            child.kill()
+          }, opts.timeoutMs)
     child.stdout?.on('data', (c: Buffer) => out.push(c))
     child.stderr?.on('data', (c: Buffer) => err.push(c))
-    child.on('error', (e) => resolve({ code: 127, stdout: '', stderr: e.message }))
-    child.on('close', (code) => resolve({ code: code ?? 1, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') }))
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      resolve({ code: 127, stdout: '', stderr: e.message })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      const stderr = Buffer.concat(err).toString('utf8')
+      resolve(timedOut ? { code: 124, stdout: '', stderr: `시간 초과(${opts.timeoutMs}ms) ${stderr}`.trim() } : { code: code ?? 1, stdout: Buffer.concat(out).toString('utf8'), stderr })
+    })
     if (opts.stdin !== undefined) child.stdin?.end(opts.stdin)
   })
 }

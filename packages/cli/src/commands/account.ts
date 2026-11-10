@@ -8,6 +8,7 @@ import { CliError, GITHUB_AUTH_REQUIRED, requireLogin, serverErrorMessage } from
 import type { Ctx } from '../context'
 import { run } from '../host/proc'
 import { tmuxAvailable } from '../host/tmux'
+import { listProcesses } from '../host/win'
 import { WINDOWS_SERVER_HINT, describeServer } from '../server'
 import { clearCredentials, saveCredentials } from '../store'
 import { MODE_LABEL, describeCopy } from './mode'
@@ -140,6 +141,9 @@ export async function doctor(ctx: Ctx): Promise<void> {
     // 터미널·생성 후 스크립트가 PowerShell 을 쓴다(세션 유지는 없다 — 필요하면 WSL 의 Linux 버전)
     const ps = (await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'])).stdout.trim()
     add(ps !== '', ps ? `PowerShell ${ps}` : 'PowerShell 없음', ps ? undefined : '터미널(`minmo open`, TUI 의 t)과 생성 후 스크립트에 PowerShell 이 필요합니다')
+    // worktree 삭제 전 정리가 프로세스 목록(WMI)을 쓴다 — 읽지 못하면 삭제가 실패한다
+    const procs = await listProcesses().then((l) => l.length, (e: unknown) => (e instanceof Error ? e.message : String(e)))
+    add(typeof procs === 'number', typeof procs === 'number' ? `프로세스 목록(WMI) ${procs}개` : `프로세스 목록을 읽을 수 없음: ${procs}`, typeof procs === 'number' ? undefined : 'worktree 삭제 전 정리에 필요합니다 — PowerShell 의 Get-CimInstance 가 동작하는지 확인하세요')
   } else {
     const tmux = await tmuxAvailable()
     add(tmux, tmux ? 'tmux 있음' : 'tmux 없음', tmux ? undefined : '터미널(`minmo open`, TUI 의 t)에 tmux 가 필요합니다')

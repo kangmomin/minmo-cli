@@ -25,7 +25,7 @@ export function describeServer(t: ServerTarget): string {
 }
 
 export const WINDOWS_SERVER_HINT =
-  'Windows 에서는 MINMO_SERVER 로 서버 주소를 정하세요 — 같은 PC: MINMO_SERVER=http://127.0.0.1:8787 · 원격: ~/.ssh/config 에 RemoteForward 127.0.0.1:18787 127.0.0.1:8787 후 MINMO_SERVER=http://127.0.0.1:18787'
+  'Windows 에서는 MINMO_SERVER 로 서버 주소를 정하세요 — 같은 PC: MINMO_SERVER=http://127.0.0.1:8787 · 원격: ~/.ssh/config 에 RemoteForward 127.0.0.1:18787 127.0.0.1:8787 + ExitOnForwardFailure yes 후 MINMO_SERVER=http://127.0.0.1:18787'
 
 /** Unix 소켓으로 보내는 fetch — api-client 가 쓰는 범위(method·headers·문자열 body)만 지원한다 */
 export function socketFetch(socketPath: string): typeof fetch {

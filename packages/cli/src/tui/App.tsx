@@ -7,7 +7,7 @@ import { ApiError } from '@minmo/api-client'
 import { isOwnerAllSelected, toggleOwnerAll, toggleRepo, worktreeId } from '@minmo/core'
 import type { GitHubRepo, IssueTarget, RepoSelection, SetupLogEvent } from '@minmo/core'
 
-import { loadSelection } from '../commands/issues'
+import { cleanupLines, loadSelection } from '../commands/issues'
 import { SOURCE_LABEL } from '../backend'
 import { serverErrorMessage } from '../context'
 import type { Ctx } from '../context'
@@ -293,7 +293,7 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
               try {
                 await ctx.worktree.deleteWorktree(t, { confirmed: true })
                 syncWorktrees()
-                setMessage(`삭제했습니다: #${t.key}`)
+                setMessage([`삭제했습니다: #${t.key}`, ...cleanupLines(ctx)].join(' · '))
               } catch (e) {
                 setMessage(errText(e, ctx))
               }

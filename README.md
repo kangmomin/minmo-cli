@@ -239,12 +239,12 @@ CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인�
 |---|---|---|
 | 터미널(`minmo open`, TUI `t`) | 전용 tmux 세션 — 접속이 끊겨도 유지, detach 로 돌아옴 | worktree 에서 새 PowerShell — `exit` 로 돌아옴, **세션 유지 없음**(SSH 가 끊기면 함께 끝남) |
 | 생성 후 스크립트 | `postCreateScriptPosix`(sh) | `postCreateScript`(PowerShell, 데스크탑과 같은 실행기) |
-| worktree 삭제 때 정리 | tmux 세션 프로세스 트리 + (Linux) cwd 가 그 안인 프로세스 | 실행 경로·명령줄에 worktree 경로가 들어간 프로세스 트리(`taskkill /T /F`). 경로가 명령줄에 없는 고아는 놓칠 수 있다 — 그때는 삭제가 "사용 중" 으로 실패한다 |
-| 서버 모드 연결 | 역터널 Unix 소켓 `~/.minmo/server.sock` | **`MINMO_SERVER` 필수**(Node 가 Unix 소켓 파일에 붙지 못한다). 같은 PC: `MINMO_SERVER=http://127.0.0.1:8787` · 원격: `RemoteForward 127.0.0.1:18787 127.0.0.1:8787` 후 `MINMO_SERVER=http://127.0.0.1:18787` |
+| worktree 삭제 때 정리 | tmux 세션 프로세스 트리 + (Linux) cwd 가 그 안인 프로세스 | 실행 경로·명령줄에 worktree 경로가 들어간 프로세스 트리(`taskkill /T /F`, minmo 가 연 터미널 포함). **창이 있는 프로그램(VS Code·IDE·편집기)과 다른 Windows 세션의 프로세스는 끝내지 않고** "직접 닫으세요" 로 알린다. 그 뒤에도 폴더를 쓰는 프로그램이 있으면 git 이 지우기 전에 멈춘다(내용만 지워진 채 남지 않게) |
+| 서버 모드 연결 | 역터널 Unix 소켓 `~/.minmo/server.sock` | **`MINMO_SERVER` 필수**(Node 가 Unix 소켓 파일에 붙지 못한다). 같은 PC: `MINMO_SERVER=http://127.0.0.1:8787` · 원격: `RemoteForward 127.0.0.1:18787 127.0.0.1:8787` + `ExitOnForwardFailure yes` 후 `MINMO_SERVER=http://127.0.0.1:18787` |
 | 설정 폴더 | `~/.config/minmo` | `%APPDATA%\minmo` |
-| 기본 편집기(`minmo note`) | `vi` | `notepad`(`EDITOR` 로 바꿈) |
+| 기본 편집기(`minmo note`) | `vi` | 메모장을 열고 저장한 뒤 Enter(`EDITOR` 로 바꿈, 예: `code --wait`) |
 
-- TCP 역터널 포트는 그 PC 의 다른 사용자도 접근할 수 있다. CLI 는 연결한 서버의 계정이 로그인한 계정과 같은지 확인하지만, 여러 사람이 쓰는 PC 라면 로컬 모드나 WSL 의 Linux 버전을 쓴다.
+- TCP 역터널 포트는 그 PC 의 다른 사용자도 열 수 있다. 다른 사용자가 먼저 포트를 열어 두면 CLI 가 세션 토큰을 그쪽에 보내고, 그쪽이 돌려준 설정(생성 후 스크립트 포함)을 실행할 수 있다 — CLI 의 계정 확인은 서버를 인증하지 못한다. `ExitOnForwardFailure yes` 로 포트를 열지 못하면 접속을 끊게 하고, 여러 사람이 쓰는 PC 라면 로컬 모드나 WSL 의 Linux 버전(Unix 소켓)을 쓴다.
 - 접속이 끊겨도 터미널·에이전트가 살아 있어야 하면 WSL(Ubuntu)에 Linux 버전을 설치해 tmux 로 쓴다.
 - 지우려는 worktree 안(cwd)이나 그 안의 프로세스가 띄운 셸에서 `minmo rm` 하면 시작 전에 막는다(Windows 는 사용 중인 폴더를 지울 수 없다).
 

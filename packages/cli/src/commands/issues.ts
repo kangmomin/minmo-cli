@@ -1,5 +1,5 @@
 // 트리 조회·이슈 열기·worktree 삭제·메모
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, rm as rmFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -147,6 +147,14 @@ export async function removeWorktree(ctx: Ctx, target: IssueTarget, opts: { yes?
     res = await del(true)
   }
   if (res.status === 'deleted') ctx.out.log(`삭제했습니다: ${target.owner}/${target.repo}#${target.key} (터미널·프로세스 정리 포함)`)
+  for (const l of cleanupLines(ctx)) ctx.out.log(`  ${l}`)
+}
+
+/** Windows: 삭제 전 정리에서 끝낸 프로세스·그대로 둔 창(직접 닫아야 함) — 다른 OS 는 빈 목록 */
+export function cleanupLines(ctx: Ctx): string[] {
+  const r = ctx.host.takeCleanupReport?.()
+  if (!r) return []
+  return [r.killed.length ? `정리한 프로세스: ${r.killed.join(', ')}` : '', r.skipped.length ? `열린 창은 그대로 뒀습니다(직접 닫으세요): ${r.skipped.join(', ')}` : ''].filter(Boolean)
 }
 
 export async function rm(ctx: Ctx, refText: string, opts: { yes?: boolean }): Promise<void> {
@@ -165,12 +173,24 @@ export function editInEditor(initial: string, env: NodeJS.ProcessEnv = process.e
     const file = join(dir, 'note.md')
     try {
       await writeFile(file, initial)
-      const editor = env.VISUAL || env.EDITOR || (process.platform === 'win32' ? 'notepad' : 'vi')
+      const editor = env.VISUAL || env.EDITOR
+      if (!editor && process.platform === 'win32') {
+        // Windows 11 메모장은 창을 넘기고 바로 끝나기도 해서 끝날 때까지 기다릴 수 없다 — 저장했다고 알려 줄 때까지 기다린다
+        spawn('notepad.exe', [file], { detached: true, stdio: 'ignore' }).unref()
+        const rl = createInterface({ input: process.stdin, output: process.stdout })
+        try {
+          await rl.question('메모장에서 저장한 뒤 Enter 를 누르세요(다른 편집기는 EDITOR 환경 변수) ')
+        } finally {
+          rl.close()
+        }
+        return await readFile(file, 'utf8')
+      }
+      const cmd = editor || 'vi'
       // "code --wait" 처럼 인자가 붙은 편집기는 셸로 실행하고, 파일 경로는 따옴표로 감싼다
-      const r = /\s/.test(editor)
-        ? spawnSync(`${editor} ${JSON.stringify(file)}`, { stdio: 'inherit', shell: true })
-        : spawnSync(editor, [file], { stdio: 'inherit' })
-      if (r.status !== 0) throw new CliError(`편집기가 오류로 끝났습니다: ${editor}`)
+      const r = /\s/.test(cmd)
+        ? spawnSync(`${cmd} ${JSON.stringify(file)}`, { stdio: 'inherit', shell: true })
+        : spawnSync(cmd, [file], { stdio: 'inherit' })
+      if (r.status !== 0) throw new CliError(`편집기가 오류로 끝났습니다: ${cmd}`)
       return await readFile(file, 'utf8')
     } finally {
       await rmFile(dir, { recursive: true, force: true })
