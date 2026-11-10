@@ -146,7 +146,8 @@ function SessionsSection(props: { uid: string; setStatus(s: string): void; setEr
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.sessions }),
   })
 
-  const name = (s: SessionInfo) => s.label ?? (s.kind === 'cli' ? '원격 CLI' : '데스크탑')
+  // 데스크탑 세션은 이름이 없어 종류 배지와 겹치지 않게 로그인 날짜로 구분한다
+  const name = (s: SessionInfo) => s.label ?? `${new Date(s.createdAt).toLocaleDateString()} 로그인`
 
   async function onRevoke(s: SessionInfo) {
     props.setError(null)
