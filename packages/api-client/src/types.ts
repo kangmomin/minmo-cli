@@ -21,6 +21,12 @@ export type NotesInput = { body: string; baseUpdatedAt?: string | null }
 /** v2.7: 보일 저장소. repos null = 전체 표시, 원소는 소문자 "owner/repo" 또는 "owner/*" */
 export type VisibleRepos = { repos: string[] | null; updatedAt: string | null }
 export type VisibleReposInput = { repos: string[] | null; baseUpdatedAt?: string | null }
+/** v2.7: 원격 CLI 1회용 로그인 코드(10분) */
+export type CliCode = { code: string; expiresAt: string }
+export type CliExchange = { session: string }
+export type SessionKind = 'desktop' | 'cli'
+export type SessionInfo = { id: string; kind: SessionKind; label: string | null; createdAt: string; lastUsedAt: string | null; current: boolean }
+export type Sessions = { sessions: SessionInfo[] }
 export type ErrorCode =
   | 'unauthorized'
   | 'not_found'
@@ -41,6 +47,7 @@ export type ErrorCode =
   | 'script_too_large'
   | 'invalid_sparse_paths'
   | 'invalid_visible_repos'
+  | 'invalid_cli_code'
   | 'invalid_issue_key'
   | 'body_too_large'
   | 'invalid_base_updated_at'

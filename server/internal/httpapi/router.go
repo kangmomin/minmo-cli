@@ -33,7 +33,9 @@ type api struct {
 	db     *sql.DB
 	now    func() time.Time
 	states *auth.StateStore
-	gh     *auth.GitHubClient
+	// cliCodes 는 데스크탑이 발급한 원격 CLI 1회용 로그인 코드다
+	cliCodes *auth.CLICodeStore
+	gh       *auth.GitHubClient
 }
 
 // NewHandler 는 라우터와 미들웨어 체인을 조립한다. now 는 시각 주입(테스트용, nil 이면 time.Now).
@@ -48,10 +50,11 @@ func NewHandler(cfg Config, db *sql.DB, now func() time.Time) http.Handler {
 		httpClient = &http.Client{Timeout: defaultGitHubTimeout}
 	}
 	a := &api{
-		cfg:    cfg,
-		db:     db,
-		now:    now,
-		states: auth.NewStateStore(now),
+		cfg:      cfg,
+		db:       db,
+		now:      now,
+		states:   auth.NewStateStore(now),
+		cliCodes: auth.NewCLICodeStore(now),
 		gh: &auth.GitHubClient{
 			OAuthBase:    strings.TrimRight(cfg.GitHubOAuthBase, "/"),
 			APIBase:      strings.TrimRight(cfg.GitHubAPIBase, "/"),
@@ -84,6 +87,11 @@ func NewHandler(cfg Config, db *sql.DB, now func() time.Time) http.Handler {
 
 	mux.HandleFunc("GET /me/visible-repos", a.authed(a.getVisibleRepos))
 	mux.HandleFunc("PUT /me/visible-repos", a.authed(a.putVisibleRepos))
+
+	mux.HandleFunc("POST /me/cli-codes", a.authed(a.issueCLICode))
+	mux.HandleFunc("POST /auth/cli/exchange", a.exchangeCLICode)
+	mux.HandleFunc("GET /me/sessions", a.authed(a.listSessions))
+	mux.HandleFunc("DELETE /me/sessions/{id}", a.authed(a.revokeSession))
 
 	var h http.Handler = jsonFallback(mux)
 	h = cors(cfg.CORSOrigins, h)

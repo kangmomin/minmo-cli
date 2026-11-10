@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { ApiError, createApiClient } from './index'
-import type { Effective, Me, Notes, SettingsInput, SettingsRecord, VisibleRepos } from './index'
+import type { CliCode, CliExchange, Effective, Me, Notes, Sessions, SettingsInput, SettingsRecord, VisibleRepos } from './index'
 
 const FIXTURES = resolve(__dirname, '../../../contracts/fixtures')
 const fx = <T = unknown>(name: string): T => JSON.parse(readFileSync(resolve(FIXTURES, name), 'utf8')) as T
@@ -51,7 +51,10 @@ const _eff: Effective = fx<Effective>('effective-project-override.json')
 const _notes: Notes = fx<Notes>('notes-empty.json')
 const _vrDefault: VisibleRepos = fx<VisibleRepos>('visible-repos-default.json')
 const _vrSaved: VisibleRepos = fx<VisibleRepos>('visible-repos-saved.json')
-void [_me, _global, _empty, _eff, _notes, _vrDefault, _vrSaved]
+const _cliCode: CliCode = fx<CliCode>('cli-code.json')
+const _cliEx: CliExchange = fx<CliExchange>('cli-exchange.json')
+const _sessions: Sessions = fx<Sessions>('sessions.json')
+void [_me, _global, _empty, _eff, _notes, _vrDefault, _vrSaved, _cliCode, _cliEx, _sessions]
 
 describe('contract: 성공 응답 ↔ fixture (CT-05, 07, 09, 13, 14, 22)', () => {
   it('GET /me → Me (CT-05)', async () => {
@@ -281,5 +284,32 @@ describe('contract: 보일 저장소 (E15/E16, CT-41)', () => {
     ;({ api } = client(() => json(409, { error: 'conflict' })))
     err = (await api.putVisibleRepos({ repos: [], baseUpdatedAt: '2026-11-10T00:00:00.000Z' }).catch((e: unknown) => e)) as ApiError
     expect(err).toMatchObject({ status: 409, code: 'conflict' })
+  })
+})
+
+describe('contract: 원격 CLI 로그인·세션 (E17~E20, CT-42)', () => {
+  it('코드 발급(인증) → 교환(무인증, code·label) → 세션 목록 → 폐기(204)', async () => {
+    const responses = [json(200, fx('cli-code.json')), json(200, fx('cli-exchange.json')), json(200, fx('sessions.json')), new Response(null, { status: 204 })]
+    const { api, calls } = client(() => responses.shift()!)
+    await expect(api.issueCliCode()).resolves.toEqual(fx('cli-code.json'))
+    await expect(api.exchangeCliCode('abcd-efgh', 'devbox')).resolves.toEqual(fx('cli-exchange.json'))
+    await expect(api.listSessions()).resolves.toEqual(fx('sessions.json'))
+    await expect(api.revokeSession('id/1')).resolves.toBeUndefined()
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `POST ${BASE}/me/cli-codes`,
+      `POST ${BASE}/auth/cli/exchange`,
+      `GET ${BASE}/me/sessions`,
+      `DELETE ${BASE}/me/sessions/id%2F1`,
+    ])
+    expect(calls[0].headers.authorization).toBe('Bearer tok')
+    expect(calls[1].headers.authorization).toBeUndefined()
+    expect(JSON.parse(calls[1].body ?? '{}')).toEqual({ code: 'abcd-efgh', label: 'devbox' })
+  })
+
+  it('400 invalid_cli_code', async () => {
+    const errors = fx<Record<string, { error: string }>>('errors.json')
+    const { api } = client(() => json(400, errors.invalid_cli_code))
+    const err = (await api.exchangeCliCode('x', 'h').catch((e: unknown) => e)) as ApiError
+    expect(err).toMatchObject({ status: 400, code: 'invalid_cli_code' })
   })
 })

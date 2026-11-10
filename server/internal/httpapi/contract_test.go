@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -278,6 +279,15 @@ func ctMatch(t *testing.T, path string, want, got any) {
 			if _, ok := w[k]; !ok {
 				t.Errorf("%s.%s: unexpected field", path, k)
 			}
+		}
+	case []any:
+		g, ok := got.([]any)
+		if !ok || len(g) != len(w) {
+			t.Errorf("%s: want array of %d, got %v", path, len(w), got)
+			return
+		}
+		for i := range w {
+			ctMatch(t, fmt.Sprintf("%s[%d]", path, i), w[i], g[i])
 		}
 	case nil:
 		if got != nil {
@@ -885,4 +895,64 @@ func TestCT41_VisibleRepos(t *testing.T) {
 		t.Fatalf("GET other %d", status)
 	}
 	ctMatch(t, "other", ctFixture(t, "visible-repos-default.json"), m)
+}
+
+// CT-42: E17~E20 원격 CLI 로그인 코드·세션 목록·폐기
+func TestCT42_CLILoginAndSessions(t *testing.T) {
+	e := ctNewEnv(t)
+	desktop, _ := e.login("ct-code-ok")
+
+	status, m := e.doJSON("POST", "/me/cli-codes", desktop, nil)
+	if status != 200 {
+		t.Fatalf("issue %d %v", status, m)
+	}
+	ctMatch(t, "code", ctFixture(t, "cli-code.json"), m)
+	code, _ := m["code"].(string)
+	if !regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$`).MatchString(code) {
+		t.Errorf("code format %q", code)
+	}
+	status, m = e.doJSON("POST", "/me/cli-codes", "", nil)
+	ctExpectError(t, status, m, 401, "unauthorized", "")
+
+	// 교환: 무인증, 소문자·하이픈 없이도 받는다
+	e.now = e.now.Add(time.Second)
+	status, m = e.doJSON("POST", "/auth/cli/exchange", "", map[string]any{"code": strings.ToLower(strings.ReplaceAll(code, "-", "")), "label": " devbox "})
+	if status != 200 {
+		t.Fatalf("exchange %d %v", status, m)
+	}
+	ctMatch(t, "exchange", ctFixture(t, "cli-exchange.json"), m)
+	cli, _ := m["session"].(string)
+	// 1회용
+	status, m = e.doJSON("POST", "/auth/cli/exchange", "", map[string]any{"code": code})
+	ctExpectError(t, status, m, 400, "invalid_cli_code", "")
+	status, m = e.doJSON("POST", "/auth/cli/exchange", "", map[string]any{})
+	ctExpectError(t, status, m, 400, "invalid_json", "code")
+
+	// CLI 세션으로 같은 사용자 API 사용 가능
+	if status, m = e.doJSON("GET", "/me", cli, nil); status != 200 {
+		t.Fatalf("me via cli %d %v", status, m)
+	}
+	status, m = e.doJSON("GET", "/me/sessions", cli, nil)
+	if status != 200 {
+		t.Fatalf("sessions %d %v", status, m)
+	}
+	ctMatch(t, "sessions", ctFixture(t, "sessions.json"), m)
+
+	// 데스크탑에서 CLI 세션 폐기 → CLI 는 401, 없는 id 는 404
+	list, _ := m["sessions"].([]any)
+	cliID, _ := list[0].(map[string]any)["id"].(string)
+	if status, _ := e.doJSON("DELETE", "/me/sessions/"+cliID, desktop, nil); status != 204 {
+		t.Fatalf("revoke %d", status)
+	}
+	status, m = e.doJSON("GET", "/me", cli, nil)
+	ctExpectError(t, status, m, 401, "unauthorized", "")
+	status, m = e.doJSON("DELETE", "/me/sessions/"+cliID, desktop, nil)
+	ctExpectError(t, status, m, 404, "not_found", "")
+
+	// 다른 사용자의 세션은 폐기할 수 없다
+	other, _ := e.login("ct-code-user2")
+	_, m = e.doJSON("GET", "/me/sessions", desktop, nil)
+	desktopID := m["sessions"].([]any)[0].(map[string]any)["id"].(string)
+	status, m = e.doJSON("DELETE", "/me/sessions/"+desktopID, other, nil)
+	ctExpectError(t, status, m, 404, "not_found", "")
 }

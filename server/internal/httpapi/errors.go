@@ -25,6 +25,7 @@ const (
 	CodeScriptTooLarge           ErrorCode = "script_too_large"
 	CodeInvalidSparsePaths       ErrorCode = "invalid_sparse_paths"
 	CodeInvalidVisibleRepos      ErrorCode = "invalid_visible_repos"
+	CodeInvalidCLICode           ErrorCode = "invalid_cli_code"
 	CodeInvalidIssueKey          ErrorCode = "invalid_issue_key"
 	CodeBodyTooLarge             ErrorCode = "body_too_large"
 	CodeInvalidBaseUpdatedAt     ErrorCode = "invalid_base_updated_at"

@@ -16,6 +16,7 @@
   "script_too_large": { "error": "script_too_large", "field": "postCreateScript" },
   "invalid_sparse_paths": { "error": "invalid_sparse_paths", "field": "sparsePaths" },
   "invalid_visible_repos": { "error": "invalid_visible_repos", "field": "repos" },
+  "invalid_cli_code": { "error": "invalid_cli_code" },
   "invalid_issue_key": { "error": "invalid_issue_key" },
   "body_too_large": { "error": "body_too_large" },
   "invalid_base_updated_at": { "error": "invalid_base_updated_at" }

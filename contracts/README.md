@@ -27,5 +27,8 @@
 | `notes-conflict.json` | E14 409 · CT-15 |
 | `visible-repos-default.json` | E15 (선택 없음 = 전체 표시) · CT-41 |
 | `visible-repos-saved.json` | E16 · CT-41 |
+| `cli-code.json` | E17 원격 CLI 1회용 로그인 코드 · CT-42 |
+| `cli-exchange.json` | E18 코드 → CLI 세션 · CT-42 |
+| `sessions.json` | E19 세션 목록(최근 생성 순, current) · CT-42 |
 | `errors.json` | 공통 에러 body 예시 · CT-04/08/10/11/19/20/27/28/29 |
 | `template-vectors.json` | 템플릿 치환 golden · CT-34 (TS) / Go `validate_test`는 `refCases`·`branchCases[].expected` 소비 |

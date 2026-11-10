@@ -48,6 +48,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, dst any) *a
 
 // session 은 인증된 요청의 주체다. token 은 E5(로그아웃)에서만 쓴다.
 type session struct {
+	id     string
 	userID string
 	token  string
 }
@@ -60,7 +61,7 @@ func (a *api) authed(h func(http.ResponseWriter, *http.Request, session)) http.H
 			writeError(w, http.StatusUnauthorized, CodeUnauthorized, "")
 			return
 		}
-		userID, err := auth.Lookup(r.Context(), a.db, token, a.now())
+		sess, err := auth.LookupSession(r.Context(), a.db, token, a.now())
 		if errors.Is(err, auth.ErrInvalidSession) {
 			writeError(w, http.StatusUnauthorized, CodeUnauthorized, "")
 			return
@@ -69,7 +70,7 @@ func (a *api) authed(h func(http.ResponseWriter, *http.Request, session)) http.H
 			a.internal(w, r, err)
 			return
 		}
-		h(w, r, session{userID: userID, token: token})
+		h(w, r, session{id: sess.ID, userID: sess.UserID, token: token})
 	}
 }
 

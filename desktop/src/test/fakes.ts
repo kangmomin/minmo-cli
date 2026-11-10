@@ -89,6 +89,10 @@ export function createFakeApi(overrides: Partial<ApiClient> = {}): Mocked<ApiCli
     // 트리는 항상 보일 저장소를 조회하므로 기본은 "선택 없음 = 전체 표시"
     getVisibleRepos: async () => ({ repos: null, updatedAt: null }),
     putVisibleRepos: unexpected('putVisibleRepos'),
+    issueCliCode: unexpected('issueCliCode'),
+    exchangeCliCode: unexpected('exchangeCliCode'),
+    listSessions: unexpected('listSessions'),
+    revokeSession: unexpected('revokeSession'),
   }
   return mockAll(base, overrides)
 }
