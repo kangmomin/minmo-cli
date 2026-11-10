@@ -560,11 +560,24 @@ describe('openIssue — 생성 후 스크립트 (AC-16, EC-19, EC-21)', () => {
 const LOCAL = '/home/u/minmo-workspaces/MyOrg/Repo-A/_local'
 
 describe('openIssue — 부분 clone · sparse 체크아웃', () => {
-  it('메인 clone 은 --filter=blob:none --no-checkout 으로 받는다', async () => {
+  it('메인 clone 은 --filter=blob:none --no-checkout 으로 받고 bare 로 표시한다(작업 트리 명령 차단)', async () => {
     const t = setup()
     await t.svc.openIssue(ISSUE42)
-    const [clone] = t.find((a) => a[0] === 'clone')
-    expect(clone).toEqual(['clone', '--filter=blob:none', '--no-checkout', 'https://github.com/MyOrg/Repo-A.git', MAIN])
+    const calls = t.tauri.gitRun.mock.calls.map(([args]) => args)
+    const i = calls.findIndex((a) => a[0] === 'clone')
+    expect(calls[i]).toEqual(['clone', '--filter=blob:none', '--no-checkout', 'https://github.com/MyOrg/Repo-A.git', MAIN])
+    expect(calls[i + 1]).toEqual(['-C', MAIN, 'config', 'core.bare', 'true'])
+  })
+
+  it('bare 표시가 실패하면 clone 실패처럼 새로 만든 메인 clone 을 정리한다', async () => {
+    const t = setup()
+    const base = t.tauri.gitRun.getMockImplementation()!
+    t.tauri.gitRun.mockImplementation(async (args, opts) =>
+      args.includes('core.bare') ? fail('error: could not lock config file', 255) : base(args, opts),
+    )
+    await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'git_failed', message: 'error: could not lock config file' })
+    expect(t.tauri.removeDir).toHaveBeenCalledWith(MAIN)
+    expect(t.find(t.isAdd)).toHaveLength(0)
   })
 
   it('sparsePaths 가 비어 있으면 일반 worktree add, sparse 명령 없음', async () => {
@@ -581,7 +594,8 @@ describe('openIssue — 부분 clone · sparse 체크아웃', () => {
     expect(add.slice(0, 3)).toEqual(['worktree', 'add', '--no-checkout'])
     const calls = t.tauri.gitRun.mock.calls.map(([args]) => args)
     const iSet = calls.findIndex((a) => a.includes('sparse-checkout'))
-    expect(calls[iSet]).toEqual(['-C', WT42, 'sparse-checkout', 'set', '--cone', 'desktop', 'packages/api-client'])
+    // --end-of-options: 폴더 이름이 '-' 로 시작해도 옵션으로 해석되지 않게
+    expect(calls[iSet]).toEqual(['-C', WT42, 'sparse-checkout', 'set', '--cone', '--end-of-options', 'desktop', 'packages/api-client'])
     expect(calls[iSet + 1]).toEqual(['-C', WT42, 'read-tree', '-mu', 'HEAD'])
     expect(t.indexOf(t.isAdd)).toBeLessThan(iSet)
     expect(res.created).toBe(true)

@@ -100,13 +100,23 @@ func TestSettings_GlobalExplicitNull_CT29(t *testing.T) {
 		status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{f: nil}))
 		expectErr(t, status, m, 400, "global_requires_all_fields", f)
 	}
-	// v2.6: sparsePaths 는 전역에서도 생략·null 허용 → "" 로 저장
+	// v2.6: sparsePaths 는 전역에서도 생략·null 허용 → 저장된 값 유지(처음엔 "")
 	for _, body := range []map[string]any{globalWith(map[string]any{"sparsePaths": nil}), func() map[string]any { b := globalWith(nil); delete(b, "sparsePaths"); return b }()} {
 		status, m := s.DoJSON("PUT", "/settings", token, body)
 		if status != 200 || m["sparsePaths"] != "" {
 			t.Errorf("global sparsePaths omitted/null: %d %v", status, m)
 		}
 	}
+	// 저장된 값이 있으면 생략한 PUT(이전 클라이언트)이 지우지 않는다
+	if status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"sparsePaths": "desktop"})); status != 200 || m["sparsePaths"] != "desktop" {
+		t.Fatalf("PUT sparsePaths: %d %v", status, m)
+	}
+	body := globalWith(map[string]any{"etcBranchName": "misc"})
+	delete(body, "sparsePaths")
+	if status, m := s.DoJSON("PUT", "/settings", token, body); status != 200 || m["sparsePaths"] != "desktop" || m["etcBranchName"] != "misc" {
+		t.Errorf("omitted sparsePaths should keep stored value: %d %v", status, m)
+	}
+	s.DoJSON("PUT", "/settings", token, globalWith(nil))
 	// 전역은 postCreateScript "" 허용 — 저장 후 그대로 반환
 	status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"postCreateScript": "", "branchTemplate": "feat/{number}"}))
 	if status != 200 || m["postCreateScript"] != "" || m["branchTemplate"] != "feat/{number}" {

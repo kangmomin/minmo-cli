@@ -129,7 +129,7 @@ minmo-cli/
 | worktreePath | string? | ✔ | `{branch}` 또는 `{key}` 포함(유일성), 토큰 `~` `{owner}` `{repo}` `{branch}` `{key}` `{number}` `{slug}`, ≤512자 |
 | mainClonePath | string? | ✔ | 토큰 `~` `{owner}` `{repo}`, `{branch}`·`{key}` 금지, ≤512자 |
 | postCreateScript | string? | ✔(빈 문자열 허용) | ≤64KB |
-| sparsePaths (v2.6) | string? | 생략·null 이면 `""` | 줄바꿈 구분 저장소 기준 상대 폴더(cone sparse-checkout), 빈 줄 무시, 절대 경로·`..`·`\`·`:`·glob(`*?[]`)·`!`·`#` 금지, ≤100줄·≤4KB. `""` = 전체 체크아웃. 오류 `invalid_sparse_paths` |
+| sparsePaths (v2.6) | string? | 전역 PUT 에서 생략·null 이면 저장값 유지(없으면 `""`) | 줄바꿈 구분 저장소 기준 상대 폴더(cone sparse-checkout), 빈 줄 무시, 절대 경로·`..`·`\`·`:`·glob(`*?[]`)·`!`·`#`·`-` 시작 금지, ≤100줄·≤4KB. `""` = 전체 체크아웃. 오류 `invalid_sparse_paths` |
 | updatedAt | string | — | 응답 전용, nullable |
 
 - 전역 초기 레코드 기본값: `issue/{number}-{slug}`, `etc`, `~/minmo-workspaces/{owner}/{repo}/{branch}`,

@@ -227,6 +227,7 @@ func TestValidate_SparsePaths_CT40(t *testing.T) {
 		bad("dot", "./a"),
 		bad("glob", "src/*"),
 		bad("negation", "!docs"),
+		bad("option-like", "--no-cone"),
 		bad("double slash", "a//b"),
 		bad("101 lines", strings.Repeat("a\n", 100)+"a"),
 		bad("4097 bytes", strings.Repeat("a", 4097)),

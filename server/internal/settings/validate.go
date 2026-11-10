@@ -113,7 +113,7 @@ func checkPostCreateScript(v string) string {
 }
 
 // checkSparsePaths 는 줄마다 저장소 루트 기준 상대 디렉터리인지 검사한다(빈 줄은 무시).
-// cone 모드는 디렉터리만 받으므로 glob·부정 패턴은 거부하고, 저장소 밖을 가리키는 경로도 막는다.
+// cone 모드는 디렉터리만 받으므로 glob·부정 패턴은 거부하고, 저장소 밖을 가리키는 경로와 git 옵션처럼 보이는 `-` 시작도 막는다.
 func checkSparsePaths(v string) string {
 	if len(v) > maxSparseBytes {
 		return codeSparse
@@ -127,7 +127,7 @@ func checkSparsePaths(v string) string {
 		if p == "" {
 			continue
 		}
-		if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "!") || strings.HasPrefix(p, "#") ||
+		if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "!") || strings.HasPrefix(p, "#") || strings.HasPrefix(p, "-") ||
 			strings.ContainsAny(p, `\:*?[]`) {
 			return codeSparse
 		}

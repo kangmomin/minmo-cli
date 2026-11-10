@@ -374,11 +374,15 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
         // 부분 clone: 파일 내용(blob)은 worktree 가 체크아웃할 때 필요한 것만 받는다.
         // 메인 clone 은 저장소 역할만 하므로(작업은 worktree, etc 포함) 체크아웃하지 않는다
         const r = await tauri.gitRun(['clone', '--filter=blob:none', '--no-checkout', cloneUrl(t.owner, t.repo), p.main])
-        if (r.code !== 0) {
-          log(issueId, 'clone', 'error', r.stderr.trim() || `git clone 실패(${r.code})`)
+        // 체크아웃 없는 clone 은 status 에 모든 파일이 삭제로 보여 실수로 커밋하면 전체 삭제가 된다 → bare 로 표시해
+        // 작업 트리 명령을 막는다(fetch·worktree·브랜치 조회는 그대로, 기본 브랜치도 worktree 로 열 수 있다)
+        const bare = r.code === 0 ? await tauri.gitRun(['-C', p.main, 'config', 'core.bare', 'true']) : r
+        if (bare.code !== 0) {
+          const failed = r.code !== 0 ? r : bare
+          log(issueId, 'clone', 'error', failed.stderr.trim() || `git clone 실패(${failed.code})`)
           // EC-10: 이번 실행이 새로 만든 경로만 정리
           if (await tauri.pathExists(p.main)) await tauri.removeDir(p.main)
-          throw new WorktreeError('git_failed', { message: r.stderr.trim() || 'git clone 실패', stderr: r.stderr })
+          throw new WorktreeError('git_failed', { message: failed.stderr.trim() || 'git clone 실패', stderr: failed.stderr })
         }
         log(issueId, 'clone', 'ok')
       }
@@ -444,7 +448,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       if (dirs.length > 0) {
         log(issueId, 'sparse', 'start', dirs.join(', '))
         try {
-          await gitOrThrow(issueId, 'sparse', ['-C', p.path, 'sparse-checkout', 'set', '--cone', ...dirs])
+          await gitOrThrow(issueId, 'sparse', ['-C', p.path, 'sparse-checkout', 'set', '--cone', '--end-of-options', ...dirs])
           await gitOrThrow(issueId, 'sparse', ['-C', p.path, 'read-tree', '-mu', 'HEAD'])
         } catch (e) {
           // 체크아웃이 비어 있는 worktree 를 남기지 않는다(브랜치는 남겨 다음 열기에서 재사용)

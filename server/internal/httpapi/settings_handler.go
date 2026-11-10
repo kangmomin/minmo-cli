@@ -85,9 +85,17 @@ func (a *api) putSettings(scope settings.Scope) func(http.ResponseWriter, *http.
 			return
 		}
 		if scope == settings.ScopeGlobal && in.SparsePaths == nil {
-			// v2.6 이전 클라이언트는 sparsePaths 를 보내지 않는다 — 전역은 ""(전체 체크아웃)로 저장
-			empty := ""
-			in.SparsePaths = &empty
+			// v2.6 이전 클라이언트는 sparsePaths 를 보내지 않는다 — 저장된 값을 유지하고, 없으면 ""(전체 체크아웃)
+			cur, err := settings.Get(r.Context(), a.db, s.userID, scope, owner, repo)
+			if err != nil {
+				a.internal(w, r, err)
+				return
+			}
+			keep := ""
+			if cur.SparsePaths != nil {
+				keep = *cur.SparsePaths
+			}
+			in.SparsePaths = &keep
 		}
 		rec, err := settings.Upsert(r.Context(), a.db, s.userID, scope, owner, repo, in, a.now())
 		if err != nil {

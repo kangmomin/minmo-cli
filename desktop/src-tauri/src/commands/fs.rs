@@ -36,6 +36,10 @@ pub fn remove_dir(app: AppHandle, path: String) -> Result<(), String> {
     if !p.is_absolute() {
         return Err(format!("절대 경로만 삭제할 수 있습니다: {path}"));
     }
+    // `..` 가 섞이면 깊이 검사를 통과해도 실제로는 상위(드라이브 루트 등)를 가리킬 수 있다
+    if has_parent_dir(p) {
+        return Err(format!("`..` 가 포함된 경로는 삭제하지 않습니다: {path}"));
+    }
     let depth = p
         .components()
         .filter(|c| matches!(c, Component::Normal(_)))
@@ -56,14 +60,18 @@ pub fn remove_dir(app: AppHandle, path: String) -> Result<(), String> {
 
 // ── 레포별 로컬 파일 보관 폴더(.env 등 git 에 올리지 않는 파일) ──
 
-/// 보관·복사 대상 루트는 절대 경로이고 구성 요소가 3개 이상이어야 한다(remove_dir 과 같은 기준)
+fn has_parent_dir(p: &Path) -> bool {
+    p.components().any(|c| matches!(c, Component::ParentDir))
+}
+
+/// 보관·복사 대상 루트는 `..` 없는 절대 경로이고 구성 요소가 3개 이상이어야 한다(remove_dir 과 같은 기준)
 fn guard_root(path: &str) -> Result<&Path, String> {
     let p = Path::new(path);
     let depth = p
         .components()
         .filter(|c| matches!(c, Component::Normal(_)))
         .count();
-    if !p.is_absolute() || depth < 3 {
+    if !p.is_absolute() || depth < 3 || has_parent_dir(p) {
         return Err(format!("허용되지 않는 경로입니다: {path}"));
     }
     Ok(p)
@@ -109,7 +117,24 @@ fn rel_string(p: &Path) -> String {
         .join("/")
 }
 
-/// src 의 파일을 dst 의 같은 상대 경로로 복사한다. 이미 있는 파일은 덮어쓰지 않는다(체크아웃된 파일 보호)
+fn is_symlink(p: &Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// root 아래 rel 경로의 중간 폴더 중 심볼릭 링크가 있는지 — 저장소에 커밋된 링크를 따라 root 밖에 쓰지 않게 한다
+fn has_symlink_between(root: &Path, rel: &Path) -> bool {
+    let mut cur = root.to_path_buf();
+    rel.parent()
+        .into_iter()
+        .flat_map(|p| p.components())
+        .any(|c| {
+            cur.push(c);
+            is_symlink(&cur)
+        })
+}
+
+/// src 의 파일을 dst 의 같은 상대 경로로 복사한다. 이미 있는 파일(깨진 링크 포함)은 덮어쓰지 않고(체크아웃된 파일 보호),
+/// 대상 경로에 심볼릭 링크가 끼어 있으면 건너뛴다
 fn copy_tree_impl(src: &Path, dst: &Path) -> std::io::Result<u32> {
     if !src.is_dir() {
         return Ok(0);
@@ -119,7 +144,7 @@ fn copy_tree_impl(src: &Path, dst: &Path) -> std::io::Result<u32> {
     let mut copied = 0;
     for rel in files {
         let target = dst.join(&rel);
-        if target.exists() {
+        if std::fs::symlink_metadata(&target).is_ok() || has_symlink_between(dst, &rel) {
             continue;
         }
         if let Some(parent) = target.parent() {
@@ -164,6 +189,13 @@ pub fn copy_file_into(src_root: String, rel: String, dst_root: String) -> Result
     let dst = guard_root(&dst_root)?.join(&rel);
     if !src.is_file() {
         return Err(format!("파일이 없습니다: {}", rel_string(&rel)));
+    }
+    // 저장소에 커밋된 링크(.env → ~/.ssh/... 등)를 따라 다른 파일을 보관하지 않는다
+    if is_symlink(&src) || has_symlink_between(guard_root(&src_root)?, &rel) {
+        return Err(format!(
+            "심볼릭 링크는 보관할 수 없습니다: {}",
+            rel_string(&rel)
+        ));
     }
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -225,6 +257,11 @@ mod tests {
     #[test]
     fn guard_root_rejects_shallow_or_relative() {
         assert!(guard_root("rel/a/b").is_err());
+        let up = std::env::temp_dir().join("a/b/c/../../../..");
+        assert!(
+            guard_root(&up.to_string_lossy()).is_err(),
+            "`..` 로 상위를 가리키면 거부"
+        );
         let shallow = if cfg!(windows) { r"C:\a" } else { "/a" };
         assert!(guard_root(shallow).is_err());
     }
@@ -255,6 +292,53 @@ mod tests {
         // 보관 폴더가 없으면 0개, 오류 아님
         assert_eq!(copy_tree_impl(&base.join("none"), &dst).unwrap(), 0);
         assert!(list_files_impl(&base.join("none")).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 심볼릭 링크는 권한(개발자 모드)이 필요해 권한 없이 만들 수 있는 junction 으로 대신한다
+    #[cfg(windows)]
+    fn symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        if std::os::windows::fs::symlink_dir(target, link).is_ok() {
+            return Ok(());
+        }
+        let status = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("mklink /J 실패"))
+        }
+    }
+    #[cfg(unix)]
+    fn symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    /// 저장소에 커밋된 디렉터리 링크(config -> 밖)를 따라 보관 파일을 worktree 밖에 쓰지 않는다
+    #[test]
+    fn copy_tree_skips_paths_through_symlinks() {
+        let base = tmp("symlink");
+        let (src, dst, outside) = (base.join("_local"), base.join("wt"), base.join("outside"));
+        std::fs::create_dir_all(src.join("config")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(src.join("config/local.json"), "{}").unwrap();
+        if symlink_dir(&outside, &dst.join("config")).is_err() {
+            eprintln!("심볼릭 링크를 만들 권한이 없어 건너뜀");
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+        assert_eq!(copy_tree_impl(&src, &dst).unwrap(), 0);
+        assert!(
+            !outside.join("local.json").exists(),
+            "링크를 따라 worktree 밖에 썼다"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }

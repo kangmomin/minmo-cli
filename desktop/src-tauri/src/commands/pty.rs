@@ -103,15 +103,16 @@ impl PtySession {
     fn terminate(&mut self) {
         // 셸에서 띄운 자손(dev 서버 등)이 cwd 를 잡고 있으면 worktree 삭제가 실패한다. 기본 conhost 는 ConPTY 를
         // 닫아도 자손에게 종료 이벤트만 보내 곧바로 끝나지 않으므로(종료 처리를 하는 프로세스는 더 오래 남는다)
-        // 닫기 전에 프로세스 트리를 직접 끝낸다(스크립트 취소와 같은 방식). Job 이 있으면 부모 체인이 끊긴
-        // 자손까지 먼저 끝내고, Job 에 들어가기 전(spawn 직후 짧은 틈)에 생긴 자손은 트리 종료가 맡는다.
+        // 닫기 전에 프로세스 트리를 직접 끝낸다(스크립트 취소와 같은 방식). 트리 종료를 먼저 해야 셸이 살아 있어
+        // Job 에 들어가기 전(spawn 직후 짧은 틈)에 생긴 자손까지 찾을 수 있고, 이어서 Job 으로 부모 체인이 끊긴
+        // 자손(에이전트가 띄운 프로세스 등)을 끝낸다.
         #[cfg(windows)]
         {
-            if let Some(job) = &self.job {
-                job.terminate();
-            }
             if let Some(pid) = self.child.process_id() {
                 super::taskkill_tree(pid);
+            }
+            if let Some(job) = &self.job {
+                job.terminate();
             }
         }
         let _ = self.child.kill();
