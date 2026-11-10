@@ -7,7 +7,7 @@ import type { Effective, SettingsValues } from '@minmo/api-client'
 
 import { createFakeTauri, deferred, fail, flush, ok } from '../test/fakes'
 import type { CmdResult, RunOptions, ScriptRunResult } from './tauri'
-import { createWorktreeService, worktreeId } from './worktree'
+import { createWorktreeService, localFilesDir, sparseDirs, worktreeId } from './worktree'
 import type { IssueTarget, SetupLogEvent, WorktreeEntry } from './worktree'
 
 const HOME = '/home/u'
@@ -46,6 +46,7 @@ type Sim = {
   failClone?: string
   failFetch?: string
   failWorktreeAdd?: string
+  failSparse?: string
   holdFetch?: Promise<void>
 }
 
@@ -165,6 +166,8 @@ async function simGit(sim: Sim, args: string[], opts?: RunOptions): Promise<CmdR
       }
       return ok()
     }
+    case 'sparse-checkout':
+      return sim.failSparse ? fail(sim.failSparse, 128) : ok()
     case 'status': {
       if (a.some((x) => x === '--porcelain=v2' || x === '--porcelain=2')) {
         return ok(
@@ -190,6 +193,7 @@ type SetupOpts = {
   scriptRun?: (req: { runId: string; cwd: string; script: string; env: Record<string, string> }) => Promise<ScriptRunResult>
   scriptCancel?: (runId: string) => Promise<void>
   entries?: [string, WorktreeEntry][]
+  copyTree?: (src: string, dst: string) => Promise<number>
 }
 
 function setup(o: SetupOpts = {}) {
@@ -215,6 +219,7 @@ function setup(o: SetupOpts = {}) {
     },
     ...(o.scriptRun ? { scriptRun: o.scriptRun } : {}),
     ...(o.scriptCancel ? { scriptCancel: o.scriptCancel } : {}),
+    ...(o.copyTree ? { copyTree: o.copyTree } : {}),
   })
   const store = new Map<string, WorktreeEntry>(o.entries ?? [])
   const pathStore = {
@@ -552,6 +557,93 @@ describe('openIssue — 생성 후 스크립트 (AC-16, EC-19, EC-21)', () => {
 })
 
 // ── 삭제 ─────────────────────────────────────────────────────────
+const LOCAL = '/home/u/minmo-workspaces/MyOrg/Repo-A/_local'
+
+describe('openIssue — 부분 clone · sparse 체크아웃', () => {
+  it('메인 clone 은 --filter=blob:none --no-checkout 으로 받는다', async () => {
+    const t = setup()
+    await t.svc.openIssue(ISSUE42)
+    const [clone] = t.find((a) => a[0] === 'clone')
+    expect(clone).toEqual(['clone', '--filter=blob:none', '--no-checkout', 'https://github.com/MyOrg/Repo-A.git', MAIN])
+  })
+
+  it('sparsePaths 가 비어 있으면 일반 worktree add, sparse 명령 없음', async () => {
+    const t = setup({ values: { sparsePaths: '  \n' } })
+    await t.svc.openIssue(ISSUE42)
+    expect(t.find(t.isAdd)[0]).not.toContain('--no-checkout')
+    expect(t.find((a) => a[0] === 'sparse-checkout' || a[0] === 'read-tree')).toHaveLength(0)
+  })
+
+  it('sparsePaths 지정 → add --no-checkout → (worktree 안에서) sparse-checkout set --cone → read-tree -mu HEAD', async () => {
+    const t = setup({ values: { sparsePaths: 'desktop/\n\n packages/api-client ' } })
+    const res = await t.svc.openIssue(ISSUE42)
+    const add = t.find(t.isAdd)[0]
+    expect(add.slice(0, 3)).toEqual(['worktree', 'add', '--no-checkout'])
+    const calls = t.tauri.gitRun.mock.calls.map(([args]) => args)
+    const iSet = calls.findIndex((a) => a.includes('sparse-checkout'))
+    expect(calls[iSet]).toEqual(['-C', WT42, 'sparse-checkout', 'set', '--cone', 'desktop', 'packages/api-client'])
+    expect(calls[iSet + 1]).toEqual(['-C', WT42, 'read-tree', '-mu', 'HEAD'])
+    expect(t.indexOf(t.isAdd)).toBeLessThan(iSet)
+    expect(res.created).toBe(true)
+    expect(t.logs.filter((l) => l.step === 'sparse').map((l) => l.status)).toEqual(['start', 'ok'])
+  })
+
+  it('sparse 실패 → 빈 worktree 를 지우고 실패, 경로는 저장하지 않는다', async () => {
+    const t = setup({ values: { sparsePaths: 'desktop' }, sim: { failSparse: 'fatal: sparse' } })
+    await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'git_failed' })
+    expect(t.find(t.isRemove)[0]).toContain(WT42)
+    expect(t.sim.existing.has(WT42)).toBe(false)
+    expect(t.pathStore.set).not.toHaveBeenCalled()
+  })
+
+  it('sparseDirs: 빈 줄·공백·끝 / 제거, CRLF 허용', () => {
+    expect(sparseDirs('')).toEqual([])
+    expect(sparseDirs('a/\r\n\n  b/c  ')).toEqual(['a', 'b/c'])
+  })
+})
+
+describe('openIssue — 레포별 로컬 파일 보관 폴더(_local)', () => {
+  it('보관 폴더는 메인 clone 의 형제 _local (Windows 구분자 포함)', () => {
+    expect(localFilesDir(MAIN, 'linux')).toBe(LOCAL)
+    expect(localFilesDir('C:/Users/u/ws/o/r/_main/', 'win32')).toBe(['C:', 'Users', 'u', 'ws', 'o', 'r', '_local'].join(String.fromCharCode(92)))
+  })
+
+  it('새 worktree 에 _local 을 복사한 뒤 생성 후 스크립트를 실행한다', async () => {
+    const order: string[] = []
+    const t = setup({
+      values: { postCreateScript: 'npm ci' },
+      copyTree: async (src, dst) => {
+        order.push(`copy ${src} -> ${dst}`)
+        return 2
+      },
+      scriptRun: async () => {
+        order.push('script')
+        return { exitCode: 0, cancelled: false }
+      },
+    })
+    await t.svc.openIssue(ISSUE42)
+    expect(order).toEqual([`copy ${LOCAL} -> ${WT42}`, 'script'])
+    expect(t.logs).toContainEqual({ issueId: ID42, step: 'localfiles', status: 'ok', message: '로컬 파일 2개 복사' })
+  })
+
+  it('복사 실패는 경고만 남기고 이슈는 열린다 · 기존 worktree 전환에는 복사하지 않는다', async () => {
+    const t = setup({ copyTree: async () => Promise.reject(new Error('EACCES')) })
+    const res = await t.svc.openIssue(ISSUE42)
+    expect(res.created).toBe(true)
+    expect(t.logs).toContainEqual({ issueId: ID42, step: 'localfiles', status: 'error', message: 'EACCES' })
+
+    t.tauri.copyTree.mockClear()
+    await t.svc.openIssue(ISSUE42)
+    expect(t.tauri.copyTree).not.toHaveBeenCalled()
+  })
+
+  it('worktree 경로가 _local 과 겹치면 중단', async () => {
+    const t = setup({ values: { worktreePath: '~/minmo-workspaces/{owner}/{repo}/_local/{branch}' } })
+    await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'overlaps_main_clone' })
+    expect(t.find((a) => a[0] === 'clone')).toHaveLength(0)
+  })
+})
+
 describe('deleteWorktree (AC-14, EC-15, EC-16, EC-24, PTY 선종료)', () => {
   // EC-24: 저장된 생성 당시 경로는 현재 effective 로 계산한 경로와 다를 수 있다
   const P = '/home/u/custom/MyOrg/Repo-A/issue--42-add-login'

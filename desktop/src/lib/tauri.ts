@@ -52,6 +52,15 @@ export interface TauriApi {
   pathExists(path: string): Promise<boolean>
   /** 재귀 삭제 — EC-10 "이번 실행이 새로 만든 경로" 정리에만 사용 */
   removeDir(path: string): Promise<void>
+  /** src 의 파일을 dst 의 같은 상대 경로로 복사(기존 파일은 유지)하고 복사한 개수를 돌려준다. src 가 없으면 0 */
+  copyTree(src: string, dst: string): Promise<number>
+  /** root 아래 파일의 상대 경로('/' 구분, 정렬). root 가 없으면 [] */
+  listFiles(root: string): Promise<string[]>
+  /** srcRoot/rel → dstRoot/rel 복사(덮어씀). rel 은 상대 경로만 */
+  copyFileInto(srcRoot: string, rel: string, dstRoot: string): Promise<void>
+  removeFileIn(root: string, rel: string): Promise<void>
+  /** 폴더를 OS 파일 탐색기로 연다(없으면 생성) */
+  openDir(path: string): Promise<void>
 
   /** opener: 외부 브라우저로 URL 열기 */
   openUrl(url: string): Promise<void>
@@ -78,6 +87,11 @@ export const TAURI_COMMANDS = {
   platform: 'os_platform',
   pathExists: 'path_exists',
   removeDir: 'remove_dir',
+  copyTree: 'copy_tree',
+  listFiles: 'list_files',
+  copyFileInto: 'copy_file_into',
+  removeFileIn: 'remove_file_in',
+  openDir: 'open_dir',
 } as const
 
 export const TAURI_EVENTS = { ptyData: 'pty-data', scriptLog: 'script-log' } as const
@@ -114,6 +128,11 @@ export function createTauriApi(): TauriApi {
     platform: () => call(C.platform),
     pathExists: (path) => call(C.pathExists, { path }),
     removeDir: (path) => call(C.removeDir, { path }),
+    copyTree: (src, dst) => call(C.copyTree, { src, dst }),
+    listFiles: (root) => call(C.listFiles, { root }),
+    copyFileInto: (srcRoot, rel, dstRoot) => call(C.copyFileInto, { srcRoot, rel, dstRoot }),
+    removeFileIn: (root, rel) => call(C.removeFileIn, { root, rel }),
+    openDir: (path) => call(C.openDir, { path }),
 
     openUrl: async (url) => (await import('@tauri-apps/plugin-opener')).openUrl(url),
     onDeepLink: async (cb) => {

@@ -68,7 +68,7 @@ export interface WorktreePathStore {
   delete(id: string): void
 }
 
-export type SetupStep = 'effective' | 'clone' | 'fetch' | 'prune' | 'branch' | 'worktree' | 'script'
+export type SetupStep = 'effective' | 'clone' | 'fetch' | 'prune' | 'branch' | 'worktree' | 'sparse' | 'localfiles' | 'script'
 export type SetupLogEvent = {
   issueId: string
   step: SetupStep
@@ -143,6 +143,23 @@ export function needsConfirmation(c: DeleteCheck): boolean {
   return c.uncommitted === null || c.unpushed === null || c.uncommitted > 0 || c.unpushed > 0
 }
 
+/** 레포별 로컬 파일 보관 폴더: 메인 clone 의 형제 `_local` (기본 ~/minmo-workspaces/{owner}/{repo}/_local) */
+export function localFilesDir(main: string, platform: Platform): string {
+  // normalizePath 는 Windows 에서 소문자로 바꾸므로(비교용) 표시·생성용 경로는 구분자만 맞춘다
+  const sep = platform === 'win32' ? '\\' : '/'
+  const n = main.replace(/[\\/]+/g, sep).replace(/[\\/]+$/, '')
+  const i = n.lastIndexOf(sep)
+  return `${i > 0 ? n.slice(0, i) : n}${sep}_local`
+}
+
+/** sparsePaths 설정 → cone 디렉터리 목록(빈 줄·앞뒤 공백·끝 / 제거). 빈 목록 = 전체 체크아웃 */
+export function sparseDirs(v: string): string[] {
+  return v
+    .split(/\r?\n/)
+    .map((l) => l.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+}
+
 /** worktreePathMap 키 */
 export function worktreeId(owner: string, repo: string, key: string): string {
   return `${owner}/${repo}#${key}`
@@ -156,6 +173,8 @@ type Plan = {
   /** 현재 effective 로 계산한 worktree 경로 */
   path: string
   main: string
+  /** 로컬 파일 보관 폴더 */
+  local: string
 }
 
 type RunningScript = { runId: string; done: Promise<ScriptRunResult> }
@@ -251,8 +270,13 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       log(issueId, 'effective', 'error', `worktree 경로가 메인 clone 과 겹칩니다: ${path}`)
       throw new WorktreeError('overlaps_main_clone', { path, message: 'worktree 경로가 메인 clone 경로와 겹칩니다' })
     }
+    const local = localFilesDir(main, platform)
+    if (isSameOrInside(path, local, platform)) {
+      log(issueId, 'effective', 'error', `worktree 경로가 로컬 파일 보관 폴더와 겹칩니다: ${path}`)
+      throw new WorktreeError('overlaps_main_clone', { path, message: 'worktree 경로가 로컬 파일 보관 폴더(_local)와 겹칩니다' })
+    }
     log(issueId, 'effective', 'ok')
-    return { issueId, values, branch, path, main }
+    return { issueId, values, branch, path, main, local }
   }
 
   async function resolveDefaultBranch(t: IssueTarget, main: string): Promise<string> {
@@ -345,7 +369,9 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
         }
       } else {
         log(issueId, 'clone', 'start', p.main)
-        const r = await tauri.gitRun(['clone', cloneUrl(t.owner, t.repo), p.main])
+        // 부분 clone: 파일 내용(blob)은 worktree 가 체크아웃할 때 필요한 것만 받는다.
+        // 메인 clone 은 저장소 역할만 하므로(작업은 worktree, etc 포함) 체크아웃하지 않는다
+        const r = await tauri.gitRun(['clone', '--filter=blob:none', '--no-checkout', cloneUrl(t.owner, t.repo), p.main])
         if (r.code !== 0) {
           log(issueId, 'clone', 'error', r.stderr.trim() || `git clone 실패(${r.code})`)
           // EC-10: 이번 실행이 새로 만든 경로만 정리
@@ -400,6 +426,10 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       }
       log(issueId, 'branch', 'ok', b)
 
+      // sparse: 체크아웃 없이 만든 뒤 지정 폴더만 체크아웃한다(부분 clone 이라 그 폴더의 blob 만 받는다)
+      const dirs = sparseDirs(p.values.sparsePaths)
+      if (dirs.length > 0) addArgs.splice(2, 0, '--no-checkout')
+
       log(issueId, 'worktree', 'start', p.path)
       const add = await tauri.gitRun(['-C', p.main, ...addArgs])
       if (add.code !== 0) {
@@ -407,13 +437,36 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
         if (await tauri.pathExists(p.path)) await tauri.removeDir(p.path)
         throw new WorktreeError('git_failed', { message: add.stderr.trim() || 'git worktree add 실패', stderr: add.stderr })
       }
-      deps.pathStore.set(issueId, { path: p.path, branch: b })
       log(issueId, 'worktree', 'ok', p.path)
+
+      if (dirs.length > 0) {
+        log(issueId, 'sparse', 'start', dirs.join(', '))
+        try {
+          await gitOrThrow(issueId, 'sparse', ['-C', p.path, 'sparse-checkout', 'set', '--cone', ...dirs])
+          await gitOrThrow(issueId, 'sparse', ['-C', p.path, 'read-tree', '-mu', 'HEAD'])
+        } catch (e) {
+          // 체크아웃이 비어 있는 worktree 를 남기지 않는다(브랜치는 남겨 다음 열기에서 재사용)
+          await tauri.gitRun(['-C', p.main, 'worktree', 'remove', '--force', p.path])
+          if (await tauri.pathExists(p.path)) await tauri.removeDir(p.path)
+          throw e
+        }
+        log(issueId, 'sparse', 'ok')
+      }
+      deps.pathStore.set(issueId, { path: p.path, branch: b })
       return { created: true, branch: b }
     })
 
     if (!outcome.created) {
       return { issueId, path: p.path, branch: outcome.branch, created: false, pathChanged: false, script: SKIPPED }
+    }
+
+    // 보관해 둔 로컬 파일(.env 등)을 스크립트보다 먼저 넣는다 — 스크립트가 그 값을 쓸 수 있게
+    try {
+      const n = await tauri.copyTree(p.local, p.path)
+      if (n > 0) log(issueId, 'localfiles', 'ok', `로컬 파일 ${n}개 복사`)
+    } catch (e) {
+      // 복사 실패로 이슈 열기를 막지는 않는다
+      log(issueId, 'localfiles', 'error', e instanceof Error ? e.message : String(e))
     }
 
     // A-14: 생성 후 스크립트는 worktree 를 새로 만들었을 때 1회만

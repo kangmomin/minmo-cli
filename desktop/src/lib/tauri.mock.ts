@@ -50,6 +50,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   }
 
   const paths = new Set<string>()
+  const localFiles = new Map<string, string[]>()
   const repos = new Set<string>()
   /** worktree path → branch */
   const worktrees = new Map<string, string>()
@@ -225,6 +226,22 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       paths.delete(p)
       repos.delete(p)
     },
+    // 로컬 파일 보관 폴더: dev·Playwright 에서는 폴더별 인메모리 파일 목록으로 흉내 낸다
+    copyTree: async (src, dst) => {
+      const files = localFiles.get(src) ?? []
+      const target = localFiles.get(dst) ?? []
+      const added = files.filter((f) => !target.includes(f))
+      localFiles.set(dst, [...target, ...added].sort())
+      return added.length
+    },
+    listFiles: async (root) => [...(localFiles.get(root) ?? [])],
+    copyFileInto: async (_srcRoot, rel, dstRoot) => {
+      localFiles.set(dstRoot, [...new Set([...(localFiles.get(dstRoot) ?? []), rel])].sort())
+    },
+    removeFileIn: async (root, rel) => {
+      localFiles.set(root, (localFiles.get(root) ?? []).filter((f) => f !== rel))
+    },
+    openDir: async () => {},
 
     openUrl: async (url) => {
       handle.openedUrls.push(url)

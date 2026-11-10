@@ -53,6 +53,11 @@ pub fn run() {
             fs::os_platform,
             fs::path_exists,
             fs::remove_dir,
+            fs::copy_tree,
+            fs::list_files,
+            fs::copy_file_into,
+            fs::remove_file_in,
+            fs::open_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

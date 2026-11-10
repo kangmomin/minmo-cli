@@ -15,6 +15,8 @@ const STEP_LABEL: Record<SetupStep, string> = {
   prune: 'prune',
   branch: '브랜치',
   worktree: 'worktree',
+  sparse: 'sparse 체크아웃',
+  localfiles: '로컬 파일',
   script: '스크립트',
 }
 
