@@ -1,16 +1,19 @@
 // 보일 저장소 선택·설정 편집 — 서버 모드는 데스크탑과 같은 서버 값, 로컬 모드는 이 기기의 로컬 값(서버 사본 위에 덮음)
 import { readFile } from 'node:fs/promises'
 
+import { ApiError } from '@minmo/api-client'
 import type { SettingsField, SettingsScope } from '@minmo/api-client'
 import { SETTING_FIELDS, toggleOwnerAll, toggleRepo } from '@minmo/core'
 
+import { SOURCE_LABEL } from '../backend'
 import type { SelectionOrigin } from '../backend'
-import { CliError, toCliError } from '../context'
+import { CliError, serverErrorMessage, toCliError } from '../context'
 import type { Ctx } from '../context'
 import { parseRepo } from '../refs'
 
 const ORIGIN_LABEL: Record<SelectionOrigin, string> = {
   server: '서버(데스크탑과 공유)',
+  offline: '서버에 연결할 수 없음',
   local: '로컬(이 기기)',
   copy: '서버 사본',
   default: '고른 적 없음',
@@ -19,6 +22,8 @@ const ORIGIN_LABEL: Record<SelectionOrigin, string> = {
 export async function reposList(ctx: Ctx): Promise<void> {
   await ctx.data.ready()
   const { repos, origin } = await ctx.data.getSelection()
+  // 트리는 오프라인이면 전체 표시로 버티지만, 선택을 보여 달라는 명령에서 "전체"라고 하면 틀린 답이다
+  if (origin === 'offline') throw new CliError(serverErrorMessage(new ApiError({ status: 0, code: 'network_error' }), ctx.server))
   if (ctx.mode === 'local') ctx.out.log(`[로컬 모드 · ${ORIGIN_LABEL[origin]}]`)
   if (repos === null) return ctx.out.log('모든 저장소를 표시합니다 (`minmo repos add owner/repo` 로 고를 수 있습니다)')
   if (repos.length === 0) return ctx.out.log('고른 저장소가 없습니다 — worktree 가 있는 저장소만 보입니다')
@@ -87,8 +92,10 @@ export async function configGet(ctx: Ctx, opts: ScopeOpts & { effective?: string
     const eff = await ctx.data.getEffective(owner, repo).catch((e: unknown) => {
       throw toCliError(e, ctx.server)
     })
+    if (ctx.mode === 'server' && Object.values(eff.sources).includes('copy')) ctx.out.error('서버에 연결할 수 없어 마지막으로 받은 사본을 보여 줍니다')
+    // JSON 의 sources 는 코드 그대로(서버 모드: global·org·project — 이전과 같다)
     if (opts.json) return ctx.out.log(JSON.stringify(eff, null, 2))
-    for (const k of SETTING_KEYS) ctx.out.log(`${k} = ${JSON.stringify(eff.values[k])}  (${eff.sources[k]})`)
+    for (const k of SETTING_KEYS) ctx.out.log(`${k} = ${JSON.stringify(eff.values[k])}  (${SOURCE_LABEL[eff.sources[k]]})`)
     return
   }
   const scope = scopeOf(opts)

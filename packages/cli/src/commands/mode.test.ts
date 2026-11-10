@@ -1,5 +1,5 @@
 // 서버 모드 / 로컬 모드 — 전환·서버 사본·로컬 값 우선순위·모드별 명령 동작
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -26,21 +26,27 @@ const PROJECT_EFF: Effective = {
 }
 
 describe('minmo mode', () => {
-  it('local: 서버에 닿으면 사본(전역·보일 저장소·worktree/고른 저장소 설정)을 받고 전환한다', async () => {
+  it('local: 서버에 닿으면 사본(전역·보일 저장소·조직·worktree/고른 저장소 설정)을 받고 전환한다', async () => {
     const ctx = await createTestCtx({
       api: {
-        getSettings: async () => GLOBAL,
+        getSettings: async (scope) => (scope.kind === 'org' ? { ...EMPTY_RECORD, branchTemplate: `${scope.owner}/{number}` } : GLOBAL),
         getVisibleRepos: async () => ({ repos: ['acme/widgets', 'octocat/*'], updatedAt: 't' }),
       },
+      github: { listOwners: async () => [{ login: 'Initech', kind: 'org', avatarUrl: null }] },
     })
     ctx.state.worktrees[worktreeId('octocat', 'dotfiles', '1')] = { path: '/w/1', branch: 'b' }
     await modeCmd(ctx, 'local')
     expect(ctx.api.getEffective.mock.calls.map((c) => c.join('/')).sort()).toEqual(['acme/widgets', 'octocat/dotfiles'])
     const state = JSON.parse(await readFile(ctx.paths.state, 'utf8'))
-    expect(state.serverCopy).toMatchObject({ global: { worktreePath: '~/copy/{owner}/{repo}/{branch}' }, visibleRepos: ['acme/widgets', 'octocat/*'] })
+    expect(state.serverCopy).toMatchObject({ global: { worktreePath: '~/copy/{owner}/{repo}/{branch}' }, visibleRepos: ['acme/widgets', 'octocat/*'], syncedAt: expect.any(String) })
+    // owner/* 만 고른 조직·GitHub 에서 보이는 조직의 설정도 받는다(값이 있는 필드만)
+    expect(state.serverCopy.orgs).toEqual({ acme: { branchTemplate: 'acme/{number}' }, octocat: { branchTemplate: 'octocat/{number}' }, initech: { branchTemplate: 'initech/{number}' } })
     expect(Object.keys(state.effective).sort()).toEqual(['acme/widgets', 'octocat/dotfiles'])
     expect((await readConfig(ctx.paths.config)).mode).toBe('local')
-    expect(ctx.logs.join('\n')).toContain('서버 사본을 갱신했습니다 — 전역 설정·보일 저장소·저장소 설정 2개')
+    expect(ctx.logs.join('\n')).toContain('서버 사본을 갱신했습니다 — 전역 설정·보일 저장소·조직 설정 3개·저장소 설정 2개')
+    // 로컬 모드에서 사본에 없는 저장소도 조직 사본을 쓴다
+    const local = await createTestCtx({ paths: ctx.paths, loggedIn: false })
+    expect((await local.data.getEffective('Initech', 'new')).values.branchTemplate).toBe('initech/{number}')
   })
 
   it('local: 서버에 닿지 않아도 전환한다(사본 그대로) — server 로 돌아갈 때 점검 실패는 안내만', async () => {
@@ -93,18 +99,61 @@ describe('로컬 모드', () => {
       mainClonePath: '~/m/{owner}/{repo}',
     })
     expect(eff.sources).toMatchObject({
-      worktreePath: '서버 사본',
-      sparsePaths: '서버 사본',
-      etcBranchName: '로컬 전역',
-      postCreateScriptPosix: '로컬 조직',
-      mainClonePath: '로컬 프로젝트',
-      postCreateScript: '서버 사본',
+      worktreePath: 'copy',
+      sparsePaths: 'copy',
+      etcBranchName: 'local-global',
+      postCreateScriptPosix: 'local-org',
+      mainClonePath: 'local-project',
+      postCreateScript: 'copy',
     })
     // 사본이 하나도 없으면 기본값
-    expect((await ctx.data.getEffective('octocat', 'dotfiles')).sources.worktreePath).toBe('서버 사본')
+    expect((await ctx.data.getEffective('octocat', 'dotfiles')).sources.worktreePath).toBe('copy')
     ctx.state.serverCopy = {}
-    expect((await ctx.data.getEffective('octocat', 'dotfiles')).sources.worktreePath).toBe('기본값')
+    expect((await ctx.data.getEffective('octocat', 'dotfiles')).sources.worktreePath).toBe('default')
     expect(ctx.api.putSettings).not.toHaveBeenCalled()
+  })
+
+  it('effective: 조직 사본이 있으면 저장소 사본에 섞인(더 오래된) 조직 값은 쓰지 않는다', async () => {
+    const ctx = await createTestCtx({ mode: 'local' })
+    ctx.state.serverCopy = { orgs: { acme: { etcBranchName: 'new-etc' } } }
+    ctx.state.effective['acme/widgets'] = {
+      values: { ...EFFECTIVE.values, etcBranchName: 'old-etc', postCreateScript: 'old-org-script', sparsePaths: 'desktop' },
+      sources: { ...EFFECTIVE.sources, etcBranchName: 'org', postCreateScript: 'org', sparsePaths: 'project' },
+    }
+    const eff = await ctx.data.getEffective('Acme', 'Widgets')
+    // 조직 사본에서 없어진 조직 값(postCreateScript)은 되살리지 않고, 프로젝트 값은 그대로
+    expect(eff.values).toMatchObject({ etcBranchName: 'new-etc', postCreateScript: '', sparsePaths: 'desktop' })
+    // 전역 사본이 없으면 저장소 사본의 전역 값이라도 쓴다(기본값보다 서버에 가깝다)
+    expect(eff.values.worktreePath).toBe(EFFECTIVE.values.worktreePath)
+  })
+
+  it('config: 조직 이름이 객체 키여도 안전 — constructor·__proto__, 서버가 받지 않을 이름은 거부', async () => {
+    const ctx = await createTestCtx({ mode: 'local' })
+    await configSet(ctx, 'branchTemplate', 'x/{number}', { org: 'constructor' })
+    expect((await ctx.data.getEffective('constructor', 'r')).values.branchTemplate).toBe('x/{number}')
+    await configSet(ctx, 'branchTemplate', 'p/{number}', { org: '__proto__' })
+    expect(({} as Record<string, unknown>).branchTemplate).toBeUndefined()
+    expect((await ctx.data.getEffective('__proto__', 'r')).values.branchTemplate).toBe('p/{number}')
+    const disk = await readConfig(ctx.paths.config)
+    expect(Object.keys(disk.local.orgs).sort()).toEqual(['__proto__', 'constructor'])
+    await expect(configSet(ctx, 'branchTemplate', 'x/{number}', { org: 'foo bar' })).rejects.toThrow('조직·저장소 이름이 올바르지 않습니다')
+  })
+
+  it('repos: 다른 SSH 세션이 그 사이 바꾼 선택을 덮어쓰지 않는다(파일의 최신 값 위에서 바꾼다)', async () => {
+    const ctx = await createTestCtx({ mode: 'local' })
+    await reposAdd(ctx, ['acme/widgets'])
+    // 다른 세션의 `minmo repos add acme/x`
+    const other = await createTestCtx({ paths: ctx.paths, loggedIn: false })
+    await reposAdd(other, ['acme/x'])
+    await reposAdd(ctx, ['octocat/*'])
+    expect((await readConfig(ctx.paths.config)).local.visibleRepos).toEqual(['acme/widgets', 'acme/x', 'octocat/*'])
+    expect(ctx.config.local.visibleRepos).toEqual(['acme/widgets', 'acme/x', 'octocat/*'])
+  })
+
+  it('config.json 이 깨졌으면 고칠 곳을 알려 준다(스택 없이)', async () => {
+    const ctx = await createTestCtx({ mode: 'local' })
+    await writeFile(ctx.paths.config, '{ broken')
+    await expect(createTestCtx({ paths: ctx.paths })).rejects.toThrow(/설정 파일을 읽을 수 없습니다: .*config\.json/)
   })
 
   it('config set: 서버 규칙으로 검사하고, "-" 는 로컬 값을 지운다(전역 포함) — 빈 항목은 정리', async () => {
@@ -171,8 +220,37 @@ describe('서버 모드 — 받은 값을 사본으로 남긴다', () => {
     await ctx.data.getEffective('Acme', 'Widgets')
     expect(ctx.state.serverCopy).toMatchObject({ visibleRepos: ['acme/*'], global: { worktreePath: '~/copy/{owner}/{repo}/{branch}' } })
     expect(ctx.state.effective['acme/widgets']).toEqual(EFFECTIVE)
+    // 일부만 받은 사본 — 전체 갱신 시각은 `mode local` 때만 남긴다
     const saved = JSON.parse(await readFile(ctx.paths.state, 'utf8'))
-    expect(saved.serverCopy.syncedAt).toEqual(expect.any(String))
+    expect(saved.serverCopy.syncedAt).toBeUndefined()
+  })
+
+  it('config set: 저장된 값으로 사본을 갱신한다(전역·조직), 프로젝트는 그 저장소 설정을 다시 받는다', async () => {
+    const ctx = await createTestCtx({ api: { getSettings: async () => GLOBAL } })
+    await configSet(ctx, 'branchTemplate', 'feat/{number}', {})
+    expect(ctx.state.serverCopy.global?.branchTemplate).toBe('feat/{number}')
+    await configSet(ctx, 'etcBranchName', 'misc', { org: 'Acme' })
+    expect(ctx.state.serverCopy.orgs?.acme).toMatchObject({ etcBranchName: 'misc' })
+    await configSet(ctx, 'sparsePaths', 'desktop', { project: 'Acme/Widgets' })
+    expect(ctx.api.getEffective).toHaveBeenCalledWith('Acme', 'Widgets')
+    expect(ctx.state.effective['acme/widgets']).toEqual(EFFECTIVE)
+  })
+
+  it('JSON 출력은 이전과 같다(updatedAt, sources 코드) — 오프라인이면 사본을 보여 주며 stderr 로 알린다', async () => {
+    const ctx = await createTestCtx({ api: { getSettings: async () => GLOBAL } })
+    await configGet(ctx, { json: true })
+    expect(JSON.parse(ctx.logs[0])).toMatchObject({ updatedAt: 't', worktreePath: '~/copy/{owner}/{repo}/{branch}' })
+    await configGet(ctx, { effective: 'acme/widgets', json: true })
+    expect(JSON.parse(ctx.logs[1]).sources.branchTemplate).toBe('global')
+    ctx.api.getEffective.mockImplementation(offline)
+    await configGet(ctx, { effective: 'acme/widgets' })
+    expect(ctx.errors).toEqual(['서버에 연결할 수 없어 마지막으로 받은 사본을 보여 줍니다'])
+    expect(ctx.logs.at(-1)).toContain('(서버 사본)')
+  })
+
+  it('repos list: 서버에 닿지 않으면 "전체 표시" 대신 오류', async () => {
+    const ctx = await createTestCtx({ api: { getVisibleRepos: offline } })
+    await expect(reposList(ctx)).rejects.toThrow('minmo 서버에 연결할 수 없습니다')
   })
 
   it('repos reset 은 로컬 모드 전용', async () => {

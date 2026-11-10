@@ -10,6 +10,8 @@ import { dirname, join } from 'node:path'
 import type { Effective, SettingsField, SettingsValues } from '@minmo/api-client'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
 
+import { CliError } from './errors'
+
 export type Paths = {
   configDir: string
   credentials: string
@@ -52,8 +54,11 @@ export type Config = { mode: Mode; local: LocalSettings }
 /** 서버 모드에서 받은 값 — 로컬 모드의 기본값이 된다 */
 export type ServerCopy = {
   global?: SettingsValues
+  /** 소문자 owner → 서버 조직 설정 중 값이 있는 필드(받은 조직만) */
+  orgs?: Record<string, LocalScope>
   /** 없으면 받은 적 없음, null 이면 서버도 전체 표시 */
   visibleRepos?: string[] | null
+  /** 마지막 전체 갱신(`minmo mode local`) 시각 */
   syncedAt?: string
 }
 
@@ -95,11 +100,18 @@ export async function loadState(p: Paths): Promise<State> {
 }
 
 export async function loadConfig(p: Paths): Promise<Config> {
-  const c = await readJson<{ mode?: unknown; local?: Partial<LocalSettings> }>(p.config)
+  let c: ({ mode?: unknown; local?: Partial<LocalSettings> } & Record<string, unknown>) | null
+  try {
+    c = await readJson(p.config)
+  } catch (e) {
+    // 사용자가 손으로 고칠 수 있는 파일이라 스택 대신 고칠 곳을 알려 준다
+    throw new CliError(`설정 파일을 읽을 수 없습니다: ${p.config} (${e instanceof Error ? e.message : String(e)}) — 고치거나 지운 뒤 다시 실행하세요`)
+  }
   const l = c?.local ?? {}
   const local: LocalSettings = { global: l.global ?? {}, orgs: l.orgs ?? {}, projects: l.projects ?? {} }
   if (l.visibleRepos !== undefined) local.visibleRepos = l.visibleRepos
-  return { mode: c?.mode === 'local' ? 'local' : 'server', local }
+  // 모르는 키는 그대로 둔다(다시 쓸 때 지우지 않게)
+  return { ...c, mode: c?.mode === 'local' ? 'local' : 'server', local }
 }
 
 let writes: Promise<void> = Promise.resolve()

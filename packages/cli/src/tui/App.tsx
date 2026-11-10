@@ -8,9 +8,11 @@ import { isOwnerAllSelected, toggleOwnerAll, toggleRepo, worktreeId } from '@min
 import type { GitHubRepo, IssueTarget, RepoSelection, SetupLogEvent } from '@minmo/core'
 
 import { loadSelection } from '../commands/issues'
+import { SOURCE_LABEL } from '../backend'
 import { serverErrorMessage } from '../context'
 import type { Ctx } from '../context'
 import { NOTES_SERVER_ONLY } from '../errors'
+import { reloadState } from '../store'
 import { buildRows, expandSelection } from './model'
 import type { IssueItem, Row, TreeData } from './model'
 
@@ -181,7 +183,7 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
       const eff = await ctx.data.getEffective(repo.owner, repo.name)
       setDetail([
         `설정 — ${repo.owner}/${repo.name} (값 · 출처)`,
-        ...Object.entries(eff.values).map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 60)} · ${eff.sources[k as keyof typeof eff.sources]}`),
+        ...Object.entries(eff.values).map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 60)} · ${SOURCE_LABEL[eff.sources[k as keyof typeof eff.sources]]}`),
         '',
         `바꾸려면: minmo config set <key> <value> --project owner/repo${ctx.mode === 'local' ? ' (로컬 값)' : ''}`,
       ])
@@ -221,7 +223,15 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
       setShowAll((v) => !v)
       return setMessage(showAll ? '보일 저장소만 표시' : '숨긴 저장소도 표시 — f 로 보이기/숨기기')
     }
-    if (input === 'r') return void refresh()
+    if (input === 'r') {
+      // 다른 SSH 세션·tmux 패널의 minmo 가 바꾼 worktree·로컬 값도 다시 읽는다
+      return void reloadState(ctx.paths, ctx.state, ctx.config)
+        .catch(() => undefined)
+        .then(() => {
+          syncWorktrees()
+          return refresh()
+        })
+    }
     if (!row) return
 
     if ((key.leftArrow || input === 'h') && row.kind !== 'issue' && row.kind !== 'note' && row.expanded) return toggleExpand(row.id, false)
