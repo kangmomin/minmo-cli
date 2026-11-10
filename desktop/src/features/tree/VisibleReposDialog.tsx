@@ -41,14 +41,28 @@ export function VisibleReposDialog({ open, onOpenChange }: VisibleReposDialogPro
 
 function VisibleReposBody({ onDone }: { onDone(): void }) {
   const current = useVisibleRepos()
+  // 충돌 안내는 폼 밖에 둔다 — 재조회로 updatedAt 이 바뀌면 폼이 새로 마운트돼 안내가 사라지기 때문
+  const [notice, setNotice] = useState<string | null>(null)
   if (!current.data) {
     return <p className="text-sm text-muted-foreground">{current.isError ? '선택을 불러올 수 없습니다 — 서버 연결 필요' : '불러오는 중…'}</p>
   }
   // 저장 후 재조회로 updatedAt 이 바뀌면 초안을 새로 시작한다
-  return <VisibleReposForm key={current.data.updatedAt ?? 'none'} current={current.data} reload={() => void current.refetch()} onDone={onDone} />
+  return (
+    <VisibleReposForm
+      key={current.data.updatedAt ?? 'none'}
+      current={current.data}
+      notice={notice}
+      onConflict={() => {
+        setNotice('다른 기기(원격 CLI 등)에서 먼저 바뀌었습니다 — 최신 선택을 다시 불러왔으니 확인 후 다시 저장하세요')
+        void current.refetch()
+      }}
+      onDone={onDone}
+    />
+  )
 }
 
-function VisibleReposForm({ current, reload, onDone }: { current: VisibleRepos; reload(): void; onDone(): void }) {
+function VisibleReposForm(props: { current: VisibleRepos; notice: string | null; onConflict(): void; onDone(): void }) {
+  const { current, onDone } = props
   const uid = useId()
   const owners = useOwners()
   const save = useSaveVisibleRepos()
@@ -65,8 +79,7 @@ function VisibleReposForm({ current, reload, onDone }: { current: VisibleRepos; 
       onDone()
     } catch (e) {
       if (e instanceof ApiError && e.code === 'conflict') {
-        setError('다른 기기(원격 CLI 등)에서 먼저 바뀌었습니다 — 최신 선택을 다시 불러왔으니 확인 후 다시 저장하세요')
-        reload()
+        props.onConflict()
       } else {
         setError(`저장 실패 — ${e instanceof Error ? e.message : String(e)}`)
       }
@@ -103,7 +116,7 @@ function VisibleReposForm({ current, reload, onDone }: { current: VisibleRepos; 
 
       {/* live region 은 미리 렌더해 두어야 변화가 읽힌다 */}
       <p role="alert" className="text-sm text-destructive">
-        {error}
+        {error ?? props.notice}
       </p>
       {offline && <p className="text-sm text-muted-foreground">서버 미연결 — 선택을 저장할 수 없습니다</p>}
       <DialogFooter>

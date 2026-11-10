@@ -12,10 +12,12 @@ import (
 const (
 	// CLICodeTTL 은 원격 CLI 로그인 코드의 유효 시간이다.
 	CLICodeTTL = 10 * time.Minute
-	// cliCodeMaxFailures 는 누적 실패 상한이다. 넘으면 대기 중인 코드를 모두 무효로 해 추측 공격 창을 닫는다.
-	cliCodeMaxFailures = 10
-	cliCodeCap         = 1000
-	cliCodeLen         = 8
+	// cliCodeMaxFailures 는 cliCodeFailureWindow 안의 실패 상한이다. 넘으면 대기 중인 코드를 모두 무효로 해 추측 공격 창을 닫는다.
+	// 창이 지나면 다시 센다 — 며칠에 걸친 오타가 쌓여 새로 발급한 코드까지 지우지 않게
+	cliCodeMaxFailures   = 10
+	cliCodeFailureWindow = CLICodeTTL
+	cliCodeCap           = 1000
+	cliCodeLen           = 8
 )
 
 // Crockford base32 — 사람이 옮겨 적기 쉬운 문자만(I·L·O·U 없음).
@@ -35,6 +37,8 @@ type CLICodeStore struct {
 	byHash   map[string]pendingCLICode
 	byUser   map[string]string // userID → hash
 	failures int
+	// failSince 는 현재 실패 집계 창의 시작 시각
+	failSince time.Time
 }
 
 // NewCLICodeStore 는 now 주입 시계를 쓰는 저장소를 만든다.
@@ -77,6 +81,9 @@ func (s *CLICodeStore) Take(code string) (userID string, ok bool) {
 	h := hashCLICode(norm)
 	p, found := s.byHash[h]
 	if !valid || !found {
+		if now.Sub(s.failSince) >= cliCodeFailureWindow {
+			s.failures, s.failSince = 0, now
+		}
 		s.failures++
 		if s.failures >= cliCodeMaxFailures {
 			s.byHash = map[string]pendingCLICode{}

@@ -166,12 +166,11 @@ Host my-server
   HostName <원격 주소>
   User <사용자>
   RemoteForward /home/<사용자>/.minmo/server.sock 127.0.0.1:8787
-  ExitOnForwardFailure yes
-  StreamLocalBindUnlink yes
 ```
 
-- TCP 포트 대신 **Unix 소켓**으로 역터널한다 — 원격의 다른 사용자가 포트로 접근하거나, 포트 충돌로 토큰이 엉뚱한 곳으로 가는 일을 막는다.
-- 원격 sshd 가 `AllowStreamLocalForwarding` 을 허용해야 한다(기본 허용). 같은 PC 에서 여러 SSH 세션을 열면 마지막 세션의 터널이 쓰인다.
+- TCP 포트 대신 **Unix 소켓**으로 역터널한다 — 원격의 다른 사용자가 포트로 접근하거나, 포트 충돌로 토큰이 엉뚱한 곳으로 가는 일을 막는다. CLI 는 `MINMO_SERVER` 를 명시하지 않으면 소켓만 쓰고(127.0.0.1:8787 로 넘어가지 않음), 소켓 소유자가 자신이 아니면 연결하지 않는다.
+- 원격 **sshd_config** 에 `StreamLocalBindUnlink yes` 가 있어야 재접속 때 이전 소켓을 바꿔 쓴다(관리자 설정, 클라이언트 쪽 같은 이름의 옵션은 RemoteForward 에 효과가 없다). 없으면 재접속 전에 원격에서 `rm ~/.minmo/server.sock` — `minmo doctor` 가 남은 소켓을 알려 준다. 같은 이유로 `ExitOnForwardFailure` 는 넣지 않는다(남은 소켓 때문에 접속 자체가 막힌다).
+- 원격 sshd 가 `AllowStreamLocalForwarding` 을 허용해야 한다(기본 허용). 원격에 `~/.minmo` 폴더가 먼저 있어야 한다.
 - 소켓 대신 다른 주소를 쓰려면 `MINMO_SERVER=http://…`, 소켓 경로는 `MINMO_SOCKET`.
 
 ### 로그인

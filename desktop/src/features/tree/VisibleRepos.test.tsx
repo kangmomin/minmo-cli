@@ -96,14 +96,16 @@ describe('표시할 저장소 다이얼로그', () => {
     expect(api.putVisibleRepos.mock.calls[0][0]).toEqual({ repos: null, baseUpdatedAt: '2026-11-10T00:00:00.000Z' })
   })
 
-  it('409 conflict → 안내하고 다시 불러온다(다이얼로그 유지)', async () => {
+  it('409 conflict → 다시 불러와도(새 updatedAt) 안내가 남고 다이얼로그 유지', async () => {
     const { api, user } = setup({ repos: null, updatedAt: null }, async () => {
       throw apiError(409, 'conflict')
     })
+    // 재조회는 다른 기기가 저장한 새 값을 돌려준다 — 폼이 새로 마운트돼도 안내는 남아야 한다
+    api.getVisibleRepos.mockResolvedValue({ repos: ['zed/tools'], updatedAt: '2026-11-10T00:00:09.000Z' })
     await user.click(await screen.findByRole('button', { name: '표시할 저장소' }))
     const dialog = await screen.findByRole('dialog')
     await user.click(within(dialog).getByRole('button', { name: '저장' }))
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('먼저 바뀌었습니다')
-    await waitFor(() => expect(api.getVisibleRepos.mock.calls.length).toBeGreaterThanOrEqual(2))
+    await waitFor(() => expect(within(dialog).getByRole('radio', { name: '고른 저장소만' })).toBeChecked())
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('먼저 바뀌었습니다')
   })
 })

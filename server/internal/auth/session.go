@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -105,10 +106,12 @@ func LookupSession(ctx context.Context, db *sql.DB, token string, now time.Time)
 		s.LastUsedAt = &lastUsed.Int64
 	}
 	if !lastUsed.Valid || nowMs-lastUsed.Int64 >= lastUsedGranularity.Milliseconds() {
+		// 표시용 정보라 실패(예: 잠금 대기 초과)해도 요청은 계속한다
 		if _, err := db.ExecContext(ctx, `UPDATE sessions SET last_used_at = ? WHERE id = ?`, nowMs, s.ID); err != nil {
-			return Session{}, fmt.Errorf("세션 사용 시각 갱신 실패: %w", err)
+			slog.Warn("세션 사용 시각 갱신 실패", "err", err)
+		} else {
+			s.LastUsedAt = &nowMs
 		}
-		s.LastUsedAt = &nowMs
 	}
 	return s, nil
 }

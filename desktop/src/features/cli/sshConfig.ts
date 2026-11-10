@@ -3,6 +3,8 @@
 export const SSH_CONFIG_EXAMPLE = `Host my-server
   HostName <원격 주소>
   User <사용자>
-  RemoteForward /home/<사용자>/.minmo/server.sock 127.0.0.1:8787
-  ExitOnForwardFailure yes
-  StreamLocalBindUnlink yes`
+  RemoteForward /home/<사용자>/.minmo/server.sock 127.0.0.1:8787`
+
+/** RemoteForward 소켓은 원격 sshd 설정이 있어야 재접속 때 이전 것을 바꿔 쓴다(클라이언트 쪽 StreamLocalBindUnlink 는 효과 없음) */
+export const SSH_SERVER_NOTE =
+  '원격 sshd_config 에 StreamLocalBindUnlink yes 가 있어야 재접속 때 남은 소켓을 바꿔 씁니다(관리자 설정). 없으면 재접속 전에 원격에서 rm ~/.minmo/server.sock 하세요 — minmo doctor 가 알려 줍니다.'

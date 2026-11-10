@@ -69,7 +69,9 @@ describe('원격 CLI 접속', () => {
     setup()
     const pre = screen.getByTestId('ssh-config')
     expect(pre).toHaveTextContent('RemoteForward /home/<사용자>/.minmo/server.sock 127.0.0.1:8787')
-    expect(pre).toHaveTextContent('ExitOnForwardFailure yes')
+    // 남은 소켓이 있으면 ExitOnForwardFailure 는 접속 자체를 막으므로 넣지 않는다
+    expect(pre).not.toHaveTextContent('ExitOnForwardFailure')
+    expect(screen.getByText(/StreamLocalBindUnlink yes/)).toBeInTheDocument()
   })
 
   it('세션 목록 — 이 기기는 끊기 없음, CLI 세션은 끊으면 목록에서 빠진다', async () => {

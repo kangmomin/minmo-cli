@@ -76,3 +76,18 @@ func toLower(s string) string {
 	}
 	return string(out)
 }
+
+func TestCLICode_FailureWindowResets(t *testing.T) {
+	c := &clock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
+	s := auth.NewCLICodeStore(c.Now)
+	for i := 0; i < 9; i++ {
+		s.Take("ZZZZ-ZZZZ")
+	}
+	// 창(10분)이 지나면 실패 수를 다시 센다 — 오래된 오타 9번 + 새 오타 1번으로 새 코드가 지워지지 않는다
+	c.now = c.now.Add(auth.CLICodeTTL + time.Second)
+	code, _, _ := s.Issue("u1")
+	s.Take("ZZZZ-ZZZZ")
+	if uid, ok := s.Take(code); !ok || uid != "u1" {
+		t.Errorf("창이 지난 실패로 새 코드가 지워졌다: %q %v", uid, ok)
+	}
+}

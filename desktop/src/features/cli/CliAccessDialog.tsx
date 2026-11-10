@@ -10,7 +10,7 @@ import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { queryKeys } from '../../lib/queryKeys'
 import { useSessionStore } from '../../store/session'
-import { SSH_CONFIG_EXAMPLE } from './sshConfig'
+import { SSH_CONFIG_EXAMPLE, SSH_SERVER_NOTE } from './sshConfig'
 
 export interface CliAccessDialogProps {
   open: boolean
@@ -120,6 +120,7 @@ function CliAccessBody() {
             `ssh my-server` 로 접속한 뒤 `minmo` 를 실행합니다. 원격에 `~/.minmo` 폴더가 있어야 합니다(`minmo doctor` 로 확인).
           </span>
         </div>
+        <p className="text-xs text-muted-foreground">{SSH_SERVER_NOTE}</p>
       </section>
 
       <SessionsSection uid={uid} setStatus={setStatus} setError={setError} />
