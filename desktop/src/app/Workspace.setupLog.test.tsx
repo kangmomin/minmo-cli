@@ -17,6 +17,7 @@ import { Workspace } from './Workspace'
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     static strings = { promptLabel: '', tooMuchOutput: '' }
+    options: Record<string, unknown> = {}
     cols = 80
     rows = 24
     loadAddon() {}

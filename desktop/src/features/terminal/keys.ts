@@ -3,17 +3,33 @@
 /** 터미널은 Tab 키를 셸로 보내므로 키보드 사용자가 빠져나갈 단축키가 필요하다 (WCAG 2.1.2) */
 export const TERMINAL_EXIT_HINT = 'Ctrl+Shift+M'
 
+/** 패널 단축키 — 앱이 우선 처리하므로 셸의 Ctrl+D(EOF)·Ctrl+W(단어 지우기)는 이 키로 보낼 수 없다(사용자 결정) */
+export const PANE_KEYS = { splitRight: 'Ctrl+D', splitDown: 'Ctrl+Shift+D', close: 'Ctrl+W' } as const
+
+export interface PaneKeyActions {
+  splitRight(): void
+  splitDown(): void
+  close(): void
+}
+
+const isKey = (e: KeyboardEvent, letter: string) => e.code === `Key${letter.toUpperCase()}` || e.key.toLowerCase() === letter
+
 /**
  * xterm attachCustomKeyEventHandler 용. false 를 돌려주면 xterm 이 키를 처리(셸 전송)하지 않는다.
- * Ctrl+Shift+M 은 keydown 에서 onExit 를 1회 부르고, keypress/keyup 도 셸로 새지 않게 막는다.
+ * 앱 단축키는 keydown 에서 1회 실행하고, keypress/keyup 도 셸로 새지 않게 막는다.
  */
-export function createTerminalKeyHandler(onExit: () => void): (e: KeyboardEvent) => boolean {
+export function createTerminalKeyHandler(onExit: () => void, panes?: PaneKeyActions): (e: KeyboardEvent) => boolean {
   return (e) => {
-    const isExit = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.code === 'KeyM' || e.key.toLowerCase() === 'm')
-    if (!isExit) return true
+    if (!e.ctrlKey || e.altKey || e.metaKey) return true
+    let action: (() => void) | undefined
+    if (e.shiftKey && isKey(e, 'm')) action = onExit
+    else if (panes && e.shiftKey && isKey(e, 'd')) action = panes.splitDown
+    else if (panes && !e.shiftKey && isKey(e, 'd')) action = panes.splitRight
+    else if (panes && !e.shiftKey && isKey(e, 'w')) action = panes.close
+    if (!action) return true
     if (e.type === 'keydown') {
       e.preventDefault()
-      onExit()
+      action()
     }
     return false
   }

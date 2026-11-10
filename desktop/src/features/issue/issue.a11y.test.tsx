@@ -21,6 +21,7 @@ const xterm = vi.hoisted(() => ({ handlers: [] as ((e: KeyboardEvent) => boolean
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     static strings = { promptLabel: '', tooMuchOutput: '' }
+    options: Record<string, unknown> = {}
     cols = 80
     rows = 24
     loadAddon() {}
