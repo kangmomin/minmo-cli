@@ -6,7 +6,7 @@ import { worktreeId } from '@minmo/core'
 import { createTestCtx } from '../test/fakes'
 import { App } from './App'
 import type { ExitResult } from './App'
-import { buildRows } from './model'
+import { buildRows, expandSelection } from './model'
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms))
 const DOWN = '\u001B[B'
@@ -35,6 +35,11 @@ describe('TUI 트리 모델', () => {
     expect(rows.find((r) => r.id === 'r:Acme/gadgets')).toMatchObject({ hidden: true, worktrees: 1 })
   })
 
+  it('expandSelection: 전체 표시(null)·조직 전체를 명시 목록으로 펼친다(하나만 숨길 때 나머지 유지)', () => {
+    expect(expandSelection(null, ['Acme', 'zed'], 'Acme', ['Widgets', 'gadgets'])).toEqual(['zed/*', 'acme/widgets', 'acme/gadgets'])
+    expect(expandSelection(['acme/widgets'], ['Acme'], 'Acme', ['Widgets', 'gadgets'])).toEqual(['acme/widgets'])
+  })
+
   it('검색은 저장소 이름으로 거르고 조직을 자동으로 펼친다', () => {
     const rows = buildRows(data, { sel: null, showAll: false, expanded: new Set(), search: 'gad', worktrees: {} })
     expect(rows.map((r) => r.id)).toEqual(['o:Acme', 'r:Acme/gadgets'])
@@ -42,6 +47,22 @@ describe('TUI 트리 모델', () => {
 })
 
 describe('TUI', () => {
+  it('전체 표시 중 f 로 저장소 하나를 숨기면 나머지는 그대로 보인다', async () => {
+    const ctx = await createTestCtx()
+    const ui = render(<App ctx={ctx} login="octocat" onExit={() => {}} rows={30} />)
+    await waitFor(() => ui.lastFrame()!.includes('▸ Acme'))
+    ui.stdin.write(DOWN)
+    await tick()
+    ui.stdin.write(ENTER)
+    await waitFor(() => ui.lastFrame()!.includes('gadgets'))
+    ui.stdin.write(DOWN)
+    await tick()
+    ui.stdin.write('f') // Widgets 숨김
+    await waitFor(() => ui.lastFrame()!.includes('보일 저장소를 저장했습니다'))
+    expect(ctx.api.putVisibleRepos).toHaveBeenCalledWith({ repos: ['acme/gadgets', 'octocat/*'], baseUpdatedAt: null })
+    ui.unmount()
+  })
+
   it('조직을 펼치고 저장소·이슈를 고른 뒤 Enter 로 worktree 를 준비한다', async () => {
     const ctx = await createTestCtx()
     ctx.worktree.openIssue = vi.fn(async (t) => {

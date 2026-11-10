@@ -4,13 +4,13 @@ import { Box, Text, useApp, useInput } from 'ink'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { ApiError } from '@minmo/api-client'
-import { toggleOwnerAll, toggleRepo, worktreeId } from '@minmo/core'
+import { isOwnerAllSelected, toggleOwnerAll, toggleRepo, worktreeId } from '@minmo/core'
 import type { GitHubRepo, IssueTarget, RepoSelection, SetupLogEvent } from '@minmo/core'
 
 import { loadSelection } from '../commands/issues'
 import { serverErrorMessage } from '../context'
 import type { Ctx } from '../context'
-import { buildRows } from './model'
+import { buildRows, expandSelection } from './model'
 import type { IssueItem, Row, TreeData } from './model'
 
 export type Snapshot = {
@@ -165,10 +165,10 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
     }
   }
 
-  async function saveSelection(change: (cur: string[]) => string[]) {
+  async function saveSelection(change: (cur: string[] | null) => string[] | null) {
     try {
       const cur = await ctx.api.getVisibleRepos()
-      const saved = await ctx.api.putVisibleRepos({ repos: change(cur.repos ?? []), baseUpdatedAt: cur.updatedAt })
+      const saved = await ctx.api.putVisibleRepos({ repos: change(cur.repos), baseUpdatedAt: cur.updatedAt })
       setSel(saved.repos)
       setMessage('보일 저장소를 저장했습니다(데스크탑에도 반영)')
     } catch (e) {
@@ -233,8 +233,22 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
     if (row.kind === 'owner' || row.kind === 'repo') {
       if (key.rightArrow || key.return || input === 'l') return toggleExpand(row.id, key.rightArrow || input === 'l' ? true : undefined)
       if (input === 'f') {
-        if (row.kind === 'owner') return void saveSelection((s) => toggleOwnerAll(s, row.owner.login, !s.includes(`${row.owner.login.toLowerCase()}/*`)))
-        return void saveSelection((s) => toggleRepo(s, row.repo.owner, row.repo.name, row.hidden))
+        const owners = data.owners.map((o) => o.login)
+        const reposOf = (owner: string) => {
+          const r = data.repos[owner]
+          return Array.isArray(r) ? r.map((x) => x.name) : undefined
+        }
+        if (row.kind === 'owner') {
+          const login = row.owner.login
+          // 조직 전체가 보이는 중이면 숨기고(다른 조직은 그대로), 아니면 조직 전체를 보이게
+          return void saveSelection((s) =>
+            isOwnerAllSelected(s, login) ? toggleOwnerAll(expandSelection(s, owners, login, undefined), login, false) : toggleOwnerAll(s ?? [], login, true),
+          )
+        }
+        const { owner, name } = row.repo
+        return void saveSelection((s) =>
+          row.hidden ? toggleRepo(s ?? [], owner, name, true) : toggleRepo(expandSelection(s, owners, owner, reposOf(owner)), owner, name, false),
+        )
       }
       if (input === 's' && row.kind === 'repo') return void showSettings(row.repo)
       return

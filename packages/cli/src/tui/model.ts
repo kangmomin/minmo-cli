@@ -80,3 +80,14 @@ export function buildRows(data: TreeData, v: View): Row[] {
   }
   return rows
 }
+
+/**
+ * "모든 저장소 표시"(null)나 "조직 전체"(owner/*) 상태에서 하나를 숨길 때 나머지는 계속 보이도록 명시 목록으로 펼친다.
+ * owners 는 트리의 소유자 전체, ownerRepos 는 그 소유자의 불러온 저장소 이름이다.
+ */
+export function expandSelection(sel: string[] | null, owners: string[], owner: string, ownerRepos: string[] | undefined): string[] {
+  let s = sel ?? owners.map((o) => `${o.toLowerCase()}/*`)
+  const all = `${owner.toLowerCase()}/*`
+  if (s.includes(all) && ownerRepos) s = [...s.filter((e) => e !== all), ...ownerRepos.map((r) => `${owner}/${r}`.toLowerCase())]
+  return s
+}

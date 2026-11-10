@@ -12,6 +12,6 @@
     "lint": "npm run lint --workspaces --if-present",
     "build": "npm run build --workspace desktop && npm run build --workspace minmo-cli",
     "e2e": "npm run e2e --workspace desktop",
-    "pack:cli": "npm pack --workspace minmo-cli --pack-destination dist"
+    "pack:cli": "node -e \"require('fs').mkdirSync('dist',{recursive:true})\" && npm pack --workspace minmo-cli --pack-destination dist"
   }
 }

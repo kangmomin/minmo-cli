@@ -1,7 +1,7 @@
 // 생성 후 스크립트(sh) 실행기 — 데스크탑 Rust script.rs 의 비Windows 동작과 같다:
 // 임시 파일에 `set -e` 를 붙여 sh 로 실행, 별도 프로세스 그룹, 줄 단위 출력, 취소는 SIGTERM → 3초 뒤 SIGKILL.
 import { spawn } from 'node:child_process'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -26,11 +26,13 @@ export function createScriptHost(): ScriptHost {
   return {
     async scriptRun(req: ScriptRunRequest): Promise<ScriptRunResult> {
       if (cancelled.delete(req.runId)) return { exitCode: null, cancelled: true }
-      const dir = join(tmpdir(), 'minmo-scripts')
-      await mkdir(dir, { recursive: true })
+      // 실행마다 전용 폴더(0700)·파일(0600) — 공용 /tmp 고정 폴더는 다른 사용자가 먼저 만들어 스크립트를 바꿔치기할 수 있다
+      const dir = await mkdtemp(join(tmpdir(), 'minmo-script-'))
       const file = join(dir, `${safeName(req.runId)}.sh`)
-      await writeFile(file, `set -e\n${req.script.replace(/\r\n/g, '\n')}\n`)
       try {
+        await writeFile(file, `set -e\n${req.script.replace(/\r\n/g, '\n')}\n`, { mode: 0o600 })
+        // 파일을 쓰는 사이 취소됐으면 실행하지 않는다
+        if (cancelled.delete(req.runId)) return { exitCode: null, cancelled: true }
         return await new Promise<ScriptRunResult>((resolve, reject) => {
           const child = spawn('sh', [file], {
             cwd: req.cwd,
@@ -46,7 +48,10 @@ export function createScriptHost(): ScriptHost {
             })
           pump(child.stdout, 'stdout')
           pump(child.stderr, 'stderr')
-          child.on('error', reject)
+          child.on('error', (e) => {
+            running.delete(req.runId)
+            reject(e)
+          })
           child.on('close', (code) => {
             running.delete(req.runId)
             if (cancelled.delete(req.runId)) resolve({ exitCode: null, cancelled: true })
@@ -54,7 +59,7 @@ export function createScriptHost(): ScriptHost {
           })
         })
       } finally {
-        await rm(file, { force: true })
+        await rm(dir, { recursive: true, force: true })
       }
     },
 

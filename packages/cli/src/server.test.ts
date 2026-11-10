@@ -5,13 +5,12 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { DEFAULT_SERVER, createServerApi, resolveServer, socketFetch } from './server'
+import { createServerApi, resolveServer, socketFetch } from './server'
 
 describe('서버 경로 선택', () => {
-  it('MINMO_SERVER > 역터널 소켓 > 기본 127.0.0.1:8787', () => {
-    expect(resolveServer('/s.sock', { MINMO_SERVER: 'http://x:1' }, () => true)).toEqual({ kind: 'tcp', url: 'http://x:1' })
-    expect(resolveServer('/s.sock', {}, () => true)).toEqual({ kind: 'socket', path: '/s.sock' })
-    expect(resolveServer('/s.sock', {}, () => false)).toEqual({ kind: 'tcp', url: DEFAULT_SERVER })
+  it('MINMO_SERVER 를 명시했을 때만 TCP, 아니면 소켓만 — 소켓이 없어도 127.0.0.1:8787 로 넘어가 토큰을 보내지 않는다', () => {
+    expect(resolveServer('/s.sock', { MINMO_SERVER: 'http://x:1' })).toEqual({ kind: 'tcp', url: 'http://x:1' })
+    expect(resolveServer('/s.sock', {})).toEqual({ kind: 'socket', path: '/s.sock' })
   })
 })
 

@@ -8,6 +8,7 @@ import { editInEditor } from '../commands/issues'
 import { CliError, requireLogin } from '../context'
 import type { Ctx } from '../context'
 import { attach, ensureSession, tmuxAvailable } from '../host/tmux'
+import { reloadState } from '../store'
 import { App } from './App'
 import type { ExitResult, Snapshot } from './App'
 
@@ -27,8 +28,12 @@ export async function runTui(ctx: Ctx): Promise<void> {
     if (r.kind === 'quit') return
     snapshot = r.snapshot
     if (r.kind === 'attach') {
-      if (await tmuxAvailable()) attach(await ensureSession(r.path, r.title))
-      else snapshot = { ...snapshot, message: `tmux 가 없어 터미널을 열 수 없습니다 — cd ${r.path}` }
+      try {
+        if (await tmuxAvailable()) attach(await ensureSession(r.path, r.title))
+        else snapshot = { ...snapshot, message: `tmux 가 없어 터미널을 열 수 없습니다 — cd ${r.path}` }
+      } catch (e) {
+        snapshot = { ...snapshot, message: e instanceof Error ? e.message : String(e) }
+      }
     } else {
       const t = r.target
       try {
@@ -41,5 +46,7 @@ export async function runTui(ctx: Ctx): Promise<void> {
         snapshot = { ...snapshot, message: msg }
       }
     }
+    // tmux 안에서 다른 minmo(예: `minmo open`)가 worktree 를 만들었을 수 있다 — 파일의 최신 상태로 다시 그린다
+    await reloadState(ctx.paths, ctx.state).catch(() => undefined)
   }
 }

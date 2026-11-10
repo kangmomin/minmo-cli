@@ -57,8 +57,11 @@ describe('파일 작업 (데스크탑 Rust 와 같은 규칙)', () => {
   it('removeDir: 홈·얕은 경로 거부, 깊은 경로는 삭제', async () => {
     const base = await tmp()
     const deep = join(base, 'a', 'b')
+    // Linux 의 /tmp/x 는 얕아서 홈 검사보다 깊이 검사에 먼저 걸리므로 홈을 깊게 둔다
+    const home = join(base, 'home', 'u')
     await mkdir(deep, { recursive: true })
-    await expect(removeDir(base, base)).rejects.toThrow('홈 디렉터리')
+    await mkdir(home, { recursive: true })
+    await expect(removeDir(home, home)).rejects.toThrow('홈 디렉터리')
     await removeDir(deep)
     await expect(readFile(deep)).rejects.toThrow()
     await rm(base, { recursive: true, force: true })

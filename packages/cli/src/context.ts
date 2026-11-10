@@ -10,7 +10,7 @@ import { createNodeHost } from './host/node'
 import type { NodeHost } from './host/node'
 import { createServerApi, describeServer, resolveServer } from './server'
 import type { ServerTarget } from './server'
-import { defaultPaths, loadCredentials, loadState, saveState, statePathStore } from './store'
+import { defaultPaths, loadCredentials, loadState, statePathStore, updateState } from './store'
 import type { Credentials, Paths, State } from './store'
 
 /** 사용자에게 보여 줄 오류 — 스택 없이 메시지만 출력하고 종료 코드를 정한다 */
@@ -77,7 +77,14 @@ export async function createContext(o: CreateContextOptions = {}): Promise<Ctx> 
     getToken: async () => {
       const fromEnv = env.GITHUB_TOKEN || env.GH_TOKEN
       if (fromEnv) return fromEnv
-      serverToken ??= api.getGithubToken().then((t) => t.accessToken)
+      // 실패한 조회는 캐시하지 않는다 — 터널이 잠깐 끊겼다고 REST 폴백이 계속 막히지 않게
+      serverToken ??= api.getGithubToken().then(
+        (t) => t.accessToken,
+        (e: unknown) => {
+          serverToken = null
+          throw e
+        },
+      )
       return serverToken
     },
     onUnauthorized: () => {
@@ -93,8 +100,9 @@ export async function createContext(o: CreateContextOptions = {}): Promise<Ctx> 
     getEffective: async (owner, repo) => {
       try {
         const eff: Effective = await api.getEffective(owner, repo)
-        state.effective[effKey(owner, repo)] = eff
-        await saveState(paths, state).catch(() => undefined)
+        await updateState(paths, state, (s) => {
+          s.effective[effKey(owner, repo)] = eff
+        }).catch(() => undefined)
         return eff
       } catch (e) {
         // 터널이 끊겨도 한 번 받아 둔 설정으로는 열 수 있게

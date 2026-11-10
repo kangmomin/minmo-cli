@@ -165,7 +165,10 @@ export function editInEditor(initial: string, env: NodeJS.ProcessEnv = process.e
     try {
       await writeFile(file, initial)
       const editor = env.VISUAL || env.EDITOR || 'vi'
-      const r = spawnSync(editor, [file], { stdio: 'inherit', shell: /\s/.test(editor) })
+      // "code --wait" 처럼 인자가 붙은 편집기는 셸로 실행하고, 파일 경로는 따옴표로 감싼다
+      const r = /\s/.test(editor)
+        ? spawnSync(`${editor} ${JSON.stringify(file)}`, { stdio: 'inherit', shell: true })
+        : spawnSync(editor, [file], { stdio: 'inherit' })
       if (r.status !== 0) throw new CliError(`편집기가 오류로 끝났습니다: ${editor}`)
       return await readFile(file, 'utf8')
     } finally {

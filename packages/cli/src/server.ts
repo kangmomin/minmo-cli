@@ -1,6 +1,7 @@
-// minmo 서버 연결. 원격 호스트에서는 SSH 역터널이 만든 Unix 소켓(~/.minmo/server.sock)을 우선 쓴다 —
-// TCP 포트는 그 호스트의 다른 사용자도 접근할 수 있고, 포트 충돌 시 토큰이 엉뚱한 곳으로 갈 수 있어서다.
-import { existsSync } from 'node:fs'
+// minmo 서버 연결. 원격 호스트에서는 SSH 역터널이 만든 Unix 소켓(~/.minmo/server.sock)만 쓴다 —
+// TCP 포트는 그 호스트의 다른 사용자도 열 수 있어, 소켓이 없을 때 127.0.0.1:8787 로 넘어가면
+// 그 포트에서 듣는 아무 프로세스에게 세션 토큰을 보내게 된다. TCP 는 MINMO_SERVER 로 명시했을 때만 쓴다.
+import { lstatSync } from 'node:fs'
 import { request } from 'node:http'
 
 import { createApiClient } from '@minmo/api-client'
@@ -8,12 +9,10 @@ import type { ApiClient } from '@minmo/api-client'
 
 export type ServerTarget = { kind: 'socket'; path: string } | { kind: 'tcp'; url: string }
 
-export const DEFAULT_SERVER = 'http://127.0.0.1:8787'
-
-export function resolveServer(socketPath: string, env: NodeJS.ProcessEnv = process.env, exists = existsSync): ServerTarget {
+/** MINMO_SERVER 가 있으면 그 주소, 아니면 역터널 소켓(없으면 연결 시 network_error — 토큰을 다른 곳에 보내지 않는다) */
+export function resolveServer(socketPath: string, env: NodeJS.ProcessEnv = process.env): ServerTarget {
   if (env.MINMO_SERVER) return { kind: 'tcp', url: env.MINMO_SERVER }
-  if (exists(socketPath)) return { kind: 'socket', path: socketPath }
-  return { kind: 'tcp', url: DEFAULT_SERVER }
+  return { kind: 'socket', path: socketPath }
 }
 
 export function describeServer(t: ServerTarget): string {
@@ -24,6 +23,16 @@ export function describeServer(t: ServerTarget): string {
 export function socketFetch(socketPath: string): typeof fetch {
   return (input, init) =>
     new Promise<Response>((resolve, reject) => {
+      // 다른 사용자가 만든 소켓이면 토큰을 보내지 않는다(SSH 역터널 소켓은 접속한 사용자 소유)
+      const uid = process.getuid?.()
+      try {
+        if (uid !== undefined && lstatSync(socketPath).uid !== uid) {
+          reject(new Error(`소켓 소유자가 현재 사용자가 아닙니다: ${socketPath}`))
+          return
+        }
+      } catch {
+        // 없으면 아래 연결이 ENOENT 로 실패한다(오프라인으로 안내)
+      }
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
       const headers: Record<string, string> = {}
       new Headers(init?.headers).forEach((v, k) => (headers[k] = v))

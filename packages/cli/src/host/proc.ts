@@ -1,6 +1,6 @@
 // 자식 프로세스 실행과 프로세스 트리 정리(Linux·macOS).
 import { spawn } from 'node:child_process'
-import { readFile, readdir, readlink } from 'node:fs/promises'
+import { readFile, readdir, readlink, stat } from 'node:fs/promises'
 
 import type { CmdResult } from '@minmo/core'
 
@@ -112,10 +112,13 @@ export async function processesInDir(dir: string): Promise<number[]> {
     return []
   }
   const prefix = dir.endsWith('/') ? dir : `${dir}/`
+  const uid = process.getuid?.()
   const out: number[] = []
   for (const e of entries) {
     if (!/^\d+$/.test(e)) continue
     try {
+      // 같은 사용자 프로세스만 — root 로 실행해도 다른 사용자 것은 건드리지 않는다
+      if (uid !== undefined && (await stat(`/proc/${e}`)).uid !== uid) continue
       const cwd = await readlink(`/proc/${e}/cwd`)
       // 지워진 디렉터리는 " (deleted)" 가 붙는다
       const clean = cwd.replace(/ \(deleted\)$/, '')
