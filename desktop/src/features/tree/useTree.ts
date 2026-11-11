@@ -5,10 +5,10 @@ import { useCallback, useMemo } from 'react'
 
 import { isOfflineError } from '../../lib/apiErrors'
 import { useDeps } from '../../app/deps'
+import { useHost } from '../../app/host'
 import { GitHubError } from '@minmo/core'
 import type { GitHubIssue, GitHubOwner } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
-import { worktreeId } from '@minmo/core'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 
@@ -35,8 +35,7 @@ export function useRepos(owner: GitHubOwner, enabled: boolean) {
 }
 
 /** 이 저장소에서 로컬 worktree 가 있는 이슈 번호 (worktreePathMap 기준) */
-function worktreeNumbers(owner: string, repo: string): number[] {
-  const prefix = worktreeId(owner, repo, '')
+function worktreeNumbers(prefix: string): number[] {
   return Object.keys(useUiStore.getState().worktreePathMap)
     .filter((id) => id.startsWith(prefix))
     .map((id) => Number(id.slice(prefix.length)))
@@ -46,10 +45,11 @@ function worktreeNumbers(owner: string, repo: string): number[] {
 /** AC-03: ★기타 + open 이슈 + closed 중 로컬 worktree 가 있는 것(A-10) */
 export function useIssues(owner: string, repo: string, enabled: boolean) {
   const { github } = useDeps()
+  const worktreeId = useHost().issueId
   const map = useUiStore((s) => s.worktreePathMap)
   const query = useQuery({
     queryKey: queryKeys.githubIssues(owner, repo),
-    queryFn: () => github.listIssues(owner, repo, { ensureNumbers: worktreeNumbers(owner, repo) }),
+    queryFn: () => github.listIssues(owner, repo, { ensureNumbers: worktreeNumbers(worktreeId(owner, repo, '')) }),
     enabled,
     ...GITHUB_QUERY,
   })
@@ -62,7 +62,7 @@ export function useIssues(owner: string, repo: string, enabled: boolean) {
       .sort((a, b) => b.number - a.number)
       .map((i) => ({ key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: i.htmlUrl }))
     return [ETC_ISSUE as TreeIssue, ...rows]
-  }, [data, map, owner, repo])
+  }, [data, map, owner, repo, worktreeId])
   return { ...query, issues }
 }
 
@@ -70,17 +70,21 @@ export function useIssues(owner: string, repo: string, enabled: boolean) {
 export function useRefreshTree() {
   const queryClient = useQueryClient()
   const { tauri } = useDeps()
+  const host = useHost()
   return useCallback(async () => {
     const map = useUiStore.getState().worktreePathMap
     await Promise.all(
-      Object.entries(map).map(async ([id, entry]) => {
-        const exists = await tauri.pathExists(entry.path).catch(() => true)
-        if (!exists) useUiStore.getState().removeWorktree(id)
-      }),
+      // 지금 보는 호스트의 기록만 확인한다 — 다른 호스트의 경로를 여기서 찾으면 없는 것으로 보여 지워진다
+      Object.entries(map)
+        .filter(([id]) => host.owns(id))
+        .map(async ([id, entry]) => {
+          const exists = await tauri.pathExists(entry.path).catch(() => true)
+          if (!exists) useUiStore.getState().removeWorktree(id)
+        }),
     )
     await queryClient.invalidateQueries({ queryKey: queryKeys.githubAll })
     if (useSessionStore.getState().status === 'online') await queryClient.invalidateQueries({ queryKey: queryKeys.effectiveAll })
-  }, [queryClient, tauri])
+  }, [queryClient, tauri, host])
 }
 
 /** GitHub 오류 → 트리 인라인 문구 (EC-18 재시도 가능 시각 포함) */

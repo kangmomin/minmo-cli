@@ -210,7 +210,8 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     ptySpawn: async (req) => {
       const id = `mock-pty-${++ptySeq}`
       ptyCwd.set(id, req.cwd)
-      setTimeout(() => emitPty(id, `minmo mock terminal - ${req.cwd}\r\n$ `), 0)
+      const where = req.remote ? `${req.remote.host}:${req.cwd}${req.remote.session ? ` [tmux ${req.remote.session}]` : ''}` : req.cwd
+      setTimeout(() => emitPty(id, `minmo mock terminal - ${where}\r\n$ `), 0)
       return id
     },
     ptyWrite: async (id, data) => {
@@ -221,6 +222,32 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     ptyKill: async (id) => {
       ptyCwd.delete(id)
     },
+    // 원격 호스트: 호스트 하나(mock-server)가 이 mock 의 git·파일 상태를 함께 쓴다
+    sshHosts: async () => [{ alias: 'mock-server', hostName: '10.0.0.5', user: 'dev' }],
+    sshProbe: async (host) => {
+      if (host !== 'mock-server') throw { kind: 'unreachable', message: `ssh: connect to host ${host}: Connection timed out` }
+      return { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: true }
+    },
+    sshExec: async (_host, argv, o) => {
+      const [cmd, ...rest] = argv
+      if (cmd === 'git') return gitRun(rest, o)
+      if (cmd === 'test') return paths.has(rest[1]) ? ok() : fail('', 1)
+      if (cmd === 'rm') {
+        paths.delete(rest[rest.length - 1])
+        repos.delete(rest[rest.length - 1])
+        return ok()
+      }
+      // sh -s 스크립트: 파일 목록은 빈 목록, 복사는 0개
+      return o?.stdin?.includes('sort') ? ok('') : ok('0')
+    },
+    sshScriptRun: async (_host, req) => {
+      for (const l of [...scriptListeners]) l({ runId: req.runId, stream: 'stdout', line: '[mock] 원격 스크립트' })
+      return { exitCode: 0, cancelled: false }
+    },
+    sshScriptCancel: async (runId) => {
+      cancelled.add(runId)
+    },
+
     ptyKillByCwd: async (path) => {
       let n = 0
       for (const [id, cwd] of [...ptyCwd]) {

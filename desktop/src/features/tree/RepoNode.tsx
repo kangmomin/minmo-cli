@@ -11,7 +11,8 @@ import { Button } from '../../components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../../components/ui/context-menu'
 import type { GitHubRepo } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
-import { issueBranchContext, worktreeId } from '@minmo/core'
+import { issueBranchContext } from '@minmo/core'
+import { useHost } from '../../app/host'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
@@ -27,6 +28,7 @@ export interface RepoNodeProps {
 
 export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps) {
   const { api, home, platform } = useDeps()
+  const worktreeId = useHost().issueId
   const nodeId = `repo:${repo.owner}/${repo.name}`
   const expanded = useUiStore((s) => !!s.expanded[nodeId])
   const setExpanded = useUiStore((s) => s.setExpanded)
@@ -38,7 +40,7 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
 
   const entries = useMemo(
     () => issues.issues.map((i) => [i, map[worktreeId(repo.owner, repo.name, i.key)]] as const),
-    [issues.issues, map, repo.owner, repo.name],
+    [issues.issues, map, repo.owner, repo.name, worktreeId],
   )
   const hasAnyWorktree = entries.some(([, e]) => e !== undefined)
 

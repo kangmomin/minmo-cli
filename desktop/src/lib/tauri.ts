@@ -9,7 +9,16 @@ export type { Platform }
 // 호스트 공통 타입은 원격 CLI 와 함께 쓰도록 @minmo/core 에 있다
 export type { CmdResult, RunOptions, ScriptLogEvent, ScriptRunRequest, ScriptRunResult, Unlisten } from '@minmo/core'
 
-export type PtySpawnRequest = { cwd: string; cols: number; rows: number }
+/** ~/.ssh/config 의 Host 항목(src-tauri/src/commands/ssh.rs SshHost) */
+export type SshHostInfo = { alias: string; hostName: string | null; user: string | null }
+/** 원격 호스트 확인 결과 — POSIX(Linux·macOS)만 지원한다 */
+export type SshProbe = { platform: 'linux' | 'darwin'; home: string; git: string; tmux: boolean }
+export type SshErrorKind = 'host_key' | 'auth' | 'unreachable' | 'unsupported_os' | 'no_git' | 'unknown_host' | 'failed'
+export type SshError = { kind: SshErrorKind; message: string }
+/** 원격 터미널 — session 이 있으면 전용 tmux 세션에 붙고(ephemeral 은 떼면 사라짐), null 이면 로그인 셸 */
+export type RemotePty = { host: string; session: string | null; ephemeral: boolean }
+
+export type PtySpawnRequest = { cwd: string; cols: number; rows: number; remote?: RemotePty }
 export type PtyDataEvent = { id: string; data: string }
 
 /** 내장 서버 상태(src-tauri/src/server.rs Status) — external 은 debug 실행에서 외부 서버를 쓸 때 */
@@ -52,12 +61,20 @@ export interface TauriApi extends WorktreeHost, GhHost {
   ptyResize(id: string, cols: number, rows: number): Promise<void>
   ptyKill(id: string): Promise<void>
   /** cwd 가 path(또는 하위)인 PTY 를 모두 종료하고 종료 개수를 돌려준다 (worktree 삭제 전) */
-  ptyKillByCwd(path: string): Promise<number>
+  ptyKillByCwd(path: string, host?: string): Promise<number>
   onPtyData(cb: (e: PtyDataEvent) => void): Promise<Unlisten>
 
   scriptRun(req: ScriptRunRequest): Promise<ScriptRunResult>
   scriptCancel(runId: string): Promise<void>
   onScriptLog(cb: (e: ScriptLogEvent) => void): Promise<Unlisten>
+
+  /** 원격 호스트(SSH 프로필) — 이 PC 의 ssh 로 접속한다. 실패는 SshError 로 reject */
+  sshHosts(): Promise<SshHostInfo[]>
+  sshProbe(host: string): Promise<SshProbe>
+  /** 원격에서 argv 실행. 원격 명령의 non-zero 는 code 로, ssh 자체의 실패(연결·인증)는 reject */
+  sshExec(host: string, argv: string[], opts?: RunOptions & { stdin?: string }): Promise<CmdResult>
+  sshScriptRun(host: string, req: ScriptRunRequest): Promise<ScriptRunResult>
+  sshScriptCancel(runId: string): Promise<void>
 
   keychainGet(key: string): Promise<string | null>
   keychainSet(key: string, value: string): Promise<void>
@@ -118,6 +135,11 @@ export const TAURI_COMMANDS = {
   ptyKillByCwd: 'pty_kill_by_cwd',
   scriptRun: 'script_run',
   scriptCancel: 'script_cancel',
+  sshHosts: 'ssh_hosts',
+  sshProbe: 'ssh_probe',
+  sshExec: 'ssh_exec',
+  sshScriptRun: 'ssh_script_run',
+  sshScriptCancel: 'ssh_script_cancel',
   keychainGet: 'keychain_get',
   keychainSet: 'keychain_set',
   keychainDelete: 'keychain_delete',
@@ -155,16 +177,22 @@ export function createTauriApi(): TauriApi {
     ghRun: (args, opts) => call(C.ghRun, { args, cwd: opts?.cwd ?? null, env: opts?.env ?? null, stdin: opts?.stdin ?? null }),
     ghAvailable: () => call(C.ghAvailable),
 
-    ptySpawn: (req) => call(C.ptySpawn, { cwd: req.cwd, cols: req.cols, rows: req.rows }),
+    ptySpawn: (req) => call(C.ptySpawn, { cwd: req.cwd, cols: req.cols, rows: req.rows, remote: req.remote ?? null }),
     ptyWrite: (id, data) => call(C.ptyWrite, { id, data }),
     ptyResize: (id, cols, rows) => call(C.ptyResize, { id, cols, rows }),
     ptyKill: (id) => call(C.ptyKill, { id }),
-    ptyKillByCwd: (path) => call(C.ptyKillByCwd, { path }),
+    ptyKillByCwd: (path, host) => call(C.ptyKillByCwd, { path, host: host ?? null }),
     onPtyData: async (cb) => (await event()).listen<PtyDataEvent>(TAURI_EVENTS.ptyData, (e) => cb(e.payload)),
 
     scriptRun: (req) => call(C.scriptRun, { runId: req.runId, cwd: req.cwd, script: req.script, env: req.env }),
     scriptCancel: (runId) => call(C.scriptCancel, { runId }),
     onScriptLog: async (cb) => (await event()).listen<ScriptLogEvent>(TAURI_EVENTS.scriptLog, (e) => cb(e.payload)),
+
+    sshHosts: () => call(C.sshHosts),
+    sshProbe: (host) => call(C.sshProbe, { host }),
+    sshExec: (host, argv, opts) => call(C.sshExec, { host, argv, cwd: opts?.cwd ?? null, env: opts?.env ?? null, stdin: opts?.stdin ?? null }),
+    sshScriptRun: (host, req) => call(C.sshScriptRun, { host, runId: req.runId, cwd: req.cwd, script: req.script, env: req.env }),
+    sshScriptCancel: (runId) => call(C.sshScriptCancel, { runId }),
 
     keychainGet: (key) => call(C.keychainGet, { key }),
     keychainSet: (key, value) => call(C.keychainSet, { key, value }),

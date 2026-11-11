@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { useDeps } from '../../app/deps'
+import { useHost } from '../../app/host'
 import { GitHubError } from '@minmo/core'
 import type { GitHubClient } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
@@ -117,6 +118,9 @@ function classifyPushError(stderr: string): GitErrorCode {
   return 'git_failed'
 }
 
+/** 원격 호스트의 변경 내역 확인 주기 */
+export const REMOTE_GIT_POLL_MS = 15_000
+
 export function createGitOps(deps: GitOpsDeps): GitOps {
   const git = (cwd: string, args: string[]) => deps.tauri.gitRun(['-C', cwd, ...args])
 
@@ -199,18 +203,23 @@ export function useGit(target: UseGitTarget): {
   refresh(): Promise<void>
 } {
   const { tauri, github } = useDeps()
+  const host = useHost()
   const ops = useMemo(() => createGitOps({ tauri, github }), [tauri, github])
+  // 원격은 조회마다 ssh 연결을 새로 맺으므로 덜 자주 확인한다
+  const interval = host.alias === null ? 5000 : REMOTE_GIT_POLL_MS
+  // 같은 경로가 다른 호스트에도 있을 수 있어 호스트를 키에 넣는다
+  const key = host.scope(target.cwd)
   const status = useQuery({
-    queryKey: queryKeys.gitStatus(target.cwd),
+    queryKey: queryKeys.gitStatus(key),
     queryFn: () => ops.status(target.cwd),
-    // 로컬 명령이라 서버 retry 정책과 무관. 터미널에서 바꾼 파일을 반영하도록 5초 주기 갱신
-    refetchInterval: 5000,
+    // 로컬 명령이라 서버 retry 정책과 무관. 터미널에서 바꾼 파일을 반영하도록 주기 갱신
+    refetchInterval: interval,
     retry: false,
   })
   const unpushed = useQuery({
-    queryKey: queryKeys.gitUnpushed(target.cwd),
+    queryKey: queryKeys.gitUnpushed(key),
     queryFn: () => ops.unpushedCount(target.cwd),
-    refetchInterval: 5000,
+    refetchInterval: interval,
     retry: false,
   })
   return {

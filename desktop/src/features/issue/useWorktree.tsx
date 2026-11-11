@@ -1,33 +1,44 @@
 // worktree 서비스 배선(앱 수명 1개) + 이슈 열기/취소/재실행/삭제 액션
 import { useQueryClient } from '@tanstack/react-query'
-import { createContext, useContext, useMemo } from 'react'
+import { createContext, useContext, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
 
 import { ApiError } from '@minmo/api-client'
 
-import { useDeps } from '../../app/deps'
+import { useHost, useHostDeps } from '../../app/host'
+import type { Host } from '../../app/host'
 import { fetchEffective } from '../../lib/effective'
 import { GitHubError } from '@minmo/core'
-import { WorktreeError, createWorktreeService, worktreeId } from '@minmo/core'
+import { WorktreeError, createWorktreeService } from '@minmo/core'
 import type { DeleteResult, IssueTarget, WorktreeService } from '@minmo/core'
 import { useSetupStore } from '../../store/setup'
 import { uiWorktreePathStore, useUiStore } from '../../store/ui'
 
-const WorktreeContext = createContext<WorktreeService | null>(null)
+type ServiceFor = (host: Host) => WorktreeService
 
+const WorktreeContext = createContext<ServiceFor | null>(null)
+
+/** 호스트마다 worktree 서비스를 하나씩 둔다(실행 중인 스크립트·잠금이 호스트를 전환해도 유지되게) */
 export function WorktreeProvider({ children }: { children: ReactNode }) {
-  const deps = useDeps()
+  const hostDeps = useHostDeps()
   const queryClient = useQueryClient()
-  const service = useMemo(
-    () =>
-      createWorktreeService({
+  const services = useRef(new Map<string, { deps: unknown; service: WorktreeService }>())
+  const serviceFor = useMemo<ServiceFor>(
+    () => (host) => {
+      const deps = hostDeps(host)
+      const hit = services.current.get(host.id)
+      if (hit && hit.deps === deps) return hit.service
+      const paths = uiWorktreePathStore()
+      const service = createWorktreeService({
         tauri: deps.tauri,
         getEffective: (o, r) => fetchEffective(queryClient, deps.api, o, r),
         defaultBranch: (o, r) => deps.github.defaultBranch(o, r),
-        pathStore: uiWorktreePathStore(),
+        // core 는 호스트를 모른다 — 기록·로그의 id 만 이 호스트의 것으로 바꿔 준다
+        pathStore: { get: (id) => paths.get(host.scope(id)), set: (id, e) => paths.set(host.scope(id), e), delete: (id) => paths.delete(host.scope(id)) },
         home: deps.home,
         platform: deps.platform,
-        onLog: (e) => {
+        onLog: (raw) => {
+          const e = { ...raw, issueId: host.scope(raw.issueId) }
           const st = useSetupStore.getState()
           st.appendLog(e)
           if (e.step === 'script' && e.status === 'start') st.setScript(e.issueId, { status: 'running' })
@@ -37,16 +48,21 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
             if (entry) st.setOpen(e.issueId, { phase: 'ready', path: entry.path, branch: entry.branch, pathChanged: false })
           }
         },
-      }),
-    [deps, queryClient],
+      })
+      services.current.set(host.id, { deps, service })
+      return service
+    },
+    [hostDeps, queryClient],
   )
-  return <WorktreeContext.Provider value={service}>{children}</WorktreeContext.Provider>
+  return <WorktreeContext.Provider value={serviceFor}>{children}</WorktreeContext.Provider>
 }
 
-function useWorktreeService(): WorktreeService {
-  const s = useContext(WorktreeContext)
-  if (!s) throw new Error('WorktreeProvider 가 없습니다')
-  return s
+/** 이 영역의 호스트(app/host.tsx HostScope)에서 동작하는 worktree 서비스 */
+function useWorktreeService(): { service: WorktreeService; host: Host } {
+  const serviceFor = useContext(WorktreeContext)
+  const host = useHost()
+  if (!serviceFor) throw new Error('WorktreeProvider 가 없습니다')
+  return useMemo(() => ({ service: serviceFor(host), host }), [serviceFor, host])
 }
 
 /** 사용자에게 보여 줄 오류 문구 (UI State: git·스크립트 오류는 stderr 전문) */
@@ -77,7 +93,8 @@ export function describeOpenError(e: unknown): { code: string; message: string; 
 }
 
 export function useIssueActions() {
-  const service = useWorktreeService()
+  const { service, host } = useWorktreeService()
+  const worktreeId = host.issueId
 
   return useMemo(
     () => ({
@@ -147,6 +164,6 @@ export function useIssueActions() {
         return res
       },
     }),
-    [service],
+    [service, worktreeId],
   )
 }

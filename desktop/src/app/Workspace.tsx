@@ -15,6 +15,7 @@ import { SettingsDialog } from '../features/settings/SettingsDialog'
 import type { PreviewIssue } from '../features/settings/SettingsDialog'
 import { Sidebar } from '../features/tree/Sidebar'
 import { openServerSettings } from '../store/server'
+import { HostScope, aliasOfIssue, useHostConnection } from './host'
 import { useSessionStore } from '../store/session'
 import { useSetupStore } from '../store/setup'
 import { useUiStore } from '../store/ui'
@@ -31,10 +32,14 @@ export function Workspace() {
   const openState = useSetupStore((s) => (selectedId ? s.open[selectedId] : undefined))
   const [settings, setSettings] = useState<SettingsTarget | null>(null)
   const [cliOpen, setCliOpen] = useState(false)
+  const connection = useHostConnection()
 
   const selectedPreview: PreviewIssue | null = target ?? null
 
+  // 사이드바·설정은 고른 호스트 기준, 오른쪽 이슈 패널은 그 이슈가 있는 호스트 기준이다
+  // (사이드바에서 다른 호스트를 보는 동안에도 열어 둔 이슈와 터미널은 그대로 쓴다)
   return (
+    <HostScope alias={connection.ready ? connection.selected : null}>
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-center gap-3 border-b px-4 py-2">
         <span className="font-semibold">minmo</span>
@@ -86,6 +91,7 @@ export function Workspace() {
 
       <div className="flex min-h-0 flex-1">
         <Sidebar
+          connection={connection}
           onOpenSettings={(scope, preview) => {
             // 선택된 이슈가 같은 저장소면 미리보기 기준으로 쓴다
             const sameRepo =
@@ -94,13 +100,13 @@ export function Workspace() {
           }}
         />
         <main className="flex min-w-0 flex-1 flex-col">
-          {target ? (
-            <>
+          {target && selectedId ? (
+            <HostScope alias={aliasOfIssue(selectedId)}>
               <IssueHeader target={target} state={openState} />
               {/* key: 접힘 상태가 다른 이슈로 이어지지 않게 이슈마다 새로 마운트한다(CR-13) */}
               <WorktreeSetupLog key={selectedId} target={target} />
               <WorkTabs target={target} state={openState} />
-            </>
+            </HostScope>
           ) : (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
               왼쪽 트리에서 이슈(또는 ★기타)를 선택하세요
@@ -122,5 +128,6 @@ export function Workspace() {
         />
       )}
     </div>
+    </HostScope>
   )
 }
