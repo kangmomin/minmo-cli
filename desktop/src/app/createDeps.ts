@@ -25,10 +25,10 @@ export function createAppQueryClient(): QueryClient {
   return qc
 }
 
-/** 실제 앱 배선: Tauri(또는 mock) + 서버 API + GitHub 클라이언트 */
-export async function createAppDeps(queryClient: QueryClient): Promise<AppDeps> {
+/** 실제 앱 배선: Tauri(또는 mock) + 서버 API(baseUrl, 기본은 내장 서버 기본 포트) + GitHub 클라이언트 */
+export async function createAppDeps(queryClient: QueryClient, baseUrl?: string): Promise<AppDeps> {
   const tauri = getTauri()
-  const api = createAppApi()
+  const api = createAppApi(baseUrl)
   const [home, platform] = await Promise.all([tauri.homeDir(), tauri.platform()])
 
   async function githubToken(): Promise<string> {

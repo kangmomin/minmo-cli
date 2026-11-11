@@ -71,9 +71,9 @@ function isAllowedAuthorizeUrl(raw: string): boolean {
 function apiMessage(err: unknown): AuthMessage {
   if (err instanceof ApiError) {
     if (err.code === 'github_oauth_not_configured') {
-      return { code: err.code, message: '서버에 GitHub OAuth가 설정되지 않았습니다(MINMO_GITHUB_CLIENT_ID)' }
+      return { code: err.code, message: 'GitHub OAuth App 이 설정되지 않았습니다 — 서버 설정에서 Client ID·Secret 을 입력하세요' }
     }
-    if (isOfflineError(err)) return { code: err.code, message: `서버에 연결할 수 없습니다(${err.code}) — 서버 실행 여부를 확인하세요` }
+    if (isOfflineError(err)) return { code: err.code, message: `서버에 연결할 수 없습니다(${err.code}) — 서버 설정에서 상태를 확인하세요` }
     return { code: err.code, message: `로그인 실패(${err.code}) — 다시 시도` }
   }
   return { code: 'unknown', message: `로그인 실패 — ${err instanceof Error ? err.message : String(err)}` }

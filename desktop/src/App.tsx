@@ -10,7 +10,14 @@ import { TooltipProvider } from './components/ui/tooltip'
 import { LoginPage } from './features/auth/LoginPage'
 import { useAuth, useAuthController } from './features/auth/useAuth'
 import { WorktreeProvider } from './features/issue/useWorktree'
+import { CloseDialog } from './features/app/CloseDialog'
+import { ServerSettingsDialog } from './features/server/ServerSettingsDialog'
+import { ServerStartScreen } from './features/server/ServerStartScreen'
+import { isServerReady, useServerStatusSubscription } from './features/server/useServerStatus'
+import { serverBaseUrl } from './lib/api'
+import { getTauri } from './lib/tauri'
 import { useApplyTheme } from './lib/theme'
+import { useServerStore } from './store/server'
 
 export type Route = '/login' | '/'
 
@@ -49,31 +56,51 @@ function Root() {
 }
 
 export function App() {
+  const tauri = getTauri()
   const [queryClient] = useState(createAppQueryClient)
   const [deps, setDeps] = useState<AppDeps | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
+  const status = useServerStatusSubscription(tauri)
+  const baseUrl = useServerStore((s) => s.baseUrl)
+  const setBaseUrl = useServerStore((s) => s.setBaseUrl)
   useApplyTheme()
 
+  // 서버가 처음 준비되면 그 주소로 붙는다. 이후 재시작(같은 포트)은 그대로 쓰고, 포트를 바꾸면 창을 새로 고친다
   useEffect(() => {
+    if (!baseUrl && status && isServerReady(status)) setBaseUrl(serverBaseUrl(status.port))
+  }, [baseUrl, status, setBaseUrl])
+
+  useEffect(() => {
+    if (!baseUrl) return
     let cancelled = false
-    createAppDeps(queryClient)
+    createAppDeps(queryClient, baseUrl)
       .then((d) => !cancelled && setDeps(d))
       .catch((e: unknown) => !cancelled && setBootError(e instanceof Error ? e.message : String(e)))
     return () => {
       cancelled = true
     }
-  }, [queryClient])
+  }, [queryClient, baseUrl])
 
-  if (bootError) return <p className="p-6 text-sm text-destructive">앱을 시작할 수 없습니다: {bootError}</p>
-  if (!deps) return null
+  let body
+  if (bootError) body = <p className="p-6 text-sm text-destructive">앱을 시작할 수 없습니다: {bootError}</p>
+  else if (!deps) body = <ServerStartScreen status={status} tauri={tauri} />
+  else
+    body = (
+      <QueryClientProvider client={queryClient}>
+        <DepsProvider value={deps}>
+          <TooltipProvider>
+            <Root />
+          </TooltipProvider>
+        </DepsProvider>
+      </QueryClientProvider>
+    )
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <DepsProvider value={deps}>
-        <TooltipProvider>
-          <Root />
-        </TooltipProvider>
-      </DepsProvider>
-    </QueryClientProvider>
+    <>
+      {body}
+      {/* 서버 설정·닫기 대화상자는 서버에 붙기 전(시작 실패 화면)에도 쓸 수 있어야 한다 */}
+      <ServerSettingsDialog tauri={tauri} />
+      <CloseDialog tauri={tauri} />
+    </>
   )
 }

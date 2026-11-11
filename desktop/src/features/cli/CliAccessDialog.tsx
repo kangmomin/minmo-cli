@@ -10,7 +10,9 @@ import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { queryKeys } from '../../lib/queryKeys'
 import { useSessionStore } from '../../store/session'
-import { SSH_CONFIG_EXAMPLE, SSH_SERVER_NOTE, SSH_WINDOWS_NOTE } from './sshConfig'
+import { portOf } from '../../lib/api'
+import { useServerStore } from '../../store/server'
+import { SSH_SERVER_NOTE, sshConfigExample, sshWindowsNote } from './sshConfig'
 
 export interface CliAccessDialogProps {
   open: boolean
@@ -49,6 +51,8 @@ function CliAccessBody() {
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
   const issue = useMutation({ mutationFn: () => api.issueCliCode() })
+  const port = portOf(useServerStore((s) => s.baseUrl))
+  const sshExample = sshConfigExample(port)
 
   useEffect(() => {
     if (!code) return
@@ -110,10 +114,10 @@ function CliAccessBody() {
           2. SSH 설정 (이 PC 의 ~/.ssh/config)
         </h3>
         <pre className="overflow-x-auto rounded bg-muted p-3 text-xs" data-testid="ssh-config">
-          {SSH_CONFIG_EXAMPLE}
+          {sshExample}
         </pre>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => void copy(SSH_CONFIG_EXAMPLE, 'SSH 설정 예시를 복사했습니다')}>
+          <Button size="sm" variant="outline" onClick={() => void copy(sshExample, 'SSH 설정 예시를 복사했습니다')}>
             <CopyIcon /> 설정 복사
           </Button>
           <span className="text-xs text-muted-foreground">
@@ -121,7 +125,7 @@ function CliAccessBody() {
           </span>
         </div>
         <p className="text-xs text-muted-foreground">{SSH_SERVER_NOTE}</p>
-        <p className="text-xs text-muted-foreground">{SSH_WINDOWS_NOTE}</p>
+        <p className="text-xs text-muted-foreground">{sshWindowsNote(port)}</p>
       </section>
 
       <SessionsSection uid={uid} setStatus={setStatus} setError={setError} />

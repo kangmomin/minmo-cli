@@ -15,7 +15,7 @@ test('프로젝트 설정: 상속 placeholder, 브랜치 템플릿 feat/{number}
   const dialog = page.getByRole('dialog')
   const branch = dialog.getByLabel('브랜치 템플릿')
   await expect(branch).toHaveAttribute('placeholder', '상속: issue/{number}-{slug}')
-  await expect(dialog.getByRole('radiogroup', { name: '생성 후 스크립트' }).getByRole('radio', { name: '상속' })).toBeChecked()
+  await expect(dialog.getByRole('radiogroup', { name: '생성 후 스크립트', exact: true }).getByRole('radio', { name: '상속' })).toBeChecked()
 
   await branch.fill('feat/{number}')
   await expect(dialog.getByTestId('preview-branch')).toHaveText('feat/42')
@@ -49,5 +49,8 @@ test('전역 설정(⚙): 상속 선택지 없음, 기본값 표시', async ({ p
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByLabel('worktree 경로')).toHaveValue('~/minmo-workspaces/{owner}/{repo}/{branch}')
   await expect(dialog.getByRole('radio', { name: '상속' })).toHaveCount(0)
-  await expect(dialog.getByRole('radio', { name: '없음' })).toBeChecked()
+  // 스크립트 그룹이 Windows·Linux/macOS 두 개라 각각 확인한다
+  for (const name of ['생성 후 스크립트', '생성 후 스크립트 (Linux/macOS)']) {
+    await expect(dialog.getByRole('radiogroup', { name, exact: true }).getByRole('radio', { name: '없음' })).toBeChecked()
+  }
 })

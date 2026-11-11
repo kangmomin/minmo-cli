@@ -1,4 +1,4 @@
-import { LogOutIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
+import { LogOutIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
 import { useState } from 'react'
 
 import type { SettingsScope } from '@minmo/api-client'
@@ -14,6 +14,7 @@ import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
 import type { PreviewIssue } from '../features/settings/SettingsDialog'
 import { Sidebar } from '../features/tree/Sidebar'
+import { openServerSettings } from '../store/server'
 import { useSessionStore } from '../store/session'
 import { useSetupStore } from '../store/setup'
 import { useUiStore } from '../store/ui'
@@ -47,6 +48,14 @@ export function Workspace() {
             </Button>
           </TooltipTrigger>
           <TooltipContent>원격 CLI 접속</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label="서버 설정" onClick={openServerSettings}>
+              <ServerIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>서버 설정</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

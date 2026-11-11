@@ -366,8 +366,23 @@ impl ServerManager {
         self.start_locked(app);
     }
 
-    /// 백그라운드에서 정지 후 다시 시작한다
+    /// 백그라운드에서 정지 후 다시 시작한다. 상태는 곧바로 starting(새 포트)으로 알린다 —
+    /// 포트를 바꾸고 바로 창을 새로 고쳐도 이전 포트의 running 을 보고 붙지 않게
     pub fn restart(app: &AppHandle) {
+        let mgr = app.state::<ServerManager>();
+        let (generation, port) = {
+            let inner = lock(&mgr.inner);
+            (inner.generation, inner.settings.port)
+        };
+        mgr.set_status(
+            app,
+            generation,
+            Status {
+                state: State::Starting,
+                port,
+                message: None,
+            },
+        );
         let app = app.clone();
         std::thread::spawn(move || {
             let mgr = app.state::<ServerManager>();
