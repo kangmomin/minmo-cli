@@ -6,12 +6,15 @@ import { ls, note, openIssue, rm } from './commands/issues'
 import { modeCmd } from './commands/mode'
 import { configGet, configSet, reposAdd, reposAll, reposList, reposRemove, reposReset } from './commands/settings'
 import type { Ctx } from './context'
+import { runInherited, updateCmd } from './update'
 
 export type ProgramDeps = {
   createCtx(): Promise<Ctx>
   /** 인자 없이 실행했을 때(TUI) */
   runTui(ctx: Ctx): Promise<void>
   version: string
+  /** `minmo update` — 테스트에서 바꿔 끼운다(기본: GitHub 에서 확인 후 npm 으로 설치) */
+  update?(opts: { check?: boolean }): Promise<void>
 }
 
 export function buildProgram(deps: ProgramDeps): Command {
@@ -33,6 +36,16 @@ export function buildProgram(deps: ProgramDeps): Command {
     .action(withCtx((ctx, code: string) => login(ctx, code)))
   program.command('logout').description('이 기기의 세션을 끊고 로그인 정보를 지웁니다').action(withCtx((ctx) => logout(ctx)))
   program.command('doctor').description('모드·서버(역터널)·로그인·git·gh·tmux 점검').action(withCtx((ctx) => doctor(ctx)))
+  // 서버·로그인이 필요 없어 컨텍스트를 만들지 않는다
+  const update =
+    deps.update ??
+    ((opts: { check?: boolean }) =>
+      updateCmd({ version: deps.version, fetch: (input, init) => globalThis.fetch(input, init), run: runInherited, out: (l) => console.log(l) }, opts))
+  program
+    .command('update')
+    .option('--check', '설치하지 않고 현재·최신 버전만 보기')
+    .description('새 버전으로 업데이트(GitHub Packages 의 npm 패키지)')
+    .action((opts: { check?: boolean }) => update(opts))
   program
     .command('mode')
     .argument('[mode]', 'server(PC 의 minmo 서버, 역터널) 또는 local(서버 없이 이 기기에서)')
