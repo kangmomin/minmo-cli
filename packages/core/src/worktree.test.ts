@@ -53,6 +53,8 @@ type Sim = {
   noOrigin?: boolean
   /** 메인 저장소가 체크아웃한 브랜치 */
   head?: string
+  /** origin/HEAD 가 없는 저장소 */
+  noOriginHead?: boolean
 }
 
 const HASH = 'abc1234def5678abc1234def5678abc1234def56'
@@ -175,7 +177,7 @@ async function simGit(sim: Sim, args: string[], opts?: RunOptions): Promise<CmdR
       return sim.noOrigin ? fail("error: No such remote 'origin'", 2) : ok('https://github.com/MyOrg/Repo-A.git\n')
     case 'symbolic-ref':
       if (a.includes('HEAD')) return ok(`${sim.head ?? 'main'}\n`)
-      return sim.noOrigin ? fail('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref', 128) : ok('origin/main\n')
+      return sim.noOrigin || sim.noOriginHead ? fail('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref', 128) : ok('origin/main\n')
     case 'sparse-checkout':
       return sim.failSparse ? fail(sim.failSparse, 128) : ok()
     case 'status': {
@@ -863,6 +865,12 @@ describe('origin 원격이 없는 저장소(새 로컬 프로젝트)', () => {
     await t.svc.openIssue(ISSUE42)
     expect(t.find((a) => a[0] === 'fetch')).toHaveLength(1)
     expect(t.creation(BR42)?.start).toBe('origin/main')
+  })
+
+  it('origin 은 있지만 origin/HEAD 가 없으면(직접 remote 를 붙인 저장소) 현재 브랜치 이름으로 origin 에서 만든다', async () => {
+    const t = setup({ mainExists: true, sim: { head: 'develop', remote: new Set(['develop']), noOriginHead: true }, defaultBranch: noGitHub })
+    await t.svc.openIssue(ISSUE42)
+    expect(t.creation(BR42)?.start).toBe('origin/develop')
   })
 
   it('미push 수: origin 이 없으면 다른 로컬 브랜치에 없는 커밋만 센다', async () => {

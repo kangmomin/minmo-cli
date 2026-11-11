@@ -328,9 +328,12 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       return await deps.defaultBranch(t.owner, t.repo)
     } catch {
       // GitHub 조회 실패(또는 GitHub 저장소가 아님) → origin/HEAD, origin 이 없으면 메인 저장소의 현재 브랜치로 추정
-      const r = await tauri.gitRun(['-C', main, 'symbolic-ref', '--short', noOrigin ? 'HEAD' : 'refs/remotes/origin/HEAD'])
-      const b = r.code === 0 ? r.stdout.trim().replace(/^origin\//, '') : ''
-      return b || 'main'
+      const ref = async (name: string) => {
+        const r = await tauri.gitRun(['-C', main, 'symbolic-ref', '--short', name])
+        return r.code === 0 ? r.stdout.trim().replace(/^origin\//, '') : ''
+      }
+      // origin/HEAD 는 clone 할 때만 생긴다(직접 remote 를 붙인 저장소에는 없다) → 그때도 현재 브랜치로
+      return (noOrigin ? '' : await ref('refs/remotes/origin/HEAD')) || (await ref('HEAD')) || 'main'
     }
   }
 
