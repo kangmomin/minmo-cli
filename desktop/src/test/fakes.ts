@@ -6,7 +6,7 @@ import { ApiError } from '@minmo/api-client'
 import type { ApiClient, ApiErrorCode, Notes } from '@minmo/api-client'
 
 import type { GitHubClient } from '@minmo/core'
-import type { TauriApi } from '../lib/tauri'
+import type { ServerSettings, ServerStatus, TauriApi } from '../lib/tauri'
 import { ok } from '../lib/tauri.mock'
 
 export type Mocked<T> = { [K in keyof T]: T[K] extends (...args: infer A) => infer R ? Mock<(...args: A) => R> : T[K] }
@@ -22,6 +22,8 @@ function mockAll<T extends object>(base: T, overrides: Partial<T>): Mocked<T> {
 export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
   const keychain = new Map<string, string>()
   const deepLinkListeners = new Set<(urls: string[]) => void>()
+  const serverListeners = new Set<(s: ServerStatus) => void>()
+  const closeListeners = new Set<() => void>()
   const base: TauriApi = {
     gitRun: async () => ok(),
     ghRun: async () => ok(),
@@ -58,6 +60,24 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
         deepLinkListeners.delete(cb)
       }
     },
+    serverStatus: async () => ({ state: 'running', port: 8787, message: null }),
+    onServerStatus: async (cb) => {
+      serverListeners.add(cb)
+      return () => {
+        serverListeners.delete(cb)
+      }
+    },
+    serverSettingsGet: async () => SERVER_SETTINGS,
+    serverSettingsSave: async () => SERVER_SETTINGS,
+    serverRestart: async () => {},
+    serverOpenLogDir: async () => {},
+    onCloseRequested: async (cb) => {
+      closeListeners.add(cb)
+      return () => {
+        closeListeners.delete(cb)
+      }
+    },
+    appClose: async () => {},
   }
   const tauri = mockAll(base, overrides)
   return {
@@ -67,7 +87,22 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
       for (const l of [...deepLinkListeners]) l(urls)
     },
     deepLinkListenerCount: () => deepLinkListeners.size,
+    emitServerStatus(s: ServerStatus) {
+      for (const l of [...serverListeners]) l(s)
+    },
+    emitCloseRequested() {
+      for (const l of [...closeListeners]) l()
+    },
   }
+}
+
+export const SERVER_SETTINGS: ServerSettings = {
+  port: 8787,
+  githubClientId: '',
+  hasClientSecret: false,
+  closeAction: 'ask',
+  callbackUrl: 'http://127.0.0.1:8787/auth/github/callback',
+  warning: null,
 }
 
 const unexpected = (name: string) => async () => {

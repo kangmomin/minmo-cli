@@ -1,8 +1,9 @@
-import { LogInIcon, Loader2Icon } from 'lucide-react'
+import { LogInIcon, Loader2Icon, ServerIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { ThemeToggle } from '../../components/ThemeToggle'
 import { Button } from '../../components/ui/button'
+import { openServerSettings } from '../../store/server'
 import { useSessionStore } from '../../store/session'
 import { useAuth } from './useAuth'
 
@@ -22,6 +23,12 @@ export function LoginPage() {
   }, [pending])
 
   const timedOut = pending !== null && now - pending.startedAt > LOGIN_WAIT_TIMEOUT_MS
+  const oauthMissing = auth.error?.code === 'github_oauth_not_configured'
+
+  // 첫 실행: OAuth App 값이 없으면 로그인 시도 때 서버 설정을 바로 연다
+  useEffect(() => {
+    if (oauthMissing) openServerSettings()
+  }, [oauthMissing, auth.error])
 
   return (
     <div className="relative flex h-full items-center justify-center bg-muted/40" data-testid="login-page">
@@ -71,6 +78,9 @@ export function LoginPage() {
             <LogInIcon /> GitHub로 로그인
           </Button>
         )}
+        <Button variant={oauthMissing ? 'outline' : 'ghost'} size="sm" onClick={openServerSettings}>
+          <ServerIcon /> 서버 설정
+        </Button>
       </div>
     </div>
   )

@@ -12,6 +12,24 @@ export type { CmdResult, RunOptions, ScriptLogEvent, ScriptRunRequest, ScriptRun
 export type PtySpawnRequest = { cwd: string; cols: number; rows: number }
 export type PtyDataEvent = { id: string; data: string }
 
+/** 내장 서버 상태(src-tauri/src/server.rs Status) — external 은 debug 실행에서 외부 서버를 쓸 때 */
+export type ServerState = 'starting' | 'running' | 'failed' | 'stopped' | 'external'
+export type ServerStatus = { state: ServerState; port: number; message: string | null }
+/** 창을 닫을 때: 매번 묻기 · 트레이로 숨기기(서버 유지) · 종료 */
+export type CloseAction = 'ask' | 'tray' | 'quit'
+/** 서버 설정 — Client Secret 은 돌려주지 않고 저장 여부만 */
+export type ServerSettings = {
+  port: number
+  githubClientId: string
+  hasClientSecret: boolean
+  closeAction: CloseAction
+  callbackUrl: string
+  /** 설정 파일이 깨져 기본값으로 시작한 경우 등 */
+  warning: string | null
+}
+/** 바꿀 값만. githubClientSecret 이 빈 문자열이면 지운다 */
+export type ServerSettingsInput = Partial<Pick<ServerSettings, 'port' | 'githubClientId' | 'closeAction'>> & { githubClientSecret?: string }
+
 export const KEYCHAIN_KEYS = {
   session: 'minmo.session',
   githubToken: 'minmo.github-token',
@@ -60,6 +78,20 @@ export interface TauriApi extends WorktreeHost, GhHost {
   openUrl(url: string): Promise<void>
   /** deep-link onOpenUrl (single-instance 재전달 포함) */
   onDeepLink(cb: (urls: string[]) => void): Promise<Unlisten>
+
+  /** 내장 서버 — 앱과 함께 실행되며 설정은 Rust 쪽(server.json·키체인)이 갖는다 */
+  serverStatus(): Promise<ServerStatus>
+  onServerStatus(cb: (s: ServerStatus) => void): Promise<Unlisten>
+  serverSettingsGet(): Promise<ServerSettings>
+  /** 저장 후 서버 값(포트·OAuth)이 바뀌었으면 서버를 다시 시작한다 */
+  serverSettingsSave(input: ServerSettingsInput): Promise<ServerSettings>
+  serverRestart(): Promise<void>
+  serverOpenLogDir(): Promise<void>
+
+  /** 창 닫기 요청(closeAction 이 ask 일 때) */
+  onCloseRequested(cb: () => void): Promise<Unlisten>
+  /** 닫기 선택 — remember 면 다음부터 묻지 않는다 */
+  appClose(action: Exclude<CloseAction, 'ask'>, remember: boolean): Promise<void>
 }
 
 // Rust command 이름(src-tauri/src/commands/*.rs)과 1:1. 인자 키는 camelCase → Rust snake_case 로 자동 변환된다.
@@ -86,9 +118,15 @@ export const TAURI_COMMANDS = {
   copyFileInto: 'copy_file_into',
   removeFileIn: 'remove_file_in',
   openDir: 'open_dir',
+  serverStatus: 'server_status',
+  serverSettingsGet: 'server_settings_get',
+  serverSettingsSave: 'server_settings_save',
+  serverRestart: 'server_restart',
+  serverOpenLogDir: 'server_open_log_dir',
+  appClose: 'app_close',
 } as const
 
-export const TAURI_EVENTS = { ptyData: 'pty-data', scriptLog: 'script-log' } as const
+export const TAURI_EVENTS = { ptyData: 'pty-data', scriptLog: 'script-log', serverStatus: 'server-status', closeRequested: 'close-requested' } as const
 
 /** @tauri-apps/api invoke 기반 실제 구현 */
 export function createTauriApi(): TauriApi {
@@ -137,6 +175,15 @@ export function createTauriApi(): TauriApi {
       if (initial && initial.length > 0) cb(initial)
       return unlisten
     },
+
+    serverStatus: () => call(C.serverStatus),
+    onServerStatus: async (cb) => (await event()).listen<ServerStatus>(TAURI_EVENTS.serverStatus, (e) => cb(e.payload)),
+    serverSettingsGet: () => call(C.serverSettingsGet),
+    serverSettingsSave: (input) => call(C.serverSettingsSave, { input }),
+    serverRestart: () => call(C.serverRestart),
+    serverOpenLogDir: () => call(C.serverOpenLogDir),
+    onCloseRequested: async (cb) => (await event()).listen(TAURI_EVENTS.closeRequested, () => cb()),
+    appClose: (action, remember) => call(C.appClose, { action, remember }),
   }
 }
 

@@ -1,5 +1,7 @@
 pub mod fs;
 pub mod git;
+#[cfg(windows)]
+pub mod job;
 pub mod keychain;
 pub mod pty;
 pub mod script;

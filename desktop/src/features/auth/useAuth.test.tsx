@@ -88,7 +88,7 @@ describe('E1 로그인 시작 (UI State "로그인 대기")', () => {
     await act(async () => {
       await t.result.current.startLogin().catch(() => undefined)
     })
-    await waitFor(() => expect(t.result.current.error?.message).toContain('MINMO_GITHUB_CLIENT_ID'))
+    await waitFor(() => expect(t.result.current.error?.message).toContain('서버 설정에서 Client ID·Secret'))
     expect(t.tauri.openUrl).not.toHaveBeenCalled()
   })
 })
@@ -308,7 +308,7 @@ describe('CT-38(v2.5) E1 503 github_oauth_not_configured 는 offline 아님', ()
     await act(async () => {
       await t.result.current.startLogin().catch(() => undefined)
     })
-    await waitFor(() => expect(t.result.current.error?.message).toBe('서버에 GitHub OAuth가 설정되지 않았습니다(MINMO_GITHUB_CLIENT_ID)'))
+    await waitFor(() => expect(t.result.current.error?.message).toBe('GitHub OAuth App 이 설정되지 않았습니다 — 서버 설정에서 Client ID·Secret 을 입력하세요'))
     expect(useSessionStore.getState().status).toBe('online')
   })
 

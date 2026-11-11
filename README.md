@@ -13,10 +13,31 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 
 | 파일 | 내용 |
 |------|------|
-| `minmo_<버전>_x64-setup.exe` · `minmo_<버전>_x64_en-US.msi` | 데스크탑 앱(Windows 설치 파일, 둘 중 하나). 코드 서명이 없어 처음 실행 때 SmartScreen 경고가 뜰 수 있다(추가 정보 → 실행) |
-| `minmo-server-<os>-<arch>[.exe]` | 서버 실행 파일(windows-amd64·linux-amd64·darwin-arm64). 실행 env 는 아래 [서버 env](#서버-env) |
+| `minmo_<버전>_x64-setup.exe` · `minmo_<버전>_x64_en-US.msi` | 데스크탑 앱(Windows 설치 파일, 둘 중 하나). **서버가 함께 설치되어 앱과 같이 실행된다.** 코드 서명이 없어 처음 실행 때 SmartScreen 경고가 뜰 수 있다(추가 정보 → 실행) |
 | `minmo-cli-<버전>.tgz` | 원격 CLI. `npm i -g ./minmo-cli-<버전>.tgz` — 아래 [원격 CLI](#원격-cli-ssh) |
 | `SHA256SUMS.txt` | 체크섬 |
+
+(v0.2.0 까지는 서버 실행 파일을 따로 올렸다. v0.3.0 부터 서버는 데스크탑 설치 파일에 들어 있다.)
+
+### 처음 실행
+
+1. 설치 파일을 실행하고 minmo 를 켠다. 서버(`minmo-server`)가 앱과 함께 `127.0.0.1:8787` 에서 시작된다.
+2. **GitHub로 로그인** 을 누르면 OAuth App 이 아직 없어서 **서버 설정** 이 열린다.
+   - **GitHub 에서 OAuth App 등록** 버튼으로 등록 페이지를 연다. Authorization callback URL 에는 화면의 주소(`http://127.0.0.1:<포트>/auth/github/callback`, 복사 버튼)를, Homepage URL 에는 아무 주소(예: `http://127.0.0.1:8787`)를 넣는다.
+   - 등록한 앱의 **Client ID** 와 **Generate a new client secret** 으로 만든 Secret 을 넣고 저장하면 서버가 다시 시작된다.
+3. 다시 **GitHub로 로그인** 한다. 조직 저장소가 보이지 않으면 그 조직의 **Third-party access** 에서 앱을 승인한다.
+
+서버 설정은 로그인 화면과 상단 바의 서버 아이콘에서 연다.
+
+| 항목 | 내용 |
+|------|------|
+| 포트 | 기본 `8787`. 바꾸면 서버가 새 포트로 다시 시작되고 앱이 다시 연결한다(열린 터미널은 닫힌다). OAuth App 의 callback URL 과 원격 CLI 의 `RemoteForward` 도 함께 바꾼다 |
+| GitHub OAuth App | Client ID 는 설정 파일에, Client Secret 은 OS 키체인(Windows 자격 증명 관리자)에 저장하며 다시 보여 주지 않는다 |
+| 창을 닫을 때 | 매번 묻기(기본) · 트레이로 최소화 · 종료. 트레이로 최소화하면 창을 닫아도 서버가 계속 실행되어 원격 CLI 를 쓸 수 있다. 트레이 아이콘 클릭이나 앱을 다시 실행하면 창이 나타나고, 트레이 메뉴의 [종료]로 앱과 서버를 함께 끝낸다. 매번 묻기에서 3초 안에 X 를 다시 누르면 바로 종료한다(화면이 응답하지 않을 때) |
+
+- 서버의 토큰 암호화 키는 처음 실행할 때 만들어 OS 키체인에 둔다(입력할 필요 없음).
+- 데이터: 설정·DB 는 `%APPDATA%\com.minmo.desktop`(`server.json`, `minmo.db`), 서버 로그는 `%LOCALAPPDATA%\com.minmo.desktop\logs\server.log`(직전 실행은 `server.prev.log`). 서버 설정의 **로그 폴더 열기** 로 연다.
+- 서버를 시작하지 못하면(예: 포트를 다른 프로그램이 사용) 원인과 [다시 시작]·[서버 설정]이 나온다. 앱이 비정상 종료해도 서버는 함께 끝난다.
 
 ## 모노레포 구조
 
@@ -35,6 +56,8 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 
 ## 서버
 
+보통은 데스크탑 앱이 서버를 함께 실행하고 아래 env 를 채워 준다(`desktop/src-tauri/src/server.rs`). 이 섹션은 서버를 직접 실행할 때(개발·E2E)의 안내다.
+
 ### 요구 사항
 
 - Go 1.26 이상 (cgo 불필요 — 순수 Go SQLite 드라이버 `modernc.org/sqlite`)
@@ -52,6 +75,7 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 | `MINMO_GITHUB_OAUTH_BASE` / `MINMO_GITHUB_API_BASE` | `https://github.com` / `https://api.github.com` | E2E 는 githubmock 주소로 치환 |
 | `MINMO_DEEP_LINK` | `minmo://auth` | 로그인 성공·실패 딥링크 접두 |
 | `MINMO_CORS_ORIGINS` | `http://localhost:1420,tauri://localhost,http://tauri.localhost,https://tauri.localhost` | 쉼표 구분 |
+| `MINMO_STOP_ON_STDIN_CLOSE` | (없음) | `1` 이면 stdin 이 닫힐 때 정상 종료(데스크탑이 사이드카를 끌 때) |
 
 > `MINMO_TOKEN_KEY` 를 바꾸면 저장된 GitHub 토큰을 복호화할 수 없어 `/me/github-token` 이 500 이 된다. 이 경우 다시 로그인하면 새 키로 저장된다.
 
@@ -77,8 +101,8 @@ $b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create
    - Homepage URL: `http://127.0.0.1:8787`
    - **Authorization callback URL: `http://127.0.0.1:8787/auth/github/callback`**
      (`MINMO_PUBLIC_URL` 을 바꿨다면 `{MINMO_PUBLIC_URL}/auth/github/callback`)
-3. 등록 후 **Client ID** 를 `MINMO_GITHUB_CLIENT_ID` 로, **Generate a new client secret** 으로 만든 값을
-   `MINMO_GITHUB_CLIENT_SECRET` 으로 설정한다.
+3. 등록 후 **Client ID** 와 **Generate a new client secret** 으로 만든 값을 데스크탑 **서버 설정** 에 넣는다
+   (서버를 직접 실행할 때는 `MINMO_GITHUB_CLIENT_ID` / `MINMO_GITHUB_CLIENT_SECRET`).
 4. 로그인은 PKCE(S256)를 쓰며 요청 scope 는 `repo read:org read:user` 다. 조직 저장소가 보이지 않으면
    GitHub 의 해당 조직 **Third-party access** 에서 이 OAuth App 을 승인한다.
 
@@ -146,7 +170,15 @@ npm run typecheck && npm test
 npm run e2e        # Playwright(Tauri mock)
 ```
 
-Tauri 네이티브 빌드는 Rust(cargo)가 필요하다. 서버 주소는 `VITE_MINMO_SERVER`(기본 `http://127.0.0.1:8787`).
+Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사이드카로 설치 파일에 들어간다.
+
+- `npm run build:server --workspace desktop` 이 `desktop/src-tauri/binaries/minmo-server-<host triple>[.exe]` 를 빌드한다. `tauri dev`·`tauri build` 는 먼저 이것을 실행한다. `cargo test`·`clippy` 를 직접 돌릴 때도 먼저 한 번 실행해 둔다(없으면 Tauri 빌드 스크립트가 실패).
+- 앱은 시작할 때 서버를 띄우고 그 포트로 붙는다. `VITE_MINMO_SERVER` 를 주면(개발·Playwright) 그 주소를 대신 쓴다.
+- debug 빌드 전용 env
+  - `MINMO_DESKTOP_PROFILE=<폴더>`: 설정·DB·로그를 그 폴더에 두고 키체인 서비스를 `com.minmo.desktop.dev` 로 분리한다. 이때는 `minmo://` 스킴을 시스템에 등록하지 않는다(설치된 앱의 딥링크를 가로채지 않게).
+  - `MINMO_EXTERNAL_SERVER=1`: 사이드카를 띄우지 않는다(따로 띄운 서버 + `VITE_MINMO_SERVER`).
+  - `MINMO_GITHUB_OAUTH_BASE` / `MINMO_GITHUB_API_BASE`: 사이드카에 넘긴다(githubmock 로그인 E2E). 그 밖의 `MINMO_*` env 는 사이드카에 넘기지 않는다.
+- 설치된 앱이 켜져 있는 PC 에서 debug 앱을 함께 띄우려면 identifier 를 바꿔 빌드한다(같으면 single-instance 로 설치된 앱에 넘어간다): `TAURI_CONFIG='{"identifier":"com.minmo.desktop.e2e"}' cargo build`.
 
 트리 상단의 **표시할 저장소** 버튼으로 보일 저장소를 고른다(서버에 저장되어 원격 CLI 와 공유). 로컬 worktree 가 있는 저장소는 빼도 "숨김" 표시와 함께 보인다.
 
@@ -183,6 +215,7 @@ Host my-server
   RemoteForward /home/<사용자>/.minmo/server.sock 127.0.0.1:8787
 ```
 
+- 데스크탑 서버 설정에서 포트를 바꿨다면 `8787` 대신 그 포트를 쓴다(데스크탑 "원격 CLI 접속" 화면의 예시는 설정된 포트로 보여 준다). 원격 CLI 를 쓰는 동안 데스크탑 앱(서버)이 켜져 있어야 하므로, 창을 닫을 때 **트레이로 최소화** 를 고르면 편하다.
 - TCP 포트 대신 **Unix 소켓**으로 역터널한다 — 원격의 다른 사용자가 포트로 접근하거나, 포트 충돌로 토큰이 엉뚱한 곳으로 가는 일을 막는다. CLI 는 `MINMO_SERVER` 를 명시하지 않으면 소켓만 쓰고(127.0.0.1:8787 로 넘어가지 않음), 소켓 소유자가 자신이 아니면 연결하지 않는다.
 - 원격 **sshd_config** 에 `StreamLocalBindUnlink yes` 가 있어야 재접속 때 이전 소켓을 바꿔 쓴다(관리자 설정, 클라이언트 쪽 같은 이름의 옵션은 RemoteForward 에 효과가 없다). 없으면 재접속 전에 원격에서 `rm ~/.minmo/server.sock` — `minmo doctor` 가 남은 소켓을 알려 준다. 같은 이유로 `ExitOnForwardFailure` 는 넣지 않는다(남은 소켓 때문에 접속 자체가 막힌다).
 - 원격 sshd 가 `AllowStreamLocalForwarding` 을 허용해야 한다(기본 허용). 원격에 `~/.minmo` 폴더가 먼저 있어야 한다.

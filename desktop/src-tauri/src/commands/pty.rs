@@ -21,74 +21,8 @@ pub struct PtySession {
     job: Option<job::Job>,
 }
 
-/// 셸을 KILL_ON_JOB_CLOSE Job Object 에 넣는다. 셸이 이후에 띄우는 프로세스는 자동으로 같은 Job 에 속하므로
-/// 중간 부모가 먼저 끝나 부모 체인이 끊긴 자손(taskkill /T 가 찾지 못함)까지 한 번에 끝낼 수 있다.
-/// 앱이 비정상 종료해도 핸들이 닫히며 터미널 프로세스가 함께 정리된다.
 #[cfg(windows)]
-mod job {
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
-    };
-
-    pub struct Job(HANDLE);
-
-    // HANDLE 은 프로세스 전역 커널 객체 핸들이라 스레드 간 이동·공유해도 안전하다
-    unsafe impl Send for Job {}
-    unsafe impl Sync for Job {}
-
-    impl Job {
-        pub fn for_process(pid: u32) -> Option<Job> {
-            // SAFETY: 각 호출의 반환값을 검사하고, 실패 경로에서 만든 핸들은 모두 닫는다
-            unsafe {
-                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-                if handle.is_null() {
-                    return None;
-                }
-                let job = Job(handle);
-                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                let set = SetInformationJobObject(
-                    job.0,
-                    JobObjectExtendedLimitInformation,
-                    &info as *const _ as *const core::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                );
-                if set == 0 {
-                    return None;
-                }
-                let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
-                if process.is_null() {
-                    return None;
-                }
-                let assigned = AssignProcessToJobObject(job.0, process);
-                CloseHandle(process);
-                (assigned != 0).then_some(job)
-            }
-        }
-
-        pub fn terminate(&self) {
-            // SAFETY: self.0 은 for_process 가 만든 유효한 Job 핸들이다
-            unsafe {
-                TerminateJobObject(self.0, 1);
-            }
-        }
-    }
-
-    impl Drop for Job {
-        fn drop(&mut self) {
-            // SAFETY: 이 Job 이 소유한 핸들을 한 번만 닫는다
-            unsafe {
-                CloseHandle(self.0);
-            }
-        }
-    }
-}
+use super::job;
 
 impl PtySession {
     fn write_input(&mut self, data: &[u8]) -> std::io::Result<()> {
@@ -332,6 +266,17 @@ async fn kill_sessions(sessions: Vec<PtySession>) -> Result<(), String> {
 pub async fn pty_kill(state: State<'_, PtyState>, id: String) -> Result<(), String> {
     let removed = state.sessions.lock().map_err(err)?.remove(&id);
     kill_sessions(removed.into_iter().collect()).await
+}
+
+/// 모든 PTY 를 백그라운드에서 끝낸다 — 웹뷰가 새로 고쳐지면(React 정리가 돌지 않음) 남은 셸·에이전트를 정리한다
+pub fn kill_all(state: &PtyState) {
+    let sessions: Vec<PtySession> = match state.sessions.lock() {
+        Ok(mut s) => s.drain().map(|(_, v)| v).collect(),
+        Err(_) => return,
+    };
+    if !sessions.is_empty() {
+        std::thread::spawn(move || kill_and_close(sessions));
+    }
 }
 
 /// cwd 가 path(또는 하위)인 PTY 를 모두 종료하고 종료 개수를 돌려준다 (worktree 삭제 전 — Windows 파일 잠금 방지)

@@ -1,10 +1,12 @@
 // Command minmo-server 는 minmo API 서버다. 설정은 env(README "서버 env")로만 받는다.
+// 보통은 데스크탑 앱이 사이드카로 띄우며 env 를 채워 준다(desktop/src-tauri/src/server.rs).
 package main
 
 import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,7 +18,11 @@ import (
 	"github.com/kangmomin/minmo-cli/server/internal/httpapi"
 )
 
-const shutdownTimeout = 10 * time.Second
+const (
+	shutdownTimeout = 10 * time.Second
+	// 데스크탑은 stdin 을 닫은 뒤 5초 기다리고 강제 종료한다 — 그 안에 DB 를 닫고 끝나도록 더 짧게 둔다
+	stdinShutdownTimeout = 3 * time.Second
+)
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -49,11 +55,24 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// 데스크탑 내장 실행: 부모(데스크탑)가 stdin 을 닫으면 정상 종료
+	grace := shutdownTimeout
+	if os.Getenv("MINMO_STOP_ON_STDIN_CLOSE") == "1" {
+		var cancel context.CancelFunc
+		ctx, cancel = stopOnClose(ctx, os.Stdin)
+		defer cancel()
+		grace = stdinShutdownTimeout
+	}
 
+	// 포트 점유 등 bind 실패를 "listening" 로그 전에 오류로 돌려준다
+	ln, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		return err
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("minmo-server listening", "addr", cfg.Listen, "publicUrl", cfg.API.PublicURL, "db", cfg.DBPath)
-		errCh <- srv.ListenAndServe()
+		errCh <- srv.Serve(ln)
 	}()
 
 	select {
@@ -66,7 +85,7 @@ func run() error {
 	}
 
 	slog.Info("minmo-server shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
 }

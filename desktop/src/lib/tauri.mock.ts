@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 딥링크·브라우저 열기는 window.__MINMO_MOCK__ 로 노출해 E2E 가 조작한다.
-import type { CmdResult, Platform, PtyDataEvent, ScriptLogEvent, TauriApi } from './tauri'
+import type { CloseAction, CmdResult, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, TauriApi } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -13,6 +13,23 @@ export interface MinmoMockHandle {
   openedUrls: string[]
   emitDeepLink(...urls: string[]): void
   readonly keychain: Record<string, string>
+  /** 창 닫기 버튼을 누른 것처럼 close-requested 를 보낸다 */
+  emitCloseRequested(): void
+  /** appClose 호출 기록 */
+  closeCalls: { action: Exclude<CloseAction, 'ask'>; remember: boolean }[]
+  /** 내장 서버 상태를 바꾸고 server-status 를 보낸다 */
+  setServerStatus(s: ServerStatus): void
+  readonly serverSettings: ServerSettings & { clientSecret: string }
+}
+
+/** mock 서버 포트 — VITE_MINMO_SERVER(Playwright) 주소를 따른다 */
+function mockServerPort(): number {
+  try {
+    const raw = import.meta.env.VITE_MINMO_SERVER
+    return raw ? Number(new URL(raw).port) || 80 : 8787
+  } catch {
+    return 8787
+  }
 }
 
 declare global {
@@ -61,6 +78,22 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   const ptyCwd = new Map<string, string>()
   let ptySeq = 0
   const cancelled = new Set<string>()
+  const closeListeners = new Set<() => void>()
+  const serverListeners = new Set<(s: ServerStatus) => void>()
+  let serverStatus: ServerStatus = { state: 'running', port: mockServerPort(), message: null }
+  const server = { port: serverStatus.port, githubClientId: '', clientSecret: '', closeAction: 'ask' as CloseAction }
+  const serverView = (): ServerSettings => ({
+    port: server.port,
+    githubClientId: server.githubClientId,
+    hasClientSecret: server.clientSecret !== '',
+    closeAction: server.closeAction,
+    callbackUrl: `http://127.0.0.1:${server.port}/auth/github/callback`,
+    warning: null,
+  })
+  const emitServer = (next: ServerStatus) => {
+    serverStatus = next
+    for (const l of [...serverListeners]) l(next)
+  }
 
   const handle: MinmoMockHandle = {
     openedUrls: [],
@@ -69,6 +102,14 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     },
     get keychain() {
       return Object.fromEntries(keychain)
+    },
+    emitCloseRequested: () => {
+      for (const l of [...closeListeners]) l()
+    },
+    closeCalls: [],
+    setServerStatus: emitServer,
+    get serverSettings() {
+      return { ...serverView(), clientSecret: server.clientSecret }
     },
   }
   if (typeof window !== 'undefined') window.__MINMO_MOCK__ = handle
@@ -251,6 +292,34 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       return () => {
         deepLinkListeners.delete(cb)
       }
+    },
+
+    serverStatus: async () => serverStatus,
+    onServerStatus: async (cb) => {
+      serverListeners.add(cb)
+      return () => {
+        serverListeners.delete(cb)
+      }
+    },
+    serverSettingsGet: async () => serverView(),
+    serverSettingsSave: async (input) => {
+      if (input.port !== undefined) server.port = input.port
+      if (input.githubClientId !== undefined) server.githubClientId = input.githubClientId.trim()
+      if (input.githubClientSecret !== undefined) server.clientSecret = input.githubClientSecret.trim()
+      if (input.closeAction !== undefined) server.closeAction = input.closeAction
+      return serverView()
+    },
+    serverRestart: async () => emitServer({ state: 'running', port: server.port, message: null }),
+    serverOpenLogDir: async () => {},
+    onCloseRequested: async (cb) => {
+      closeListeners.add(cb)
+      return () => {
+        closeListeners.delete(cb)
+      }
+    },
+    appClose: async (action, remember) => {
+      handle.closeCalls.push({ action, remember })
+      if (remember) server.closeAction = action
     },
   }
 }
