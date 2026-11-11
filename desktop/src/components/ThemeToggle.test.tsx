@@ -93,6 +93,46 @@ describe('테마', () => {
   })
 })
 
+describe('저장된 테마(업데이트·잘못된 값)', () => {
+  // zustand persist 는 항상 version 을 함께 저장한다(예전 버전은 0)
+  const stored = (state: unknown, version: number) => localStorage.setItem('minmo-ui', JSON.stringify({ state, version }))
+  const rehydrate = async () => {
+    await useUiStore.persist.rehydrate()
+    return useUiStore.getState().theme
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    useUiStore.setState({ theme: 'ghostty' })
+  })
+
+  it('예전 버전이 남긴 black(고르지 않아도 저장되던 기본값)은 한 번 Ghostty 로 옮긴다', async () => {
+    stored({ theme: 'black', expanded: { a: true } }, 0)
+    expect(await rehydrate()).toBe('ghostty')
+    // 다른 저장 값은 그대로
+    expect(useUiStore.getState().expanded).toEqual({ a: true })
+  })
+
+  it('직접 고른 light 는 유지한다', async () => {
+    stored({ theme: 'light' }, 0)
+    expect(await rehydrate()).toBe('light')
+  })
+
+  it('옮긴 뒤에 고른 블랙은 유지한다', async () => {
+    stored({ theme: 'black' }, 1)
+    expect(await rehydrate()).toBe('black')
+  })
+
+  it('알 수 없는 값은 기본 테마로 — 버튼이 깨지지 않는다', async () => {
+    stored({ theme: 'neon' }, 1)
+    expect(await rehydrate()).toBe('ghostty')
+    stored({ theme: null }, 1)
+    expect(await rehydrate()).toBe('ghostty')
+    render(<ThemeToggle />)
+    expect(screen.getByRole('button', { name: '테마: Ghostty' })).toBeInTheDocument()
+  })
+})
+
 describe('Ghostty 화면 토큰(index.css)', () => {
   const css = readFileSync(join(process.cwd(), 'src', 'index.css'), 'utf8')
   const block = /\.dark\.ghostty\s*\{([^}]*)\}/.exec(css)?.[1] ?? ''
@@ -109,6 +149,8 @@ describe('Ghostty 화면 토큰(index.css)', () => {
     expect(token('primary-foreground')).toBe(GHOSTTY_UI.accentForeground)
     expect(token('ring')).toBe(GHOSTTY_UI.accent)
     expect(token('destructive')).toBe(GHOSTTY_UI.error)
+    for (const name of ['secondary', 'accent']) expect(token(name)).toBe(GHOSTTY_UI.raised)
+    expect(token('warning')).toBe('#f0c674')
   })
 
   it('글자·배경 대비가 WCAG AA(4.5:1) 이상이다', () => {
@@ -120,7 +162,8 @@ describe('Ghostty 화면 토큰(index.css)', () => {
       ['강조 버튼', GHOSTTY_UI.accentForeground, GHOSTTY_UI.accent],
       ['오류 글자', GHOSTTY_UI.error, GHOSTTY.background],
       ['편집기 주석', GHOSTTY_UI.comment, GHOSTTY.background],
+      ['포커스 링(글자 아님, 3:1 이상이면 됨)', GHOSTTY_UI.accent, GHOSTTY_UI.raised],
     ]
-    for (const [name, fg, bg] of pairs) expect(contrast(fg, bg), name).toBeGreaterThanOrEqual(4.5)
+    for (const [name, fg, bg] of pairs) expect(contrast(fg, bg), name).toBeGreaterThanOrEqual(name.startsWith('포커스 링') ? 3 : 4.5)
   })
 })

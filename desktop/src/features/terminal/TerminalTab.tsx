@@ -359,7 +359,7 @@ function TerminalSession({
         </div>
       )}
       {ended && (
-        <div className="absolute inset-x-2 bottom-2 z-10 flex items-center gap-3 rounded bg-neutral-800 px-3 py-2 text-sm text-neutral-100">
+        <div className="absolute inset-x-2 bottom-2 z-10 flex items-center gap-3 rounded border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md">
           <p role="alert" className="flex-1">
             터미널 세션이 종료되었습니다
           </p>
