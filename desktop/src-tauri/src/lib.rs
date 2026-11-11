@@ -42,6 +42,10 @@ pub fn run() {
             // 키체인 서비스 이름이 identifier 를 따르므로 키체인을 쓰기 전에
             profile::init(&app.config().identifier);
             let handle = app.handle().clone();
+            // 앱에 등록한 ssh 호스트 목록(설정 폴더)
+            if let Ok(dirs) = profile::dirs(&handle) {
+                ssh::init(&dirs.config);
+            }
             app.manage(server::ServerManager::load(&handle));
             shell::setup_tray(&handle)?;
             // 서버 준비를 기다리는 동안 창이 멈추지 않게 백그라운드에서 띄운다(웹뷰는 server-status 로 기다린다)
@@ -68,6 +72,8 @@ pub fn run() {
             script::script_cancel,
             ssh::ssh_hosts,
             ssh::ssh_probe,
+            ssh::ssh_host_save,
+            ssh::ssh_host_remove,
             ssh::ssh_exec,
             ssh::ssh_script_run,
             ssh::ssh_script_cancel,
@@ -83,6 +89,12 @@ pub fn run() {
             fs::copy_file_into,
             fs::remove_file_in,
             fs::open_dir,
+            fs::fs_list_dir,
+            fs::fs_read_text,
+            fs::fs_write_text,
+            fs::fs_create_dir,
+            fs::fs_rename,
+            fs::fs_remove,
             server::server_status,
             server::server_settings_get,
             server::server_settings_save,

@@ -5,9 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
@@ -43,6 +43,122 @@ pub struct SshHost {
     pub alias: String,
     pub host_name: Option<String>,
     pub user: Option<String>,
+    /// config = ~/.ssh/config 의 Host, app = 앱에 직접 등록한 호스트
+    pub source: &'static str,
+    pub port: Option<u16>,
+    pub identity_file: Option<String>,
+}
+
+/// 앱에 직접 등록한 호스트(ssh-hosts.json). 비밀번호는 저장하지 않는다 — 키 파일 또는 ssh-agent 로 접속한다
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppHost {
+    pub alias: String,
+    pub host_name: String,
+    pub user: String,
+    pub port: u16,
+    #[serde(default)]
+    pub identity_file: Option<String>,
+}
+
+struct AppHosts {
+    path: PathBuf,
+    hosts: Mutex<Vec<AppHost>>,
+}
+
+static APP_HOSTS: OnceLock<AppHosts> = OnceLock::new();
+
+pub(crate) fn load_app_hosts(path: &Path) -> Vec<AppHost> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<AppHost>>(&t).ok())
+        .unwrap_or_default()
+}
+
+pub(crate) fn store_app_hosts(path: &Path, hosts: &[AppHost]) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(hosts).map_err(|e| e.to_string())?;
+    // 쓰다가 끊겨도 기존 목록이 깨지지 않게 임시 파일에 쓴 뒤 바꾼다
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+/// 앱 시작 시 한 번 — 설정 폴더의 등록 호스트를 읽는다
+pub fn init(config_dir: &Path) {
+    let path = config_dir.join("ssh-hosts.json");
+    let hosts = load_app_hosts(&path);
+    let _ = APP_HOSTS.set(AppHosts {
+        path,
+        hosts: Mutex::new(hosts),
+    });
+}
+
+fn app_hosts() -> Vec<AppHost> {
+    APP_HOSTS
+        .get()
+        .map(|a| a.hosts.lock().unwrap_or_else(|e| e.into_inner()).clone())
+        .unwrap_or_default()
+}
+
+fn word(s: &str, extra: &[char]) -> bool {
+    !s.is_empty()
+        && !s.starts_with('-')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || extra.contains(&c))
+}
+
+fn expand_home(path: &str) -> PathBuf {
+    match (
+        path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")),
+        home_dir(),
+    ) {
+        (Some(rest), Some(h)) => h.join(rest),
+        _ => PathBuf::from(path),
+    }
+}
+
+/// 등록할 호스트 검증 — 값이 ssh 옵션이나 다른 호스트로 해석되지 않게 한다. 정리한 값을 돌려준다
+pub(crate) fn check_app_host(h: &AppHost, config_aliases: &[String]) -> Result<AppHost, String> {
+    let alias = h.alias.trim().to_string();
+    if !word(&alias, &['.', '_', '-']) {
+        return Err("이름은 영문·숫자와 . _ - 만 쓸 수 있습니다".into());
+    }
+    if config_aliases.contains(&alias) {
+        return Err(format!(
+            "~/.ssh/config 에 같은 이름의 Host 가 있습니다: {alias}"
+        ));
+    }
+    let host_name = h.host_name.trim().to_string();
+    // ':' 는 IPv6 주소용
+    if !word(&host_name, &['.', '_', '-', ':']) {
+        return Err("호스트 주소가 올바르지 않습니다".into());
+    }
+    let user = h.user.trim().to_string();
+    if !word(&user, &['.', '_', '-']) {
+        return Err("사용자 이름이 올바르지 않습니다".into());
+    }
+    if h.port == 0 {
+        return Err("포트는 1~65535 사이여야 합니다".into());
+    }
+    let identity_file = match h.identity_file.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(p) => {
+            if !expand_home(p).is_file() {
+                return Err(format!("키 파일을 찾을 수 없습니다: {p}"));
+            }
+            Some(p.to_string())
+        }
+    };
+    Ok(AppHost {
+        alias,
+        host_name,
+        user,
+        port: h.port,
+        identity_file,
+    })
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -254,6 +370,9 @@ fn parse_into(path: &Path, base: &Path, home: Option<&Path>, depth: usize, out: 
                                 alias: alias.to_string(),
                                 host_name: None,
                                 user: None,
+                                source: "config",
+                                port: None,
+                                identity_file: None,
                             });
                             out.len() - 1
                         }
@@ -296,25 +415,95 @@ pub(crate) fn parse_hosts(path: &Path, home: Option<&Path>) -> Vec<SshHost> {
     out
 }
 
-fn list_hosts() -> Vec<SshHost> {
+fn config_hosts() -> Vec<SshHost> {
     match config_path() {
         Some(p) => parse_hosts(&p, home_dir().as_deref()),
         None => vec![],
     }
 }
 
-/// 설정 파일에 있는 별칭만 허용한다 — 웹뷰가 넘긴 값이 ssh 옵션(-o ProxyCommand=…)으로 해석되지 않게
+/// ~/.ssh/config 의 Host + 앱에 등록한 호스트. 이름이 겹치면 설정 파일 쪽을 쓴다
+fn merge_hosts(mut hosts: Vec<SshHost>, app: Vec<AppHost>) -> Vec<SshHost> {
+    for a in app {
+        if hosts.iter().any(|h| h.alias == a.alias) {
+            continue;
+        }
+        hosts.push(SshHost {
+            alias: a.alias,
+            host_name: Some(a.host_name),
+            user: Some(a.user),
+            source: "app",
+            port: Some(a.port),
+            identity_file: a.identity_file,
+        });
+    }
+    hosts
+}
+
+fn list_hosts() -> Vec<SshHost> {
+    merge_hosts(config_hosts(), app_hosts())
+}
+
+/// 앱에 등록한 호스트면 그 정보(설정 파일의 Host 면 None) — 접속 옵션을 만드는 데 쓴다
+fn app_host(host: &str) -> Option<AppHost> {
+    if config_hosts().iter().any(|h| h.alias == host) {
+        return None;
+    }
+    app_hosts().into_iter().find(|h| h.alias == host)
+}
+
+/// 아는 호스트(설정 파일의 별칭 또는 앱에 등록한 호스트)만 허용한다 — 웹뷰가 넘긴 값이 ssh 옵션(-o ProxyCommand=…)으로
+/// 해석되지 않게
 pub(crate) fn validate_host(host: &str) -> Result<(), String> {
     if list_hosts().iter().any(|h| h.alias == host) {
         Ok(())
     } else {
-        Err(format!("~/.ssh/config 에 없는 호스트입니다: {host}"))
+        Err(format!("등록되지 않은 호스트입니다: {host}"))
     }
+}
+
+/// 앱에 등록한 호스트의 접속 옵션. 사용자 ssh 설정의 `Host *` 기본값은 그대로 적용된다
+pub(crate) fn app_host_options(h: &AppHost) -> Vec<String> {
+    let mut o = vec![
+        "-o".to_string(),
+        format!("HostName={}", h.host_name),
+        "-o".to_string(),
+        format!("User={}", h.user),
+        "-o".to_string(),
+        format!("Port={}", h.port),
+    ];
+    if let Some(key) = &h.identity_file {
+        o.push("-o".into());
+        o.push(format!(
+            "IdentityFile={}",
+            expand_home(key).to_string_lossy()
+        ));
+        o.push("-o".into());
+        o.push("IdentitiesOnly=yes".into());
+    }
+    o
 }
 
 /// ssh 인자(원격 명령 앞까지). batch=true 는 프롬프트 없이 실패하는 명령 실행용, false 는 터미널용
 pub(crate) fn ssh_args(host: &str, batch: bool) -> Vec<String> {
+    ssh_args_for(host, app_host(host).as_ref(), batch, false)
+}
+
+/// accept_new: 처음 보는 호스트 키를 known_hosts 에 등록한다(이미 등록된 키가 바뀐 경우는 여전히 거부된다)
+pub(crate) fn ssh_args_for(
+    host: &str,
+    app: Option<&AppHost>,
+    batch: bool,
+    accept_new: bool,
+) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
+    if let Some(h) = app {
+        args.extend(app_host_options(h));
+    }
+    if accept_new {
+        args.push("-o".into());
+        args.push("StrictHostKeyChecking=accept-new".into());
+    }
     if let Some(cfg) = config_override() {
         args.push("-F".into());
         args.push(cfg.to_string_lossy().into_owned());
@@ -381,6 +570,17 @@ async fn run_ssh(
     stdin: Option<String>,
     queued: bool,
 ) -> Result<CmdResult, SshError> {
+    run_ssh_with(state, host, remote, stdin, queued, false).await
+}
+
+async fn run_ssh_with(
+    state: &SshState,
+    host: &str,
+    remote: String,
+    stdin: Option<String>,
+    queued: bool,
+    accept_new: bool,
+) -> Result<CmdResult, SshError> {
     validate_host(host).map_err(|m| SshError::new("unknown_host", m))?;
     let sem = state.sem(host);
     let _permit = if queued {
@@ -393,16 +593,21 @@ async fn run_ssh(
         None
     };
     let mut cmd = tokio::process::Command::new(ssh_program());
-    cmd.args(ssh_args(host, true))
-        .arg(sh_wrap(&remote))
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    cmd.args(ssh_args_for(
+        host,
+        app_host(host).as_ref(),
+        true,
+        accept_new,
+    ))
+    .arg(sh_wrap(&remote))
+    .stdin(if stdin.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
     #[cfg(windows)]
     cmd.creation_flags(super::CREATE_NO_WINDOW);
     let mut child = cmd
@@ -478,10 +683,55 @@ pub fn ssh_hosts() -> Vec<SshHost> {
     list_hosts()
 }
 
+/// trust_new: 처음 보는 호스트 키를 등록하고 연결한다(사용자가 [호스트 키 등록하고 연결] 을 눌렀을 때만)
 #[tauri::command]
-pub async fn ssh_probe(state: State<'_, SshState>, host: String) -> Result<Probe, SshError> {
-    let res = run_ssh(&state, &host, PROBE.to_string(), None, true).await?;
+pub async fn ssh_probe(
+    state: State<'_, SshState>,
+    host: String,
+    trust_new: Option<bool>,
+) -> Result<Probe, SshError> {
+    let res = run_ssh_with(
+        &state,
+        &host,
+        PROBE.to_string(),
+        None,
+        true,
+        trust_new.unwrap_or(false),
+    )
+    .await?;
     parse_probe(&res.stdout)
+}
+
+/// 호스트를 등록하거나 같은 이름의 등록을 고친다
+#[tauri::command]
+pub fn ssh_host_save(host: AppHost) -> Result<Vec<SshHost>, String> {
+    let store = APP_HOSTS
+        .get()
+        .ok_or("호스트 저장소를 사용할 수 없습니다")?;
+    let aliases: Vec<String> = config_hosts().into_iter().map(|h| h.alias).collect();
+    let checked = check_app_host(&host, &aliases)?;
+    {
+        let mut hosts = lock(&store.hosts);
+        match hosts.iter_mut().find(|h| h.alias == checked.alias) {
+            Some(h) => *h = checked,
+            None => hosts.push(checked),
+        }
+        store_app_hosts(&store.path, &hosts)?;
+    }
+    Ok(list_hosts())
+}
+
+#[tauri::command]
+pub fn ssh_host_remove(alias: String) -> Result<Vec<SshHost>, String> {
+    let store = APP_HOSTS
+        .get()
+        .ok_or("호스트 저장소를 사용할 수 없습니다")?;
+    {
+        let mut hosts = lock(&store.hosts);
+        hosts.retain(|h| h.alias != alias);
+        store_app_hosts(&store.path, &hosts)?;
+    }
+    Ok(list_hosts())
 }
 
 #[tauri::command]
@@ -811,6 +1061,102 @@ mod tests {
         let e = classify("warning\nsomething odd\n");
         assert_eq!(e.kind, "failed");
         assert_eq!(e.message, "something odd");
+    }
+
+    fn app(alias: &str) -> AppHost {
+        AppHost {
+            alias: alias.into(),
+            host_name: "10.0.0.5".into(),
+            user: "dev".into(),
+            port: 2222,
+            identity_file: None,
+        }
+    }
+
+    #[test]
+    fn app_host_is_validated_and_trimmed() {
+        let ok = check_app_host(
+            &AppHost {
+                alias: " build-1 ".into(),
+                host_name: " example.com ".into(),
+                ..app("x")
+            },
+            &[],
+        )
+        .unwrap();
+        assert_eq!(ok.alias, "build-1");
+        assert_eq!(ok.host_name, "example.com");
+        for bad in ["", "-oProxyCommand=x", "a b", "a|b", "a;b", "한글"] {
+            assert!(check_app_host(&app(bad), &[]).is_err(), "alias {bad}");
+        }
+        assert!(check_app_host(&app("dup"), &["dup".to_string()]).is_err());
+        for bad in ["", "-h", "a b", "h;rm", "$(x)"] {
+            let h = AppHost {
+                host_name: bad.into(),
+                ..app("a")
+            };
+            assert!(check_app_host(&h, &[]).is_err(), "host {bad}");
+            let u = AppHost {
+                user: bad.into(),
+                ..app("a")
+            };
+            assert!(check_app_host(&u, &[]).is_err(), "user {bad}");
+        }
+        assert!(check_app_host(
+            &AppHost {
+                port: 0,
+                ..app("a")
+            },
+            &[]
+        )
+        .is_err());
+        let ipv6 = AppHost {
+            host_name: "fe80::1".into(),
+            ..app("a")
+        };
+        assert!(check_app_host(&ipv6, &[]).is_ok());
+        let missing_key = AppHost {
+            identity_file: Some("/nonexistent/minmo/key".into()),
+            ..app("a")
+        };
+        assert!(check_app_host(&missing_key, &[]).is_err());
+    }
+
+    #[test]
+    fn app_hosts_roundtrip_and_merge_without_overriding_config() {
+        let dir = tmp("apphosts");
+        let path = dir.join("ssh-hosts.json");
+        assert!(load_app_hosts(&path).is_empty());
+        store_app_hosts(&path, &[app("one"), app("work")]).unwrap();
+        let loaded = load_app_hosts(&path);
+        assert_eq!(loaded, vec![app("one"), app("work")]);
+        std::fs::write(dir.join("config"), "Host work\n  HostName cfg\n").unwrap();
+        let merged = merge_hosts(parse_hosts(&dir.join("config"), None), loaded);
+        let view: Vec<(&str, &str)> = merged
+            .iter()
+            .map(|h| (h.alias.as_str(), h.source))
+            .collect();
+        assert_eq!(view, [("work", "config"), ("one", "app")]);
+        assert_eq!(merged[1].port, Some(2222));
+        std::fs::write(&path, "broken").unwrap();
+        assert!(load_app_hosts(&path).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn app_host_connects_with_explicit_options() {
+        let h = app("one");
+        let args = ssh_args_for("one", Some(&h), true, false);
+        let joined = args.join(" ");
+        assert!(joined.contains("-o HostName=10.0.0.5 -o User=dev -o Port=2222"));
+        assert!(!joined.contains("IdentityFile"));
+        assert!(!joined.contains("accept-new"));
+        assert_eq!(
+            args[args.len() - 2..],
+            ["--".to_string(), "one".to_string()]
+        );
+        let trusting = ssh_args_for("one", Some(&h), true, true).join(" ");
+        assert!(trusting.contains("StrictHostKeyChecking=accept-new"));
     }
 
     #[test]
