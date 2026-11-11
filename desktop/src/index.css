@@ -51,6 +51,33 @@
   --ring: oklch(0.556 0 0);
 }
 
+/*
+ * Ghostty 테마(기본): Ghostty 터미널의 기본 색(배경 #282c34 · 글자 #ffffff · 팔레트)을 앱 화면에도 쓴다.
+ * .dark 와 함께 붙어 색 토큰만 바꾼다. 값은 src/lib/ghostty.ts 와 같아야 한다.
+ */
+.dark.ghostty {
+  --background: #282c34;
+  --foreground: #ffffff;
+  --card: #2f343d;
+  --card-foreground: #ffffff;
+  --popover: #2f343d;
+  --popover-foreground: #ffffff;
+  --primary: #81a2be;
+  --primary-foreground: #1d1f21;
+  --secondary: #363c47;
+  --secondary-foreground: #ffffff;
+  --muted: #363c47;
+  --muted-foreground: #abb2bf;
+  --accent: #363c47;
+  --accent-foreground: #ffffff;
+  /* 팔레트 빨강(#cc6666)은 배경 위 글자로 대비가 부족해 조금 밝힌 값을 쓴다 */
+  --destructive: #e27878;
+  --warning: #f0c674;
+  --border: rgb(255 255 255 / 14%);
+  --input: rgb(255 255 255 / 18%);
+  --ring: #81a2be;
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

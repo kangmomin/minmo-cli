@@ -553,11 +553,14 @@ describe('패널 분할 (Ctrl+D / Ctrl+Shift+D / Ctrl+W)', () => {
     expect(useUiStore.getState().panes[A.issueId].focused).toBe(`${A.issueId}::1`)
   })
 
-  it('테마 전환을 열린 터미널에도 반영(블랙 #000000 · 라이트 #1e1e1e)', async () => {
+  it('테마 전환을 열린 터미널에도 반영(블랙 #000000 · 라이트 #1e1e1e · Ghostty 는 16색까지)', async () => {
     setup()
-    expect((xterm.instances[0].options.theme as { background: string }).background).toBe('#000000')
+    const theme = () => xterm.instances[0].options.theme as { background: string; red?: string }
+    expect(theme().background).toBe('#000000')
     act(() => useUiStore.getState().setTheme('light'))
-    expect((xterm.instances[0].options.theme as { background: string }).background).toBe('#1e1e1e')
+    expect(theme().background).toBe('#1e1e1e')
+    act(() => useUiStore.getState().setTheme('ghostty'))
+    expect([theme().background, theme().red]).toEqual(['#282c34', '#cc6666'])
   })
 })
 

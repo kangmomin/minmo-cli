@@ -6,10 +6,14 @@ import type { PaneNode, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
 
 export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes'
-export type Theme = 'black' | 'light'
+/** ghostty = Ghostty 터미널의 기본 색(기본값) */
+export type Theme = 'ghostty' | 'black' | 'light'
 
 /** 이슈별 터미널 패널 배치. tree=null 이면 모든 패널을 닫은 상태 */
 export type IssuePanes = { tree: PaneNode | null; focused: string | null; seq: number }
+
+const THEME_VALUES: readonly Theme[] = ['ghostty', 'black', 'light']
+const isTheme = (v: unknown): v is Theme => THEME_VALUES.includes(v as Theme)
 
 export interface UiState {
   expanded: Record<string, boolean>
@@ -46,7 +50,7 @@ export const useUiStore = create<UiState>()(
       tab: 'terminal',
       worktreePathMap: {},
       terminalIds: {},
-      theme: 'black',
+      theme: 'ghostty',
       panes: {},
       focusRequest: null,
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
@@ -120,6 +124,18 @@ export const useUiStore = create<UiState>()(
         worktreePathMap: s.worktreePathMap,
         theme: s.theme,
       }),
+      // v1: Ghostty 가 새 기본 테마다. 예전에는 고른 적이 없어도 기본값 'black' 이 저장돼 있었으므로, 저장된 'black' 을
+      // 한 번만 Ghostty 로 옮긴다(직접 고른 'light' 는 그대로 둔다). 그 뒤에 고른 블랙은 유지된다
+      version: 1,
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Partial<UiState>
+        return version < 1 && state.theme === 'black' ? { ...state, theme: 'ghostty' as const } : state
+      },
+      // 알 수 없는 테마 값(손으로 고친 값·다른 버전이 남긴 값)은 기본 테마로 본다
+      merge: (persisted, current) => {
+        const state = (persisted ?? {}) as Partial<UiState>
+        return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme }
+      },
     },
   ),
 )

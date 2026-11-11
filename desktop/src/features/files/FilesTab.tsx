@@ -317,7 +317,7 @@ type Loaded = { state: 'loading' } | { state: 'error'; message: string } | { sta
 /** 파일 하나의 편집기. 편집 상태는 fileDrafts 에 두어 탭·이슈를 오가도 유지된다 */
 function FileEditor({ root, scope, rel }: { root: string; scope: string; rel: string }) {
   const { tauri } = useDeps()
-  const dark = useUiStore((s) => s.theme === 'black')
+  const theme = useUiStore((s) => s.theme)
   const [loaded, setLoaded] = useState<Loaded>(() => (fileDrafts.get(scope, rel) ? { state: 'ready' } : { state: 'loading' }))
   const [dirty, setDirty] = useState(() => {
     const d = fileDrafts.get(scope, rel)
@@ -415,7 +415,7 @@ function FileEditor({ root, scope, rel }: { root: string; scope: string; rel: st
             key={generation}
             initial={draft.text}
             fileName={nameOf(rel)}
-            dark={dark}
+            theme={theme}
             label={`${rel} 편집`}
             onChange={(edited) => {
               const d = fileDrafts.get(scope, rel)

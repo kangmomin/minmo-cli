@@ -8,7 +8,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useBaseDeps } from '../../app/deps'
 import { Button } from '../../components/ui/button'
 import { remotePty } from '../../lib/sshHost'
-import { terminalBackground } from '../../lib/theme'
+import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
 import { PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 import { layoutPanes, leafIds } from './panes'
@@ -178,7 +178,7 @@ function TerminalSession({
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       fontSize: 13,
-      theme: { background: terminalBackground(useUiStore.getState().theme) },
+      theme: terminalTheme(useUiStore.getState().theme),
       // 출력을 스크린 리더가 읽을 수 있는 접근성 트리로도 내보낸다
       screenReaderMode: true,
     })
@@ -306,7 +306,7 @@ function TerminalSession({
   // 테마 전환을 열린 터미널에도 반영
   useEffect(() => {
     const cur = term.current
-    if (cur) cur.t.options.theme = { background: terminalBackground(theme) }
+    if (cur) cur.t.options.theme = terminalTheme(theme)
   }, [theme])
 
   // 사용자가 이 터미널을 쓰던 중 세션이 끝났을 때만 포커스를 옮긴다 — 다른 탭·이슈에 포커스가 있으면 자동 포커스 금지(AX-02) 유지
@@ -359,7 +359,7 @@ function TerminalSession({
         </div>
       )}
       {ended && (
-        <div className="absolute inset-x-2 bottom-2 z-10 flex items-center gap-3 rounded bg-neutral-800 px-3 py-2 text-sm text-neutral-100">
+        <div className="absolute inset-x-2 bottom-2 z-10 flex items-center gap-3 rounded border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md">
           <p role="alert" className="flex-1">
             터미널 세션이 종료되었습니다
           </p>
