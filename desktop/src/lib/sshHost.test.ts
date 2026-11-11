@@ -218,7 +218,7 @@ describe('ssh 오류', () => {
   })
 
   it('원인별로 다음에 할 일을 안내한다', () => {
-    expect(sshErrorText('srv', { kind: 'host_key', message: '' })).toContain('`ssh srv` 로 한 번 접속')
+    expect(sshErrorText('srv', { kind: 'host_key', message: '' })).toContain('[호스트 키 등록하고 연결]')
     expect(sshErrorText('srv', { kind: 'auth', message: '' })).toContain('ssh-agent')
     expect(sshErrorText('srv', { kind: 'unsupported_os', message: '지원하지 않는 OS: FreeBSD' })).toContain('Linux·macOS 만')
     expect(sshErrorText('srv', { kind: 'no_git', message: '' })).toContain('git 을 설치')

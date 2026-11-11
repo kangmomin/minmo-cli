@@ -141,7 +141,7 @@ describe('사이드바 호스트 전환', () => {
     const sshProbe = vi.fn<(h: string) => Promise<SshProbe>>().mockRejectedValue({ kind: 'host_key', message: 'Host key verification failed.' })
     const { user } = setup(sshProbe)
     await user.selectOptions(screen.getByRole('combobox', { name: '작업 호스트' }), 'my-server')
-    expect(await screen.findByRole('alert')).toHaveTextContent('`ssh my-server` 로 한 번 접속')
+    expect(await screen.findByRole('alert')).toHaveTextContent('처음 접속하는 호스트이거나')
     // 사용자가 고르면 호스트 키를 등록하고 연결한다(자동으로 하지 않는다)
     expect(screen.getByRole('button', { name: '호스트 키 등록하고 연결' })).toBeInTheDocument()
 

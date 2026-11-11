@@ -99,7 +99,7 @@ export function sshErrorOf(e: unknown): SshError {
 export function sshErrorText(alias: string, e: SshError): string {
   switch (e.kind) {
     case 'host_key':
-      return `호스트 키를 확인할 수 없습니다 — 터미널에서 \`ssh ${alias}\` 로 한 번 접속해 호스트 키를 등록하세요.`
+      return `처음 접속하는 호스트이거나 호스트 키가 바뀌었습니다(${alias}) — 처음이라면 [호스트 키 등록하고 연결] 을 누르세요. 그래도 실패하면 키가 바뀐 것이니 known_hosts 를 확인하세요.`
     case 'auth':
       return `인증에 실패했습니다 — 키 또는 ssh-agent 를 설정하세요(비밀번호 입력 방식은 지원하지 않습니다). \`ssh ${alias}\` 가 묻지 않고 접속되어야 합니다.`
     case 'unreachable':
