@@ -45,9 +45,14 @@ if [ -L "$s" ]; then echo "심볼릭 링크는 보관할 수 없습니다: $2" >
 if [ ! -f "$s" ]; then echo "파일이 없습니다: $2" >&2; exit 1; fi
 mkdir -p -- "$(dirname -- "$t")" && cp -p -- "$s" "$t"`
 
-/** worktree(또는 하위) 태그가 붙은 전용 tmux 세션을 끝낸다 — 세션 안의 프로세스는 SIGHUP 을 받는다 */
-const KILL_TMUX = `p=\${1%/}
-tmux -L minmo list-sessions -F '#{session_name}|#{@minmo_worktree}' 2>/dev/null | while IFS='|' read -r name wt; do
+/**
+ * worktree 의 전용 tmux 세션을 끝낸다 — 세션 안의 프로세스는 SIGHUP 을 받는다.
+ * 이름($2, 분할 패널은 -pN)과 태그(하위 경로 포함) 둘 다로 찾는다. 원격 로케일이 UTF-8 이 아니면 tmux 가
+ * 출력의 한글 경로를 '_' 로 바꾸므로 -u 로 UTF-8 출력을 강제한다.
+ */
+const KILL_TMUX = `p=\${1%/}; n=$2
+tmux -u -L minmo list-sessions -F '#{session_name}|#{@minmo_worktree}' 2>/dev/null | while IFS='|' read -r name wt; do
+  case "$name" in "$n"|"$n"-p*) tmux -L minmo kill-session -t "=$name"; continue ;; esac
   case "$wt" in "$p"|"$p"/*) tmux -L minmo kill-session -t "=$name" ;; esac
 done
 exit 0`
@@ -138,7 +143,7 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe): Ho
     scriptCancel: (runId) => base.sshScriptCancel(runId),
     ptyKillByCwd: async (path) => {
       const local = await base.ptyKillByCwd(path, alias)
-      if (probe.tmux) await script(KILL_TMUX, [path])
+      if (probe.tmux) await script(KILL_TMUX, [path, tmuxSessionName(path)])
       return local
     },
     homeDir: async () => probe.home,

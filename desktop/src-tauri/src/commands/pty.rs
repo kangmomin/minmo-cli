@@ -157,13 +157,14 @@ pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, 
                 return Err(format!("tmux 세션 이름이 올바르지 않습니다: {name}"));
             }
             let tag = ssh::quote(path.trim_end_matches('/'));
+            // -u: 원격 로케일이 UTF-8 이 아니어도 UTF-8 로 그린다(xterm 은 항상 UTF-8) — 없으면 한글이 '_' 로 나온다
             let ephemeral = if r.ephemeral {
                 " \\; set-option destroy-unattached on"
             } else {
                 ""
             };
             Ok(format!(
-                "cd && exec tmux -L minmo new-session -A -s {name} -c {dir} \\; set-option @minmo_worktree {tag}{ephemeral}"
+                "cd && exec tmux -u -L minmo new-session -A -s {name} -c {dir} \\; set-option @minmo_worktree {tag}{ephemeral}"
             ))
         }
     }
@@ -397,7 +398,7 @@ mod tests {
         );
         assert_eq!(
             remote_shell_command(&remote(Some("minmo-0a1b2c3d4e"), false), "/w/t/").unwrap(),
-            "cd && exec tmux -L minmo new-session -A -s minmo-0a1b2c3d4e -c '/w/t/' \\; set-option @minmo_worktree '/w/t'"
+            "cd && exec tmux -u -L minmo new-session -A -s minmo-0a1b2c3d4e -c '/w/t/' \\; set-option @minmo_worktree '/w/t'"
         );
         assert!(
             remote_shell_command(&remote(Some("minmo-0a1b2c3d4e-p2"), true), "/w/t")

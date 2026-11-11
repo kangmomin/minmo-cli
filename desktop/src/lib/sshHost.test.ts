@@ -101,7 +101,7 @@ describe('createSshOps', () => {
     expect(await ops.ptyKillByCwd('/w/t')).toBe(2)
     expect(tauri.ptyKillByCwd).toHaveBeenCalledWith('/w/t', 'my-server')
     const [, argv, opts] = tauri.sshExec.mock.calls[0]
-    expect(argv).toEqual(['sh', '-s', '--', '/w/t'])
+    expect(argv).toEqual(['sh', '-s', '--', '/w/t', tmuxSessionName('/w/t')])
     expect(opts?.stdin).toContain('kill-session')
   })
 
