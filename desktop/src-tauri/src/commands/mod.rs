@@ -5,6 +5,7 @@ pub mod job;
 pub mod keychain;
 pub mod pty;
 pub mod script;
+pub mod ssh;
 
 /// 경로 비교용 정규화: 구분자 통일 + 끝 구분자 제거 + (Windows) 대소문자 무시
 pub(crate) fn normalize_path(p: &str) -> String {
@@ -23,6 +24,13 @@ pub(crate) fn is_same_or_inside(child: &str, parent: &str) -> bool {
     let c = normalize_path(child);
     let p = normalize_path(parent);
     c == p || c.starts_with(&format!("{}/", p.trim_end_matches('/')))
+}
+
+/// 원격(POSIX) 경로 비교 — 로컬 OS 와 무관하게 대소문자를 구분한다
+pub(crate) fn posix_same_or_inside(child: &str, parent: &str) -> bool {
+    let c = child.trim_end_matches('/');
+    let p = parent.trim_end_matches('/');
+    !p.is_empty() && (c == p || c.starts_with(&format!("{p}/")))
 }
 
 /// Windows 에서 GUI 앱이 자식 프로세스를 띄울 때 콘솔 창이 깜빡이지 않도록 하는 플래그

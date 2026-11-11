@@ -1,8 +1,9 @@
 import { useMemo, useRef } from 'react'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
-import { worktreeId } from '@minmo/core'
 import type { IssueTarget } from '@minmo/core'
+import { aliasOfIssue, useHost } from '../../app/host'
+import { useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
 import type { IssueOpenState } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
@@ -24,12 +25,19 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
   const tab = useUiStore((s) => s.tab)
   const setTab = useUiStore((s) => s.setTab)
   const open = useSetupStore((s) => s.open)
-  const id = worktreeId(target.owner, target.repo, target.key)
+  const probes = useHostsStore((s) => s.probes)
+  const id = useHost().issueId(target.owner, target.repo, target.key)
   const terminalTrigger = useRef<HTMLButtonElement>(null)
 
   const sessions = useMemo(
-    () => Object.entries(open).flatMap(([issueId, s]) => (s.phase === 'ready' ? [{ issueId, cwd: s.path }] : [])),
-    [open],
+    () =>
+      Object.entries(open).flatMap(([issueId, s]) => {
+        if (s.phase !== 'ready') return []
+        // 다른 호스트의 이슈도 세션을 유지한다 — 원격이면 그 호스트로 ssh 터미널을 연다
+        const alias = aliasOfIssue(issueId)
+        return [{ issueId, cwd: s.path, remote: alias === null ? undefined : { host: alias, tmux: probes[alias]?.tmux ?? false } }]
+      }),
+    [open, probes],
   )
   const hasSession = sessions.some((s) => s.issueId === id)
 

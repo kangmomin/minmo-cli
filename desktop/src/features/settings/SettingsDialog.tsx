@@ -5,6 +5,7 @@ import { ApiError, renderPath } from '@minmo/api-client'
 import type { SettingsInput, SettingsRecord, SettingsScope, SettingsValues } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
+import { useHost } from '../../app/host'
 import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
@@ -188,6 +189,7 @@ function SettingsForm(props: {
 }) {
   const { scope, record, inherited, previewIssue } = props
   const { home, platform } = useDeps()
+  const hostLabel = useHost().label
   const offline = useSessionStore((st) => st.status === 'offline')
   const uid = useId()
   const isGlobal = scope.kind === 'global'
@@ -290,7 +292,7 @@ function SettingsForm(props: {
           idPrefix={fieldId('script')}
           title="생성 후 스크립트"
           contentLabel="스크립트 내용"
-          shell={`Windows · PowerShell${platform === 'win32' ? ' · 이 PC' : ''}`}
+          shell={`Windows · PowerShell${platform === 'win32' ? ` · ${hostLabel}` : ''}`}
           isGlobal={isGlobal}
           mode={scriptMode}
           onModeChange={setScriptMode}
@@ -303,7 +305,7 @@ function SettingsForm(props: {
           idPrefix={fieldId('script-posix')}
           title="생성 후 스크립트 (Linux/macOS)"
           contentLabel="스크립트 내용 (Linux/macOS)"
-          shell={`sh · 원격 CLI${platform !== 'win32' ? ' · 이 PC' : ''}`}
+          shell={`sh · 원격 호스트·CLI${platform !== 'win32' ? ` · ${hostLabel}` : ''}`}
           isGlobal={isGlobal}
           mode={posixMode}
           onModeChange={setPosixMode}

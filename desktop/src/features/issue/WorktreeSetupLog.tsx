@@ -2,7 +2,7 @@ import { ChevronDownIcon, ChevronRightIcon } from 'lucide-react'
 import { memo, useEffect, useId, useRef, useState } from 'react'
 
 import { Button } from '../../components/ui/button'
-import { worktreeId } from '@minmo/core'
+import { useHost } from '../../app/host'
 import type { IssueTarget, SetupLogEvent, SetupStep } from '@minmo/core'
 import { useSetupStore } from '../../store/setup'
 import type { SetupLogEntry } from '../../store/setup'
@@ -43,7 +43,7 @@ export interface WorktreeSetupLogProps {
 }
 
 export function WorktreeSetupLog({ target }: WorktreeSetupLogProps) {
-  const id = worktreeId(target.owner, target.repo, target.key)
+  const id = useHost().issueId(target.owner, target.repo, target.key)
   const logs = useSetupStore((s) => s.logs[id] ?? EMPTY)
   const open = useSetupStore((s) => s.open[id])
   const script = useSetupStore((s) => s.script[id])

@@ -3,10 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 
 import type { VisibleRepos } from '@minmo/api-client'
-import { isOwnerVisible, isRepoVisible, worktreeId } from '@minmo/core'
+import { isOwnerVisible, isRepoVisible } from '@minmo/core'
 import type { RepoSelection } from '@minmo/core'
 
 import { useDeps } from '../../app/deps'
+import { useHost } from '../../app/host'
 import { queryKeys } from '../../lib/queryKeys'
 import { useUiStore } from '../../store/ui'
 
@@ -23,13 +24,14 @@ export function useRepoSelection(): RepoSelection {
 /** 로컬 worktree 가 있는 저장소는 숨김으로 골라도 보여 준다(작업 중인 것을 잃지 않게) */
 export function useHasWorktree() {
   const map = useUiStore((s) => s.worktreePathMap)
+  const host = useHost()
   return useCallback(
     (owner: string, repo?: string) => {
-      const prefix = repo === undefined ? `${owner}/` : worktreeId(owner, repo, '')
+      const prefix = repo === undefined ? host.scope(`${owner}/`) : host.issueId(owner, repo, '')
       const p = prefix.toLowerCase()
       return Object.keys(map).some((id) => id.toLowerCase().startsWith(p))
     },
-    [map],
+    [map, host],
   )
 }
 

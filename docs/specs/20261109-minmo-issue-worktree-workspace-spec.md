@@ -179,6 +179,11 @@ minmo-cli/
 - 원격 CLI 는 GitHub Packages(`@kangmomin/minmo-cli`)로 배포하고, GitHub Releases 로 새 버전을 확인해 알린다(`minmo update`).
 - 릴리즈는 `v*` 태그 push 로 GitHub Actions 가 만든다. 서버 계약 변경 없음.
 
+### 원격 호스트 (v0.5.0, 후속 추가)
+- 데스크탑이 `~/.ssh/config` 의 Host 로 일반 ssh 접속해 원격(Linux·macOS)의 worktree·터미널·변경·로컬 파일을 다룬다. 원격에는 git 만 있으면 된다(minmo CLI·역터널 불필요).
+- 사이드바에서 작업 호스트를 고른다. worktree 기록은 호스트별(이 PC 의 로컬 저장소)이고, 서버는 호스트를 모른다. 서버 계약 변경 없음.
+- 원격 명령은 프롬프트 없는 인증(키·ssh-agent)만 쓴다. 터미널은 tmux 가 있으면 원격 CLI 와 같은 전용 세션, 없으면 로그인 셸.
+
 ## 비즈니스 규칙
 - 조직 목록 = 개인 계정(최상단) + `/user/orgs`. 프로젝트 = 저장소, 이슈 = GitHub Issue(PR 제외)
 - 모든 저장소 노드의 첫 행은 "기타" 고정 이슈. GitHub에 존재하지 않으며 삭제·닫힘 불가

@@ -5,14 +5,22 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import { useEffect, useId, useRef, useState } from 'react'
 
-import { useDeps } from '../../app/deps'
+import { useBaseDeps } from '../../app/deps'
 import { Button } from '../../components/ui/button'
+import { remotePty } from '../../lib/sshHost'
 import { terminalBackground } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
 import { PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
-import { layoutPanes } from './panes'
+import { layoutPanes, leafIds } from './panes'
 
-export type TerminalSessionSpec = { issueId: string; cwd: string }
+/** remote 가 있으면 그 호스트(SSH 프로필)의 cwd 에서 터미널을 연다 */
+export type TerminalSessionSpec = { issueId: string; cwd: string; remote?: { host: string; tmux: boolean } }
+
+/** 원격 tmux 세션 선택: 이슈의 첫 패널이 기본 세션(앱을 꺼도 유지), 나머지는 패널과 함께 사라지는 세션 */
+function paneRole(issueId: string, paneId: string) {
+  const first = leafIds(useUiStore.getState().panes[issueId]?.tree ?? null)[0]
+  return { primary: first === undefined || first === paneId, seq: Number(paneId.slice(paneId.lastIndexOf('::') + 2)) || 1 }
+}
 
 /** ptySpawn 응답 전에 도착한 pty-data 를 id 별로 보관하는 상한(문자 수) */
 export const MAX_PENDING_PTY_CHARS = 256 * 1024
@@ -137,7 +145,11 @@ function TerminalSession({
   hintId: string
   onExit?: () => void
 }) {
-  const { tauri } = useDeps()
+  // PTY 입출력은 원격 터미널도 이 PC 의 ssh 프로세스를 거친다 — 화면의 호스트가 바뀌어도 세션을 다시 만들지 않게 고정한다
+  const { tauri } = useBaseDeps()
+  // 객체가 아니라 값으로 비교해야 세션 목록이 다시 만들어질 때 터미널을 새로 띄우지 않는다
+  const remoteHost = spec.remote?.host
+  const remoteTmux = spec.remote?.tmux ?? false
   const theme = useUiStore((s) => s.theme)
   const focusRequest = useUiStore((s) => s.focusRequest)
   const host = useRef<HTMLDivElement>(null)
@@ -236,7 +248,8 @@ function TerminalSession({
         } catch {
           // 숨김 상태에서는 크기를 잴 수 없다 — 표시될 때 다시 맞춘다
         }
-        const id = await tauri.ptySpawn({ cwd: spec.cwd, cols: Math.max(t.cols, 20), rows: Math.max(t.rows, 5) })
+        const remote = remoteHost === undefined ? undefined : remotePty(remoteHost, remoteTmux, spec.cwd, paneRole(spec.issueId, paneId))
+        const id = await tauri.ptySpawn({ cwd: spec.cwd, cols: Math.max(t.cols, 20), rows: Math.max(t.rows, 5), remote })
         settled = true
         if (disposed) {
           pending.clear()
@@ -274,7 +287,7 @@ function TerminalSession({
       t.dispose()
       term.current = null
     }
-  }, [tauri, spec.cwd, spec.issueId, paneId, hintId, gen])
+  }, [tauri, spec.cwd, spec.issueId, remoteHost, remoteTmux, paneId, hintId, gen])
 
   // 분할·닫기·[새 터미널] 처럼 사용자가 패널을 바꿨을 때만 대상 패널로 포커스를 옮긴다(AX-02 자동 포커스 금지 유지)
   useEffect(() => {

@@ -6,14 +6,29 @@ use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
+
+use super::ssh;
+
+/// 원격 터미널 요청. session 이 있으면 전용 tmux(-L minmo) 세션에 붙고, 없으면 로그인 셸을 연다
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePty {
+    host: String,
+    session: Option<String>,
+    /// 분할로 만든 추가 패널 — 붙은 클라이언트가 없어지면 세션도 사라진다
+    #[serde(default)]
+    ephemeral: bool,
+}
 
 pub struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
     cwd: String,
+    /// 원격(ssh) 세션이면 호스트 별칭 — 이때 cwd 는 원격 경로다
+    host: Option<String>,
     /// ConPTY 시작 커서 위치 질의(ESC[6n)의 응답(CPR)이 입력으로 지나갔는지
     cpr_answered: bool,
     /// 셸과 그 자손이 속한 Job Object — 만들지 못하면 None(트리 종료만으로 정리)
@@ -124,6 +139,49 @@ fn take_utf8(pending: &mut Vec<u8>) -> String {
     }
 }
 
+/// 원격 셸에서 실행할 한 줄. tmux 서버는 처음 실행한 cwd 를 가진 채 남으므로(그 worktree 를 지울 때 걸린다)
+/// 홈에서 시작하고 세션의 시작 폴더만 worktree 로 준다 — 원격 CLI(packages/cli/src/host/tmux.ts)와 같은 규칙
+pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, String> {
+    if !path.starts_with('/') {
+        return Err(format!("원격 경로는 절대 경로여야 합니다: {path}"));
+    }
+    let dir = ssh::quote(path);
+    match &r.session {
+        None => Ok(format!("cd -- {dir} && exec \"${{SHELL:-sh}}\" -l")),
+        Some(name) => {
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return Err(format!("tmux 세션 이름이 올바르지 않습니다: {name}"));
+            }
+            let tag = ssh::quote(path.trim_end_matches('/'));
+            // -u: 원격 로케일이 UTF-8 이 아니어도 UTF-8 로 그린다(xterm 은 항상 UTF-8) — 없으면 한글이 '_' 로 나온다
+            let ephemeral = if r.ephemeral {
+                " \\; set-option destroy-unattached on"
+            } else {
+                ""
+            };
+            Ok(format!(
+                "cd && exec tmux -u -L minmo new-session -A -s {name} -c {dir} \\; set-option @minmo_worktree {tag}{ephemeral}"
+            ))
+        }
+    }
+}
+
+/// ssh -t 로 원격 셸을 연다. 프롬프트(비밀번호 등)는 터미널에서 직접 답할 수 있다
+fn remote_shell(r: &RemotePty, path: &str) -> Result<CommandBuilder, String> {
+    ssh::validate_host(&r.host)?;
+    let mut cmd = CommandBuilder::new(ssh::ssh_program());
+    cmd.args(ssh::ssh_args(&r.host, false));
+    cmd.arg(ssh::sh_wrap(&remote_shell_command(r, path)?));
+    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+        cmd.cwd(home);
+    }
+    Ok(cmd)
+}
+
 fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
@@ -135,7 +193,16 @@ pub fn pty_spawn(
     cwd: String,
     cols: u16,
     rows: u16,
+    remote: Option<RemotePty>,
 ) -> Result<String, String> {
+    let cmd = match &remote {
+        Some(r) => remote_shell(r, &cwd)?,
+        None => {
+            let mut cmd = CommandBuilder::new(default_shell());
+            cmd.cwd(&cwd);
+            cmd
+        }
+    };
     let pair = native_pty_system()
         .openpty(PtySize {
             rows,
@@ -144,8 +211,7 @@ pub fn pty_spawn(
             pixel_height: 0,
         })
         .map_err(err)?;
-    let mut cmd = CommandBuilder::new(default_shell());
-    cmd.cwd(&cwd);
+    let mut cmd = cmd;
     cmd.env("TERM", "xterm-256color");
     let child = pair.slave.spawn_command(cmd).map_err(err)?;
     drop(pair.slave);
@@ -187,6 +253,7 @@ pub fn pty_spawn(
             writer,
             child,
             cwd,
+            host: remote.map(|r| r.host),
             cpr_answered: false,
             #[cfg(windows)]
             job,
@@ -279,14 +346,29 @@ pub fn kill_all(state: &PtyState) {
     }
 }
 
+/// 같은 호스트(None = 이 PC)의 세션이고 cwd 가 path 와 같거나 그 하위인가
+fn in_target(s: &PtySession, path: &str, host: Option<&str>) -> bool {
+    if s.host.as_deref() != host {
+        return false;
+    }
+    match host {
+        Some(_) => super::posix_same_or_inside(&s.cwd, path),
+        None => super::is_same_or_inside(&s.cwd, path),
+    }
+}
+
 /// cwd 가 path(또는 하위)인 PTY 를 모두 종료하고 종료 개수를 돌려준다 (worktree 삭제 전 — Windows 파일 잠금 방지)
 #[tauri::command]
-pub async fn pty_kill_by_cwd(state: State<'_, PtyState>, path: String) -> Result<u32, String> {
+pub async fn pty_kill_by_cwd(
+    state: State<'_, PtyState>,
+    path: String,
+    host: Option<String>,
+) -> Result<u32, String> {
     let targets: Vec<PtySession> = {
         let mut sessions = state.sessions.lock().map_err(err)?;
         let ids: Vec<String> = sessions
             .iter()
-            .filter(|(_, s)| super::is_same_or_inside(&s.cwd, &path))
+            .filter(|(_, s)| in_target(s, &path, host.as_deref()))
             .map(|(id, _)| id.clone())
             .collect();
         ids.iter().filter_map(|id| sessions.remove(id)).collect()
@@ -299,6 +381,38 @@ pub async fn pty_kill_by_cwd(state: State<'_, PtyState>, path: String) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn remote(session: Option<&str>, ephemeral: bool) -> RemotePty {
+        RemotePty {
+            host: "h".into(),
+            session: session.map(str::to_string),
+            ephemeral,
+        }
+    }
+
+    #[test]
+    fn remote_shell_command_attaches_tmux_or_opens_a_login_shell() {
+        assert_eq!(
+            remote_shell_command(&remote(None, false), "/w/it's").unwrap(),
+            "cd -- '/w/it'\\''s' && exec \"${SHELL:-sh}\" -l"
+        );
+        assert_eq!(
+            remote_shell_command(&remote(Some("minmo-0a1b2c3d4e"), false), "/w/t/").unwrap(),
+            "cd && exec tmux -u -L minmo new-session -A -s minmo-0a1b2c3d4e -c '/w/t/' \\; set-option @minmo_worktree '/w/t'"
+        );
+        assert!(
+            remote_shell_command(&remote(Some("minmo-0a1b2c3d4e-p2"), true), "/w/t")
+                .unwrap()
+                .ends_with("\\; set-option destroy-unattached on")
+        );
+    }
+
+    #[test]
+    fn remote_shell_command_rejects_bad_session_names_and_relative_paths() {
+        assert!(remote_shell_command(&remote(Some("a;b"), false), "/w").is_err());
+        assert!(remote_shell_command(&remote(Some(""), false), "/w").is_err());
+        assert!(remote_shell_command(&remote(None, false), "w/t").is_err());
+    }
 
     #[test]
     fn contains_cpr_detects_only_cursor_reports() {
@@ -380,6 +494,7 @@ mod tests {
                 writer,
                 child,
                 cwd: String::new(),
+                host: None,
                 cpr_answered: false,
                 job,
             };

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useId, useState } from 'react'
 import type { FormEvent } from 'react'
 
 import { useDeps } from '../../app/deps'
+import { useHost } from '../../app/host'
 import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
@@ -41,6 +42,7 @@ export function LocalFilesDialog({ target, worktreePath, open, onOpenChange }: L
 
 function LocalFilesBody({ target, worktreePath }: { target: IssueTarget; worktreePath: string }) {
   const { tauri } = useDeps()
+  const remote = useHost().alias !== null
   const actions = useIssueActions()
   const uid = useId()
   const [dir, setDir] = useState<string | null>(null)
@@ -146,11 +148,14 @@ function LocalFilesBody({ target, worktreePath }: { target: IssueTarget; worktre
         </p>
       </form>
 
-      <div className="flex items-center justify-between gap-2">
-        <Button variant="outline" size="sm" disabled={!dir} onClick={() => void run(() => tauri.openDir(dir!), '보관 폴더를 열었습니다')}>
-          <FolderOpenIcon /> 폴더 열기
-        </Button>
-      </div>
+      {/* 원격 폴더는 이 PC 의 탐색기로 열 수 없다 — 위의 경로만 보여 준다 */}
+      {!remote && (
+        <div className="flex items-center justify-between gap-2">
+          <Button variant="outline" size="sm" disabled={!dir} onClick={() => void run(() => tauri.openDir(dir!), '보관 폴더를 열었습니다')}>
+            <FolderOpenIcon /> 폴더 열기
+          </Button>
+        </div>
+      )}
 
       {/* 결과 안내: live region 은 미리 렌더해 두어야 변화가 읽힌다 */}
       <p role="status" className="text-xs text-muted-foreground">
