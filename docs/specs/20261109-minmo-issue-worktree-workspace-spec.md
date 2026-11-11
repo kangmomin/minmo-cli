@@ -174,6 +174,11 @@ minmo-cli/
 - 정상 종료는 stdin 닫기(`MINMO_STOP_ON_STDIN_CLOSE=1`), 앱이 비정상 종료하면 Job Object 로 함께 끝난다.
 - 창을 닫을 때: 매번 묻기(기본)·트레이로 최소화(서버 유지)·종료 중 사용자가 고른다. 서버 계약 변경 없음.
 
+### 업데이트·배포 (v0.4.0, 후속 추가)
+- 데스크탑은 Tauri updater 로 자동 업데이트한다(릴리즈 `latest.json` + 서명 검증). 설치 전 내장 서버를 정상 종료한다.
+- 원격 CLI 는 GitHub Packages(`@kangmomin/minmo-cli`)로 배포하고, GitHub Releases 로 새 버전을 확인해 알린다(`minmo update`).
+- 릴리즈는 `v*` 태그 push 로 GitHub Actions 가 만든다. 서버 계약 변경 없음.
+
 ## 비즈니스 규칙
 - 조직 목록 = 개인 계정(최상단) + `/user/orgs`. 프로젝트 = 저장소, 이슈 = GitHub Issue(PR 제외)
 - 모든 저장소 노드의 첫 행은 "기타" 고정 이슈. GitHub에 존재하지 않으며 삭제·닫힘 불가
