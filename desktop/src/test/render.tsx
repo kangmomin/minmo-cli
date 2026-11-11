@@ -19,6 +19,7 @@ export function makeDeps(partial: Partial<AppDeps> = {}): AppDeps {
     github: createFakeGitHub(),
     home: '/home/u',
     platform: 'linux',
+    gitToken: async () => null,
     ...partial,
   }
 }

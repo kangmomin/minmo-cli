@@ -132,6 +132,83 @@ describe('createSshOps', () => {
   })
 })
 
+describe('원격 git 인증(토큰 전달)', () => {
+  it('토큰은 stdin 으로만 보낸다 — 명령줄(argv)·환경 변수 인자에는 없다', async () => {
+    const { tauri } = createFakeTauri()
+    const ops = createSshOps(tauri, 'my-server', PROBE, async () => 'gho_SECRET')
+    await ops.gitRun(['-C', '/ws/o/r/_main', 'fetch', 'origin'])
+    const [, argv, opts] = tauri.sshExec.mock.calls[0]
+    expect(argv.slice(0, 2)).toEqual(['sh', '-c'])
+    expect(argv.slice(3)).toEqual(['sh', '-C', '/ws/o/r/_main', 'fetch', 'origin'])
+    expect(opts?.stdin).toBe('gho_SECRET\n')
+    expect(JSON.stringify(argv)).not.toContain('gho_SECRET')
+    expect(JSON.stringify(opts?.env)).not.toContain('gho_SECRET')
+    // github.com 에만, 이 명령에만 적용되고 원격의 helper(저장)는 쓰지 않는다
+    expect(argv[2]).toContain('credential.https://github.com.helper=')
+    expect(argv[2]).toContain('exec git')
+  })
+
+  it('토큰이 없거나 얻지 못하면 원격 자체의 자격 증명으로 실행한다', async () => {
+    for (const getToken of [async () => null, async () => Promise.reject(new Error('offline')), async () => 'bad\ntoken']) {
+      const { tauri } = createFakeTauri()
+      await createSshOps(tauri, 'my-server', PROBE, getToken).gitRun(['status'])
+      expect(tauri.sshExec).toHaveBeenCalledWith('my-server', ['git', 'status'], { cwd: undefined, env: { GIT_TERMINAL_PROMPT: '0' } })
+    }
+  })
+})
+
+describe('원격 파일 탭 작업', () => {
+  const ROOT = '/ws/o/r/t'
+
+  it('폴더 목록: 폴더 먼저·이름순, 링크 구분', async () => {
+    const { ops } = setup(PROBE, { sshExec: async () => ok('f/b.txt\nd/src\nl/link\nf/A.md\nd/.github\n') })
+    expect(await ops.listDir(ROOT, '')).toEqual([
+      { name: '.github', kind: 'dir' },
+      { name: 'src', kind: 'dir' },
+      { name: 'A.md', kind: 'file' },
+      { name: 'b.txt', kind: 'file' },
+      { name: 'link', kind: 'link' },
+    ])
+  })
+
+  it('읽기: 첫 줄은 version, 나머지가 내용(줄바꿈·CRLF 그대로) · 바이너리는 거부', async () => {
+    const { ops } = setup(PROBE, { sshExec: async (_h, argv) => (argv[4] === 'bin' ? ok('1 3\n\uFFFD\uFFFD') : ok('123 9\nline1\r\n\nend')) })
+    expect(await ops.readTextFile(ROOT, 'a.txt')).toEqual({ content: 'line1\r\n\nend', version: '123 9' })
+    await expect(ops.readTextFile(ROOT, 'bin')).rejects.toThrow('file_binary')
+  })
+
+  it('쓰기: 내용은 stdin, 경로·version·create 는 인자 · 원격 오류 코드를 그대로 돌려준다', async () => {
+    const { tauri, ops } = setup(PROBE, { sshExec: async (_h, argv) => (argv[5] === 'conflict.txt' ? fail('file_changed: 연 뒤에 파일이 바뀌었습니다') : ok('999 5\n')) })
+    expect(await ops.writeTextFile(ROOT, 'dir/a.txt', 'hello', { expected: '123 9' })).toBe('999 5')
+    const [, argv, opts] = tauri.sshExec.mock.calls[0]
+    expect(argv.slice(0, 2)).toEqual(['sh', '-c'])
+    expect(argv.slice(3)).toEqual(['sh', ROOT, 'dir/a.txt', '123 9', '0'])
+    expect(opts?.stdin).toBe('hello')
+    await expect(ops.writeTextFile(ROOT, 'conflict.txt', 'x', { expected: 'old' })).rejects.toThrow('file_changed')
+    await ops.writeTextFile(ROOT, 'new.txt', '', { create: true })
+    expect(tauri.sshExec.mock.calls[2][1].slice(3)).toEqual(['sh', ROOT, 'new.txt', '', '1'])
+  })
+
+  it('루트 밖을 가리키는 경로는 원격에 보내지 않는다', async () => {
+    const { tauri, ops } = setup()
+    await expect(ops.readTextFile(ROOT, '../secret')).rejects.toThrow('상대 경로')
+    await expect(ops.writeTextFile(ROOT, '/etc/passwd', 'x')).rejects.toThrow('상대 경로')
+    await expect(ops.renamePath(ROOT, 'a', '../b')).rejects.toThrow('상대 경로')
+    await expect(ops.removePath(ROOT, '')).rejects.toThrow('상대 경로')
+    await expect(ops.listDir('/home/dev', '')).rejects.toThrow('사용할 수 없는 폴더')
+    await expect(ops.createDir('/', 'x')).rejects.toThrow('사용할 수 없는 폴더')
+    expect(tauri.sshExec).not.toHaveBeenCalled()
+  })
+
+  it('만들기·이름 바꾸기·삭제는 경로를 인자로 넘긴다', async () => {
+    const { tauri, ops } = setup()
+    await ops.createDir(ROOT, 'a/b')
+    await ops.renamePath(ROOT, 'a/b', 'c d')
+    await ops.removePath(ROOT, 'c d')
+    expect(tauri.sshExec.mock.calls.map(([, argv]) => argv.slice(3))).toEqual([[ROOT, 'a/b'], [ROOT, 'a/b', 'c d'], [ROOT, 'c d']])
+  })
+})
+
 describe('ssh 오류', () => {
   it('reject 값과 문자열 형식 모두 종류를 읽는다', () => {
     expect(sshErrorOf({ kind: 'auth', message: 'Permission denied (publickey).' })).toEqual({ kind: 'auth', message: 'Permission denied (publickey).' })

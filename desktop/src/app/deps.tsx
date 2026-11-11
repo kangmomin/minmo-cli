@@ -13,6 +13,8 @@ export interface AppDeps {
   github: GitHubClient
   home: string
   platform: Platform
+  /** 원격 git 에 넘길 GitHub 토큰 — 이 PC 의 gh 로그인, 없으면 서버가 준 토큰. 얻지 못하면 null */
+  gitToken(): Promise<string | null>
 }
 
 /** 영역의 호스트에 맞춘 deps — 원격 호스트 영역(app/host.tsx HostScope)에서는 tauri·home·platform 이 원격 것이다 */

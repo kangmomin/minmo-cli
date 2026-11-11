@@ -9,7 +9,7 @@ import { worktreeId } from '@minmo/core'
 import { useDeps } from '../../app/deps'
 import { HostScope, aliasOfIssue, coreIdOf, hostOf, useHost, useHostConnection } from '../../app/host'
 import { TooltipProvider } from '../../components/ui/tooltip'
-import type { SshProbe } from '../../lib/tauri'
+import type { SshHostInfo, SshHostInput, SshProbe } from '../../lib/tauri'
 import { useHostsStore } from '../../store/hosts'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
@@ -20,6 +20,7 @@ import { useRefreshTree } from '../tree/useTree'
 import { HostsDialog } from './HostsDialog'
 
 const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: true }
+const cfg = (alias: string, hostName: string | null = null, user: string | null = null): SshHostInfo => ({ alias, hostName, user, source: 'config', port: null, identityFile: null })
 
 beforeEach(() => {
   localStorage.clear()
@@ -102,7 +103,7 @@ describe('useHostConnection', () => {
     const { tauri } = createFakeTauri({ sshProbe: async () => PROBE })
     const { result } = renderHook(() => useHostConnection(), { wrapper: makeWrapper(makeDeps({ tauri })) })
     await waitFor(() => expect(result.current.ready).toBe(true))
-    expect(tauri.sshProbe).toHaveBeenCalledWith('my-server')
+    expect(tauri.sshProbe).toHaveBeenCalledWith('my-server', false)
   })
 })
 
@@ -132,7 +133,7 @@ describe('사이드바 호스트 전환', () => {
     expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['이 PC', 'my-server'])
     await user.selectOptions(select, 'my-server')
     await waitFor(() => expect(useHostsStore.getState().probes['my-server']).toEqual(PROBE))
-    expect(tauri.sshProbe).toHaveBeenCalledWith('my-server')
+    expect(tauri.sshProbe).toHaveBeenCalledWith('my-server', false)
     expect(screen.queryByTestId('host-unavailable')).toBeNull()
   })
 
@@ -141,6 +142,8 @@ describe('사이드바 호스트 전환', () => {
     const { user } = setup(sshProbe)
     await user.selectOptions(screen.getByRole('combobox', { name: '작업 호스트' }), 'my-server')
     expect(await screen.findByRole('alert')).toHaveTextContent('`ssh my-server` 로 한 번 접속')
+    // 사용자가 고르면 호스트 키를 등록하고 연결한다(자동으로 하지 않는다)
+    expect(screen.getByRole('button', { name: '호스트 키 등록하고 연결' })).toBeInTheDocument()
 
     sshProbe.mockResolvedValueOnce(PROBE)
     await user.click(screen.getByRole('button', { name: '다시 시도' }))
@@ -177,10 +180,7 @@ describe('연결 확인 값', () => {
 describe('HostsDialog', () => {
   it('ssh 설정의 호스트를 보여 주고 연결 확인·추가·빼기를 한다', async () => {
     const { tauri } = createFakeTauri({
-      sshHosts: async () => [
-        { alias: 'my-server', hostName: '10.0.0.5', user: 'dev' },
-        { alias: 'bad', hostName: null, user: null },
-      ],
+      sshHosts: async () => [cfg('my-server', '10.0.0.5', 'dev'), cfg('bad')],
       sshProbe: async (h) => {
         if (h === 'bad') throw { kind: 'unsupported_os', message: '지원하지 않는 OS: FreeBSD' }
         return PROBE
@@ -202,6 +202,72 @@ describe('HostsDialog', () => {
     const bad = screen.getByTestId('ssh-host-bad')
     await user.click(within(bad).getByRole('button', { name: '연결 확인' }))
     expect(await within(bad).findByText(/Linux·macOS 만 지원/)).toBeInTheDocument()
+  })
+
+  it('호스트를 직접 등록한다 — 등록하면 작업 호스트 목록에 들어가고, 수정·삭제할 수 있다', async () => {
+    let saved: SshHostInfo[] = []
+    const { tauri } = createFakeTauri({
+      sshHosts: async () => saved,
+      sshHostSave: async (h: SshHostInput) => {
+        if (h.alias === 'bad name') throw '이름은 영문·숫자와 . _ - 만 쓸 수 있습니다'
+        saved = [...saved.filter((x) => x.alias !== h.alias), { ...h, source: 'app' }]
+        return saved
+      },
+      sshHostRemove: async (alias) => (saved = saved.filter((x) => x.alias !== alias)),
+    })
+    const user = userEvent.setup()
+    renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri }))
+    await user.click(await screen.findByRole('button', { name: '호스트 직접 등록' }))
+    const form = screen.getByRole('form', { name: '호스트 직접 등록' })
+    await user.type(within(form).getByLabelText('이름'), 'bad name')
+    await user.type(within(form).getByLabelText('호스트 주소'), '10.0.0.9')
+    await user.type(within(form).getByLabelText('사용자'), 'ubuntu')
+    await user.clear(within(form).getByLabelText('포트'))
+    await user.type(within(form).getByLabelText('포트'), '70000')
+    await user.click(within(form).getByRole('button', { name: '등록' }))
+    expect(within(form).getByRole('alert')).toHaveTextContent('포트는 1~65535')
+    expect(tauri.sshHostSave).not.toHaveBeenCalled()
+
+    await user.clear(within(form).getByLabelText('포트'))
+    await user.type(within(form).getByLabelText('포트'), '2222')
+    await user.click(within(form).getByRole('button', { name: '등록' }))
+    // 서버(Rust) 검증 오류는 폼에 그대로 보여 준다
+    expect(await within(form).findByRole('alert')).toHaveTextContent('영문·숫자')
+
+    await user.clear(within(form).getByLabelText('이름'))
+    await user.type(within(form).getByLabelText('이름'), 'office-dev')
+    await user.type(within(form).getByLabelText('키 파일 (선택)'), '~/.ssh/id_ed25519')
+    await user.click(within(form).getByRole('button', { name: '등록' }))
+    const row = await screen.findByTestId('ssh-host-office-dev')
+    expect(tauri.sshHostSave).toHaveBeenLastCalledWith({ alias: 'office-dev', hostName: '10.0.0.9', user: 'ubuntu', port: 2222, identityFile: '~/.ssh/id_ed25519' })
+    expect(row).toHaveTextContent('ubuntu@10.0.0.9:2222')
+    expect(row).toHaveTextContent('앱에 등록')
+    expect(useHostsStore.getState().aliases).toEqual(['office-dev'])
+
+    // 수정: 이름은 바꿀 수 없다
+    await user.click(within(row).getByRole('button', { name: '수정' }))
+    const edit = screen.getByRole('form', { name: '호스트 수정' })
+    expect(within(edit).getByLabelText('이름')).toBeDisabled()
+    await user.click(within(edit).getByRole('button', { name: '취소' }))
+
+    await user.click(within(screen.getByTestId('ssh-host-office-dev')).getByRole('button', { name: 'office-dev 등록 삭제' }))
+    await waitFor(() => expect(screen.queryByTestId('ssh-host-office-dev')).toBeNull())
+    expect(useHostsStore.getState().aliases).toEqual([])
+  })
+
+  it('처음 접속하는 호스트 → [호스트 키 등록하고 연결] 로 등록 후 연결', async () => {
+    const sshProbe = vi.fn(async (_h: string, trustNew?: boolean): Promise<SshProbe> => {
+      if (!trustNew) throw { kind: 'host_key', message: 'Host key verification failed.' }
+      return PROBE
+    })
+    const { tauri } = createFakeTauri({ sshHosts: async () => [cfg('new-host')], sshProbe })
+    const user = userEvent.setup()
+    renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri }))
+    const row = await screen.findByTestId('ssh-host-new-host')
+    await user.click(within(row).getByRole('button', { name: '연결 확인' }))
+    await user.click(await within(row).findByRole('button', { name: '호스트 키 등록하고 연결' }))
+    expect(await within(row).findByText(/^연결됨/)).toBeInTheDocument()
+    expect(sshProbe).toHaveBeenLastCalledWith('new-host', true)
   })
 
   it('설정에 호스트가 없으면 안내한다 · 설정에서 사라진 호스트는 뺄 수 있다', async () => {

@@ -93,7 +93,13 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings }: SidebarProp
               {selected} 에 연결하는 중…
             </p>
           )}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {/* 처음 접속하는 호스트: 사용자가 고르면 호스트 키를 등록하고 연결한다 */}
+            {connection.error?.kind === 'host_key' && (
+              <Button size="sm" variant="outline" disabled={connection.connecting} onClick={() => void connection.connect(selected, true)}>
+                호스트 키 등록하고 연결
+              </Button>
+            )}
             <Button size="sm" variant="outline" disabled={connection.connecting} onClick={() => void connection.connect(selected)}>
               다시 시도
             </Button>

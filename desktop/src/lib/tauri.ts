@@ -10,7 +10,21 @@ export type { Platform }
 export type { CmdResult, RunOptions, ScriptLogEvent, ScriptRunRequest, ScriptRunResult, Unlisten } from '@minmo/core'
 
 /** ~/.ssh/config 의 Host 항목(src-tauri/src/commands/ssh.rs SshHost) */
-export type SshHostInfo = { alias: string; hostName: string | null; user: string | null }
+export type SshHostInfo = {
+  alias: string
+  hostName: string | null
+  user: string | null
+  /** config = ~/.ssh/config 의 Host, app = 앱에 직접 등록한 호스트 */
+  source: 'config' | 'app'
+  port: number | null
+  identityFile: string | null
+}
+/** 앱에 등록하는 호스트 — 비밀번호는 저장하지 않는다(키 파일 또는 ssh-agent) */
+export type SshHostInput = { alias: string; hostName: string; user: string; port: number; identityFile: string | null }
+/** 파일 탭의 폴더 항목 */
+export type DirEntry = { name: string; kind: 'dir' | 'file' | 'link' }
+/** version 은 저장할 때 그 사이 바뀌었는지 비교하는 값 */
+export type TextFile = { content: string; version: string }
 /** 원격 호스트 확인 결과 — POSIX(Linux·macOS)만 지원한다 */
 export type SshProbe = { platform: 'linux' | 'darwin'; home: string; git: string; tmux: boolean }
 export type SshErrorKind = 'host_key' | 'auth' | 'unreachable' | 'unsupported_os' | 'no_git' | 'unknown_host' | 'failed'
@@ -70,7 +84,11 @@ export interface TauriApi extends WorktreeHost, GhHost {
 
   /** 원격 호스트(SSH 프로필) — 이 PC 의 ssh 로 접속한다. 실패는 SshError 로 reject */
   sshHosts(): Promise<SshHostInfo[]>
-  sshProbe(host: string): Promise<SshProbe>
+  /** trustNew: 처음 보는 호스트 키를 known_hosts 에 등록하고 연결한다(사용자가 고른 경우만) */
+  sshProbe(host: string, trustNew?: boolean): Promise<SshProbe>
+  /** 호스트를 앱에 등록(같은 이름이면 수정)하고 전체 목록을 돌려준다 */
+  sshHostSave(host: SshHostInput): Promise<SshHostInfo[]>
+  sshHostRemove(alias: string): Promise<SshHostInfo[]>
   /** 원격에서 argv 실행. 원격 명령의 non-zero 는 code 로, ssh 자체의 실패(연결·인증)는 reject */
   sshExec(host: string, argv: string[], opts?: RunOptions & { stdin?: string }): Promise<CmdResult>
   sshScriptRun(host: string, req: ScriptRunRequest): Promise<ScriptRunResult>
@@ -94,6 +112,15 @@ export interface TauriApi extends WorktreeHost, GhHost {
   removeFileIn(root: string, rel: string): Promise<void>
   /** 폴더를 OS 파일 탐색기로 연다(없으면 생성) */
   openDir(path: string): Promise<void>
+
+  /** 파일 탭 — root(worktree) 아래의 상대 경로('/' 구분)만 다룬다. 실패 사유는 file_too_large 같은 코드로 시작한다 */
+  listDir(root: string, rel: string): Promise<DirEntry[]>
+  readTextFile(root: string, rel: string): Promise<TextFile>
+  /** expected 가 있으면 읽은 뒤 바뀌지 않았을 때만 저장(file_changed), create 면 새 파일만(file_exists). 새 version 을 돌려준다 */
+  writeTextFile(root: string, rel: string, content: string, opts?: { expected?: string; create?: boolean }): Promise<string>
+  createDir(root: string, rel: string): Promise<void>
+  renamePath(root: string, from: string, to: string): Promise<void>
+  removePath(root: string, rel: string): Promise<void>
 
   /** opener: 외부 브라우저로 URL 열기 */
   openUrl(url: string): Promise<void>
@@ -137,6 +164,8 @@ export const TAURI_COMMANDS = {
   scriptCancel: 'script_cancel',
   sshHosts: 'ssh_hosts',
   sshProbe: 'ssh_probe',
+  sshHostSave: 'ssh_host_save',
+  sshHostRemove: 'ssh_host_remove',
   sshExec: 'ssh_exec',
   sshScriptRun: 'ssh_script_run',
   sshScriptCancel: 'ssh_script_cancel',
@@ -152,6 +181,12 @@ export const TAURI_COMMANDS = {
   copyFileInto: 'copy_file_into',
   removeFileIn: 'remove_file_in',
   openDir: 'open_dir',
+  listDir: 'fs_list_dir',
+  readTextFile: 'fs_read_text',
+  writeTextFile: 'fs_write_text',
+  createDir: 'fs_create_dir',
+  renamePath: 'fs_rename',
+  removePath: 'fs_remove',
   serverStatus: 'server_status',
   serverSettingsGet: 'server_settings_get',
   serverSettingsSave: 'server_settings_save',
@@ -189,7 +224,9 @@ export function createTauriApi(): TauriApi {
     onScriptLog: async (cb) => (await event()).listen<ScriptLogEvent>(TAURI_EVENTS.scriptLog, (e) => cb(e.payload)),
 
     sshHosts: () => call(C.sshHosts),
-    sshProbe: (host) => call(C.sshProbe, { host }),
+    sshProbe: (host, trustNew) => call(C.sshProbe, { host, trustNew: trustNew ?? false }),
+    sshHostSave: (host) => call(C.sshHostSave, { host }),
+    sshHostRemove: (alias) => call(C.sshHostRemove, { alias }),
     sshExec: (host, argv, opts) => call(C.sshExec, { host, argv, cwd: opts?.cwd ?? null, env: opts?.env ?? null, stdin: opts?.stdin ?? null }),
     sshScriptRun: (host, req) => call(C.sshScriptRun, { host, runId: req.runId, cwd: req.cwd, script: req.script, env: req.env }),
     sshScriptCancel: (runId) => call(C.sshScriptCancel, { runId }),
@@ -207,6 +244,12 @@ export function createTauriApi(): TauriApi {
     copyFileInto: (srcRoot, rel, dstRoot) => call(C.copyFileInto, { srcRoot, rel, dstRoot }),
     removeFileIn: (root, rel) => call(C.removeFileIn, { root, rel }),
     openDir: (path) => call(C.openDir, { path }),
+    listDir: (root, rel) => call(C.listDir, { root, rel }),
+    readTextFile: (root, rel) => call(C.readTextFile, { root, rel }),
+    writeTextFile: (root, rel, content, opts) => call(C.writeTextFile, { root, rel, content, expected: opts?.expected ?? null, create: opts?.create ?? false }),
+    createDir: (root, rel) => call(C.createDir, { root, rel }),
+    renamePath: (root, from, to) => call(C.renamePath, { root, from, to }),
+    removePath: (root, rel) => call(C.removePath, { root, rel }),
 
     openUrl: async (url) => (await import('@tauri-apps/plugin-opener')).openUrl(url),
     onDeepLink: async (cb) => {

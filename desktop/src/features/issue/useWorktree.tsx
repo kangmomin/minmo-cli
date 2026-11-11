@@ -11,8 +11,16 @@ import { fetchEffective } from '../../lib/effective'
 import { GitHubError } from '@minmo/core'
 import { WorktreeError, createWorktreeService } from '@minmo/core'
 import type { DeleteResult, IssueTarget, WorktreeService } from '@minmo/core'
+import { baseRepoOf, useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
 import { uiWorktreePathStore, useUiStore } from '../../store/ui'
+
+const trimSep = (p: string) => p.replace(/[\\/]+$/, '')
+
+/** main 이 이 호스트에 등록된 기준 저장소 폴더인가 */
+function isBaseRepo(hostId: string, main: string): boolean {
+  return Object.values(useHostsStore.getState().baseRepos[hostId] ?? {}).some((p) => trimSep(p) === trimSep(main))
+}
 
 type ServiceFor = (host: Host) => WorktreeService
 
@@ -31,7 +39,14 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
       const paths = uiWorktreePathStore()
       const service = createWorktreeService({
         tauri: deps.tauri,
-        getEffective: (o, r) => fetchEffective(queryClient, deps.api, o, r),
+        // 기준 저장소(가져온 기존 폴더)가 있으면 설정의 메인 clone 대신 그 저장소에서 worktree 를 만든다
+        getEffective: async (o, r) => {
+          const eff = await fetchEffective(queryClient, deps.api, o, r)
+          const base = baseRepoOf(useHostsStore.getState(), host.id, o, r)
+          return base ? { ...eff, values: { ...eff.values, mainClonePath: base } } : eff
+        },
+        // 기존 저장소의 옆 폴더는 다른 저장소와 겹칠 수 있어, 보관 폴더를 그 저장소의 .git 안에 둔다
+        localDirFor: (main) => (isBaseRepo(host.id, main) ? `${trimSep(main)}${deps.platform === 'win32' ? '\\' : '/'}.git${deps.platform === 'win32' ? '\\' : '/'}minmo-local` : undefined),
         defaultBranch: (o, r) => deps.github.defaultBranch(o, r),
         // core 는 호스트를 모른다 — 기록·로그의 id 만 이 호스트의 것으로 바꿔 준다
         pathStore: { get: (id) => paths.get(host.scope(id)), set: (id, e) => paths.set(host.scope(id), e), delete: (id) => paths.delete(host.scope(id)) },

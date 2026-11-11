@@ -5,7 +5,7 @@ import { closePane, leaf, leafIds, splitPane } from '../features/terminal/panes'
 import type { PaneNode, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
 
-export type WorkTab = 'terminal' | 'changes' | 'notes'
+export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes'
 export type Theme = 'black' | 'light'
 
 /** 이슈별 터미널 패널 배치. tree=null 이면 모든 패널을 닫은 상태 */

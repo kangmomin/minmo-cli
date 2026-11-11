@@ -13,6 +13,8 @@ export interface HostsState {
   probes: Record<string, SshProbe>
   connecting: string | null
   error: { alias: string; error: SshError } | null
+  /** 기준 저장소: 호스트 id → "owner/repo"(소문자) → 그 호스트의 기존 저장소 폴더. 이슈 worktree 를 여기서 만든다 */
+  baseRepos: Record<string, Record<string, string>>
 
   add(alias: string): void
   remove(alias: string): void
@@ -20,7 +22,15 @@ export interface HostsState {
   setProbe(alias: string, probe: SshProbe): void
   setConnecting(alias: string | null): void
   setError(e: HostsState['error']): void
+  /** path 가 null 이면 해제 */
+  setBaseRepo(hostId: string, owner: string, repo: string, path: string | null): void
 }
+
+export const repoKey = (owner: string, repo: string) => `${owner}/${repo}`.toLowerCase()
+
+/** 이 호스트에서 저장소의 기준 저장소 폴더(없으면 undefined — 설정의 메인 clone 경로를 쓴다) */
+export const baseRepoOf = (s: Pick<HostsState, 'baseRepos'>, hostId: string, owner: string, repo: string): string | undefined =>
+  s.baseRepos[hostId]?.[repoKey(owner, repo)]
 
 export const useHostsStore = create<HostsState>()(
   persist(
@@ -30,6 +40,14 @@ export const useHostsStore = create<HostsState>()(
       probes: {},
       connecting: null,
       error: null,
+      baseRepos: {},
+      setBaseRepo: (hostId, owner, repo, path) =>
+        set((s) => {
+          const forHost = { ...s.baseRepos[hostId] }
+          if (path === null) delete forHost[repoKey(owner, repo)]
+          else forHost[repoKey(owner, repo)] = path
+          return { baseRepos: { ...s.baseRepos, [hostId]: forHost } }
+        }),
       add: (alias) => set((s) => (s.aliases.includes(alias) ? s : { aliases: [...s.aliases, alias] })),
       remove: (alias) =>
         set((s) => ({
@@ -47,7 +65,7 @@ export const useHostsStore = create<HostsState>()(
     {
       name: 'minmo-hosts',
       storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({ aliases: s.aliases, selected: s.selected }),
+      partialize: (s) => ({ aliases: s.aliases, selected: s.selected, baseRepos: s.baseRepos }),
     },
   ),
 )

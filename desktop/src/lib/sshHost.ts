@@ -2,7 +2,7 @@
 // `ssh <별칭> …` 으로 원격에서 실행한다. 원격은 POSIX(Linux·macOS)만 지원한다.
 import type { CmdResult, RunOptions } from '@minmo/core'
 
-import type { RemotePty, SshError, SshErrorKind, SshProbe, TauriApi } from './tauri'
+import type { DirEntry, RemotePty, SshError, SshErrorKind, SshProbe, TauriApi } from './tauri'
 
 /** 호스트에 따라 달라지는 작업만 원격 구현으로 바꾼 TauriApi 의 일부 */
 export type HostOps = Pick<
@@ -15,6 +15,12 @@ export type HostOps = Pick<
   | 'copyFileInto'
   | 'removeFileIn'
   | 'openDir'
+  | 'listDir'
+  | 'readTextFile'
+  | 'writeTextFile'
+  | 'createDir'
+  | 'renamePath'
+  | 'removePath'
   | 'scriptRun'
   | 'scriptCancel'
   | 'ptyKillByCwd'
@@ -118,6 +124,76 @@ export function assertRemovable(path: string, home: string): void {
   }
 }
 
+// ── 파일 탭(원격) — 로컬 fs.rs 의 fs_* 명령과 같은 규칙·같은 오류 코드 ──
+
+const LINK_ERR = 'echo "심볼릭 링크를 지나는 경로는 쓸 수 없습니다" >&2; exit 1'
+
+/** rel($2)이 비면 root. 한 줄에 하나씩 "<d|f|l>/<이름>" */
+const LIST_DIR = `${NOLINK}
+d=$1
+if [ -n "$2" ]; then nolink "$1" "$2" || { ${LINK_ERR}; }; d="$1/$2"; fi
+cd -- "$d" || exit 1
+for f in .* *; do
+  case "$f" in .|..|.git|*"$NL"*) continue ;; esac
+  if [ -L "$f" ]; then echo "l/$f"; elif [ -d "$f" ]; then echo "d/$f"; elif [ -e "$f" ]; then echo "f/$f"; fi
+done`
+
+/** 첫 줄은 version(cksum), 그 뒤가 내용. 2MB(512바이트 블록 4096개) 초과는 열지 않는다 */
+const READ_TEXT = `${NOLINK}
+f="$1/$2"
+nolink "$1" "$2" || { echo "file_link: 심볼릭 링크는 열 수 없습니다" >&2; exit 1; }
+[ -f "$f" ] || { echo "파일이 아닙니다" >&2; exit 1; }
+[ -z "$(find "$f" -prune -size +4096)" ] || { echo "file_too_large: 2MB 보다 큰 파일은 열 수 없습니다" >&2; exit 1; }
+cksum < "$f" || exit 1
+cat -- "$f"`
+
+/**
+ * 내용은 stdin 으로 받는다(그래서 스크립트는 sh -c 의 인자로 넘긴다). $3 = 읽을 때의 version, $4 = 1 이면 새 파일만.
+ * 같은 폴더의 임시 파일에 쓴 뒤 바꾸고(끊겨도 원본 유지), 기존 파일을 먼저 복사해 권한을 유지한다
+ */
+const WRITE_TEXT = `${NOLINK}
+f="$1/$2"
+nolink "$1" "$2" || { echo "file_link: 심볼릭 링크에는 쓸 수 없습니다" >&2; exit 1; }
+if [ -e "$f" ]; then
+  if [ "$4" = 1 ]; then echo "file_exists: 같은 이름이 이미 있습니다" >&2; exit 1; fi
+  [ -f "$f" ] || { echo "파일이 아닙니다" >&2; exit 1; }
+  if [ -n "$3" ] && [ "$(cksum < "$f")" != "$3" ]; then echo "file_changed: 연 뒤에 파일이 바뀌었습니다" >&2; exit 1; fi
+fi
+d=$(dirname -- "$f"); mkdir -p -- "$d" || exit 1
+t="$d/.minmo-tmp-$$"
+if [ -f "$f" ]; then cp -p -- "$f" "$t" || exit 1; fi
+cat > "$t" || { rm -f -- "$t"; exit 1; }
+mv -f -- "$t" "$f" || { rm -f -- "$t"; exit 1; }
+cksum < "$f"`
+
+const CREATE_DIR = `${NOLINK}
+nolink "$1" "$2" || { ${LINK_ERR}; }
+if [ -e "$1/$2" ]; then echo "file_exists: 같은 이름이 이미 있습니다" >&2; exit 1; fi
+mkdir -p -- "$1/$2"`
+
+/** 대상($3)이 이미 있으면 덮어쓰지 않는다. 링크 자체는 옮길 수 있게 원본은 상위 폴더까지만 검사한다 */
+const RENAME_PATH = `${NOLINK}
+s="$1/$2"; t="$1/$3"
+nolink "$1" "$(dirname -- "$2")" && nolink "$1" "$3" || { ${LINK_ERR}; }
+[ -e "$s" ] || [ -L "$s" ] || { echo "대상이 없습니다" >&2; exit 1; }
+if [ -e "$t" ] || [ -L "$t" ]; then echo "file_exists: 같은 이름이 이미 있습니다" >&2; exit 1; fi
+mkdir -p -- "$(dirname -- "$t")" && mv -- "$s" "$t"`
+
+/** 파일·폴더(하위 포함) 삭제. 링크는 링크만 지운다 */
+const REMOVE_PATH = `${NOLINK}
+nolink "$1" "$(dirname -- "$2")" || { ${LINK_ERR}; }
+rm -rf -- "$1/$2"`
+
+/**
+ * GitHub 토큰을 넘겨 git 을 실행한다. 토큰은 stdin 첫 줄로 받아 git 프로세스의 환경 변수로만 두고,
+ * 이 명령에 한해 github.com 의 credential helper 로 답한다(원격의 helper 는 쓰지 않아 저장되지 않는다).
+ * 원격 디스크·git 설정·명령줄(ps)에 토큰이 남지 않는다.
+ */
+const GIT_WITH_TOKEN =
+  'IFS= read -r MINMO_GH_TOKEN || exit 1; export MINMO_GH_TOKEN; exec git -c credential.https://github.com.helper= -c \'credential.https://github.com.helper=!f() { test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$MINMO_GH_TOKEN"; }; f\' "$@" < /dev/null'
+
+const byName = (a: DirEntry, b: DirEntry) => Number(a.kind !== 'dir') - Number(b.kind !== 'dir') || a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.name.localeCompare(b.name)
+
 /** 파일 작업의 기준 폴더 — 로컬 guard_root(fs.rs)처럼 얕은 경로(홈·루트 등)에서는 하지 않는다 */
 export function assertRoot(root: string): void {
   const parts = root.split('/').filter(Boolean)
@@ -132,16 +208,27 @@ export function assertRelative(rel: string): void {
   }
 }
 
-export function createSshOps(base: TauriApi, alias: string, probe: SshProbe): HostOps {
+/** getToken: 원격 git 에 넘길 GitHub 토큰(없으면 원격 자체의 자격 증명으로 실행한다) */
+export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, getToken?: () => Promise<string | null>): HostOps {
   const exec = (argv: string[], opts?: RunOptions & { stdin?: string }) => base.sshExec(alias, argv, opts)
   const script = (body: string, args: string[]) => exec(['sh', '-s', '--', ...args], { stdin: body })
+  const inRoot = (root: string, ...rels: string[]) => {
+    assertRoot(root)
+    for (const rel of rels) assertRelative(rel)
+  }
   const must = (r: CmdResult, what: string): CmdResult => {
     if (r.code !== 0) throw new Error(r.stderr.trim() || `${what} 실패(종료 코드 ${r.code})`)
     return r
   }
   return {
     // 원격 git 이 자격 증명을 물으며 멈추지 않게(실패로 끝나게) 한다
-    gitRun: (args, opts) => exec(['git', ...args], { cwd: opts?.cwd, env: { GIT_TERMINAL_PROMPT: '0', ...opts?.env } }),
+    gitRun: async (args, opts) => {
+      const env = { GIT_TERMINAL_PROMPT: '0', ...opts?.env }
+      // 토큰에 줄바꿈이 있으면 한 줄 전달이 깨진다 — 그런 값은 쓰지 않는다
+      const token = await getToken?.().catch(() => null)
+      if (token && !/[\r\n]/.test(token)) return exec(['sh', '-c', GIT_WITH_TOKEN, 'sh', ...args], { cwd: opts?.cwd, env, stdin: `${token}\n` })
+      return exec(['git', ...args], { cwd: opts?.cwd, env })
+    },
     pathExists: async (path) => {
       const r = await exec(['test', '-e', path])
       // 1 만 "없음" 이다 — 그 밖의 실패(원격 셸 오류 등)를 없음으로 보면 새로고침이 worktree 기록을 지운다
@@ -176,6 +263,41 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe): Ho
     },
     openDir: async () => {
       throw new Error('원격 폴더는 이 PC 의 탐색기로 열 수 없습니다')
+    },
+    listDir: async (root, rel) => {
+      assertRoot(root)
+      if (rel !== '') assertRelative(rel)
+      return must(await script(LIST_DIR, [root, rel]), '폴더 열기')
+        .stdout.split('\n')
+        .filter((l) => l.length > 2)
+        .map((l): DirEntry => ({ name: l.slice(2), kind: l[0] === 'd' ? 'dir' : l[0] === 'l' ? 'link' : 'file' }))
+        .sort(byName)
+    },
+    readTextFile: async (root, rel) => {
+      inRoot(root, rel)
+      const out = must(await script(READ_TEXT, [root, rel]), '파일 열기').stdout
+      const cut = out.indexOf('\n')
+      const content = out.slice(cut + 1)
+      // ssh 출력은 UTF-8 로 읽는다 — 깨진 글자(U+FFFD)나 NUL 이 있으면 텍스트가 아니다
+      if (content.includes('\0') || content.includes('\uFFFD')) throw new Error('file_binary: UTF-8 텍스트 파일이 아닙니다')
+      return { content, version: out.slice(0, cut) }
+    },
+    writeTextFile: async (root, rel, content, opts) => {
+      inRoot(root, rel)
+      const r = await exec(['sh', '-c', WRITE_TEXT, 'sh', root, rel, opts?.expected ?? '', opts?.create ? '1' : '0'], { stdin: content })
+      return must(r, '파일 저장').stdout.trim()
+    },
+    createDir: async (root, rel) => {
+      inRoot(root, rel)
+      must(await script(CREATE_DIR, [root, rel]), '폴더 만들기')
+    },
+    renamePath: async (root, from, to) => {
+      inRoot(root, from, to)
+      must(await script(RENAME_PATH, [root, from, to]), '이름 바꾸기')
+    },
+    removePath: async (root, rel) => {
+      inRoot(root, rel)
+      must(await script(REMOVE_PATH, [root, rel]), '삭제')
     },
     scriptRun: (req) => base.sshScriptRun(alias, req),
     scriptCancel: (runId) => base.sshScriptCancel(runId),

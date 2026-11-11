@@ -26,6 +26,8 @@ export function createAppQueryClient(): QueryClient {
 }
 
 /** 실제 앱 배선: Tauri(또는 mock) + 서버 API(baseUrl, 기본은 내장 서버 기본 포트) + GitHub 클라이언트 */
+const GIT_TOKEN_TTL_MS = 5 * 60 * 1000
+
 export async function createAppDeps(queryClient: QueryClient, baseUrl?: string): Promise<AppDeps> {
   const tauri = getTauri()
   const api = createAppApi(baseUrl)
@@ -56,5 +58,16 @@ export async function createAppDeps(queryClient: QueryClient, baseUrl?: string):
     },
   })
 
-  return { api, tauri, github, home, platform }
+  // 원격 git 명령마다 묻지 않게 잠깐 기억한다(gh 는 프로세스를 띄워야 한다)
+  let gitTokenCache: { token: string | null; at: number } | null = null
+  async function gitToken(): Promise<string | null> {
+    if (gitTokenCache && Date.now() - gitTokenCache.at < GIT_TOKEN_TTL_MS) return gitTokenCache.token
+    const gh = await tauri.ghRun(['auth', 'token']).catch(() => null)
+    const fromGh = gh && gh.code === 0 ? gh.stdout.trim() : ''
+    const token = fromGh || (await githubToken().catch(() => null))
+    gitTokenCache = { token, at: Date.now() }
+    return token
+  }
+
+  return { api, tauri, github, home, platform, gitToken }
 }
