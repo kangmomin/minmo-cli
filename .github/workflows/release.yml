@@ -1,0 +1,108 @@
+# 릴리즈 — v* 태그를 push 하면 Windows 설치 파일(업데이트 서명 포함)·latest.json·CLI tgz 를 GitHub Release 로 올리고
+# CLI 를 GitHub Packages(@kangmomin/minmo-cli)에 배포한다. 수동 실행과 릴리즈 관련 파일을 바꾼 PR 은 빌드·매니페스트까지만 한다(dry-run).
+# 필요한 secret: TAURI_SIGNING_PRIVATE_KEY(업데이트 서명 개인키 내용), 비밀번호가 있으면 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/**'
+      - 'desktop/scripts/**'
+      - 'desktop/src-tauri/tauri.conf.json'
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ github.ref_type == 'tag' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: v
+        run: node scripts/check-versions.mjs
+      - run: npm run test:scripts
+
+  desktop:
+    needs: verify
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      TAG: ${{ needs.verify.outputs.tag }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - run: npm ci
+      - name: 설치 파일 빌드(사이드카 서버 포함, 업데이트 서명)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri --workspace desktop -- build --config '{"bundle":{"createUpdaterArtifacts":true}}'
+      - run: npm run pack:cli
+      - name: 릴리즈 자산·latest.json·체크섬
+        run: |
+          B=desktop/src-tauri/target/release/bundle
+          mkdir -p release
+          cp "$B"/nsis/*_"$VERSION"_*-setup.exe "$B"/nsis/*_"$VERSION"_*-setup.exe.sig "$B"/msi/*_"$VERSION"_*.msi "$B"/msi/*_"$VERSION"_*.msi.sig dist/*-"$VERSION".tgz release/
+          node scripts/updater-manifest.mjs --bundle-dir "$B" --tag "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "docs/releases/$TAG.md" --out release/latest.json
+          (cd release && sha256sum -- * > ../SHA256SUMS.txt) && mv SHA256SUMS.txt release/
+          ls -la release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ env.TAG }}
+          path: release/
+      - name: GitHub Release
+        if: needs.verify.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "docs/releases/$TAG.md" ]; then notes=(--notes-file "docs/releases/$TAG.md"); else notes=(--generate-notes); fi
+          gh release create "$TAG" --verify-tag --title "minmo $TAG" "${notes[@]}" release/*
+
+  cli:
+    needs: [verify, desktop]
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: '@kangmomin'
+      - run: npm ci
+      - run: npm test --workspace packages/cli
+      - name: GitHub Packages 배포
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm publish --workspace packages/cli
