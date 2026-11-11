@@ -16,12 +16,10 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 export interface ServerSettingsDialogProps {
   tauri?: TauriApi
-  /** 포트를 바꾼 뒤 새 포트로 다시 붙는다(기본: 창 새로 고침) */
-  onPortChanged?: () => void
 }
 
 /** 내장 서버 설정 — 포트·GitHub OAuth App·창 닫기. 열림 상태는 store(openServerSettings)로 어디서든 연다 */
-export function ServerSettingsDialog({ tauri = getTauri(), onPortChanged = () => window.location.reload() }: ServerSettingsDialogProps) {
+export function ServerSettingsDialog({ tauri = getTauri() }: ServerSettingsDialogProps) {
   const open = useServerStore((s) => s.settingsOpen)
   const setOpen = useServerStore((s) => s.setSettingsOpen)
   return (
@@ -31,13 +29,13 @@ export function ServerSettingsDialog({ tauri = getTauri(), onPortChanged = () =>
           <DialogTitle>서버 설정</DialogTitle>
           <DialogDescription>minmo 서버는 앱과 함께 이 PC 에서 실행됩니다. 원격 CLI 도 SSH 로 이 서버를 씁니다.</DialogDescription>
         </DialogHeader>
-        {open && <ServerSettingsBody tauri={tauri} onDone={() => setOpen(false)} onPortChanged={onPortChanged} />}
+        {open && <ServerSettingsBody tauri={tauri} onDone={() => setOpen(false)} />}
       </DialogContent>
     </Dialog>
   )
 }
 
-function ServerSettingsBody({ tauri, onDone, onPortChanged }: { tauri: TauriApi; onDone(): void; onPortChanged(): void }) {
+function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void }) {
   const uid = useId()
   const fid = (name: string) => `${uid}-${name}`
   const status = useServerStore((s) => s.status)
@@ -108,11 +106,8 @@ function ServerSettingsBody({ tauri, onDone, onPortChanged }: { tauri: TauriApi;
     }
     setSaving(true)
     try {
+      // 포트가 바뀌면 서버가 새 포트로 다시 시작되고, 앱(App)이 running 을 보고 새 주소로 다시 붙는다
       await tauri.serverSettingsSave(input)
-      if (input.port !== undefined) {
-        onPortChanged()
-        return
-      }
       onDone()
     } catch (err) {
       setError(`저장하지 못했습니다: ${errorText(err)}`)
@@ -152,7 +147,7 @@ function ServerSettingsBody({ tauri, onDone, onPortChanged }: { tauri: TauriApi;
         </div>
         <p id={fid('port-hint')} className="text-xs text-muted-foreground">
           {portChanged
-            ? '저장하면 서버를 새 포트로 다시 시작하고 창을 새로 고칩니다. OAuth App 의 callback URL 과 원격 CLI 의 SSH RemoteForward 도 새 포트로 바꾸세요.'
+            ? '저장하면 서버를 새 포트로 다시 시작하고 다시 연결합니다(열린 터미널은 닫힙니다). OAuth App 의 callback URL 과 원격 CLI 의 SSH RemoteForward 도 새 포트로 바꾸세요.'
             : '이 PC 에서만 접속할 수 있습니다(127.0.0.1).'}
         </p>
       </section>

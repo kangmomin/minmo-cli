@@ -14,26 +14,28 @@ export function useServerStatusSubscription(tauri: TauriApi): ServerStatus | nul
     // 구독 뒤 도착한 이벤트가 더 최신이므로, 그 뒤에 온 조회 결과로 덮어쓰지 않는다
     let gotEvent = false
     let unlisten: Unlisten | null = null
-    void tauri
-      .onServerStatus((s) => {
-        if (!alive) return
-        gotEvent = true
-        setStatus(s)
-      })
-      .then((u) => {
-        if (alive) unlisten = u
-        else u()
-      })
-    tauri
-      .serverStatus()
-      .then((s) => {
+    const onStatus = (s: ServerStatus) => {
+      if (!alive) return
+      gotEvent = true
+      setStatus(s)
+    }
+    // 구독이 등록된 뒤에 현재 상태를 읽는다 — 그 사이 보낸 이벤트(starting → running)를 놓치지 않게
+    void (async () => {
+      try {
+        const u = await tauri.onServerStatus(onStatus)
+        if (!alive) {
+          u()
+          return
+        }
+        unlisten = u
+        const s = await tauri.serverStatus()
         if (alive && !gotEvent) setStatus(s)
-      })
-      .catch((e: unknown) => {
+      } catch (e) {
         if (alive && !gotEvent) {
           setStatus({ state: 'failed', port: DEFAULT_PORT, message: `서버 상태를 확인할 수 없습니다: ${e instanceof Error ? e.message : String(e)}` })
         }
-      })
+      }
+    })()
     return () => {
       alive = false
       unlisten?.()

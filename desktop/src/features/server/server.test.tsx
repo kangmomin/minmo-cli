@@ -1,6 +1,6 @@
 // 내장 서버 — 서버 설정·시작 화면·창 닫기·상태 구독·포트 연동
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { OfflineBanner } from '../../components/OfflineBanner'
 import { portOf, serverBaseUrl } from '../../lib/api'
@@ -48,10 +48,9 @@ describe('helpers', () => {
 describe('ServerSettingsDialog', () => {
   function open(settings = SERVER_SETTINGS) {
     const fake = createFakeTauri({ serverSettingsGet: async () => settings })
-    const onPortChanged = vi.fn()
     useServerStore.setState({ status: running, settingsOpen: true })
-    render(<ServerSettingsDialog tauri={fake.tauri} onPortChanged={onPortChanged} />)
-    return { tauri: fake.tauri, onPortChanged }
+    render(<ServerSettingsDialog tauri={fake.tauri} />)
+    return { tauri: fake.tauri }
   }
 
   it('상태·callback URL 을 보여 주고, Secret 은 저장 여부만 표시한다', async () => {
@@ -66,13 +65,12 @@ describe('ServerSettingsDialog', () => {
   })
 
   it('바뀐 값만 저장하고 닫는다(빈 Secret 은 보내지 않음)', async () => {
-    const { tauri, onPortChanged } = open()
+    const { tauri } = open()
     fireEvent.change(await screen.findByLabelText('Client ID'), { target: { value: '  Iv1.new ' } })
     fireEvent.click(screen.getByLabelText('트레이로 최소화(서버 유지)'))
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
     await waitFor(() => expect(useServerStore.getState().settingsOpen).toBe(false))
     expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ githubClientId: 'Iv1.new', closeAction: 'tray' })
-    expect(onPortChanged).not.toHaveBeenCalled()
   })
 
   it('Secret 을 입력하면 보낸다', async () => {
@@ -82,12 +80,13 @@ describe('ServerSettingsDialog', () => {
     await waitFor(() => expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ githubClientSecret: 'sec' }))
   })
 
-  it('포트를 바꾸면 callback URL 이 따라 바뀌고, 저장 후 새 포트로 다시 붙는다', async () => {
-    const { tauri, onPortChanged } = open()
+  it('포트를 바꾸면 callback URL·안내가 따라 바뀌고 새 포트를 저장한다', async () => {
+    const { tauri } = open()
     fireEvent.change(await screen.findByLabelText('포트'), { target: { value: '18787' } })
     expect(screen.getByTestId('callback-url')).toHaveTextContent('http://127.0.0.1:18787/auth/github/callback')
+    expect(screen.getByText(/새 포트로 다시 시작하고 다시 연결합니다/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
-    await waitFor(() => expect(onPortChanged).toHaveBeenCalled())
+    await waitFor(() => expect(useServerStore.getState().settingsOpen).toBe(false))
     expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ port: 18787 })
   })
 
@@ -122,10 +121,14 @@ describe('ServerSettingsDialog', () => {
 })
 
 describe('ServerStartScreen', () => {
-  it('시작 중이면 대기 표시', () => {
+  it('시작 중이면 대기 표시 + [서버 설정]·[로그 폴더 열기](오래 걸릴 때)', () => {
     const { tauri } = createFakeTauri()
     render(<ServerStartScreen status={{ state: 'starting', port: 8787, message: null }} tauri={tauri} />)
     expect(screen.getByTestId('server-starting')).toHaveTextContent('서버 시작 중')
+    fireEvent.click(screen.getByRole('button', { name: '서버 설정' }))
+    expect(useServerStore.getState().settingsOpen).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '로그 폴더 열기' }))
+    expect(tauri.serverOpenLogDir).toHaveBeenCalled()
   })
 
   it('실패하면 원인과 [다시 시작]·[서버 설정]·[로그 폴더 열기]', () => {
@@ -166,6 +169,16 @@ describe('CloseDialog', () => {
 })
 
 describe('useServerStatusSubscription', () => {
+  it('구독이 등록된 뒤에 현재 상태를 읽는다', async () => {
+    let registered: () => void = () => {}
+    const fake = createFakeTauri({ onServerStatus: () => new Promise((r) => (registered = () => r(() => {}))) })
+    renderHook(() => useServerStatusSubscription(fake.tauri))
+    await waitFor(() => expect(fake.tauri.onServerStatus).toHaveBeenCalled())
+    expect(fake.tauri.serverStatus).not.toHaveBeenCalled()
+    await act(async () => registered())
+    expect(fake.tauri.serverStatus).toHaveBeenCalled()
+  })
+
   it('구독 후 도착한 이벤트가 늦게 끝난 조회 결과보다 우선한다', async () => {
     let resolveStatus: (s: ServerStatus) => void = () => {}
     const fake = createFakeTauri({ serverStatus: () => new Promise((r) => (resolveStatus = r)) })

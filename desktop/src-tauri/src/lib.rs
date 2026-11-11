@@ -43,6 +43,12 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(shell::on_window_event)
+        // 웹뷰가 새로 고쳐지면 React 정리(pty_kill)가 돌지 않으므로, 남은 터미널 프로세스를 여기서 끝낸다
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                pty::kill_all(&webview.state::<pty::PtyState>());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             git::git_run,
             git::gh_run,

@@ -8,8 +8,18 @@ import { openServerSettings } from '../../store/server'
 export function ServerStartScreen({ status, tauri }: { status: ServerStatus | null; tauri: TauriApi }) {
   if (!status || status.state === 'starting') {
     return (
-      <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground" role="status" data-testid="server-starting">
-        <Loader2Icon className="size-4 animate-spin" aria-hidden="true" /> 서버 시작 중…
+      <div className="flex h-full flex-col items-center justify-center gap-3">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status" data-testid="server-starting">
+          <Loader2Icon className="size-4 animate-spin" aria-hidden="true" /> 서버 시작 중…
+        </p>
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" onClick={openServerSettings}>
+            서버 설정
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => void tauri.serverOpenLogDir()}>
+            로그 폴더 열기
+          </Button>
+        </div>
       </div>
     )
   }

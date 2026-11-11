@@ -58,28 +58,37 @@ function Root() {
 export function App() {
   const tauri = getTauri()
   const [queryClient] = useState(createAppQueryClient)
-  const [deps, setDeps] = useState<AppDeps | null>(null)
+  // 붙은 서버 주소별 deps — 주소가 바뀌면(포트 변경) 이전 화면을 내려 정리(터미널 종료 등)하고 새로 만든다
+  const [bound, setBound] = useState<{ url: string; deps: AppDeps } | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
   const status = useServerStatusSubscription(tauri)
   const baseUrl = useServerStore((s) => s.baseUrl)
   const setBaseUrl = useServerStore((s) => s.setBaseUrl)
   useApplyTheme()
 
-  // 서버가 처음 준비되면 그 주소로 붙는다. 이후 재시작(같은 포트)은 그대로 쓰고, 포트를 바꾸면 창을 새로 고친다
+  // 서버가 준비되면 그 주소로 붙는다. 같은 포트로 재시작하면 그대로 쓰고, 다른 포트로 실행되면 새 주소로 다시 붙는다
+  const readyUrl = status && isServerReady(status) ? serverBaseUrl(status.port) : null
   useEffect(() => {
-    if (!baseUrl && status && isServerReady(status)) setBaseUrl(serverBaseUrl(status.port))
-  }, [baseUrl, status, setBaseUrl])
+    if (readyUrl && readyUrl !== baseUrl) setBaseUrl(readyUrl)
+  }, [readyUrl, baseUrl, setBaseUrl])
 
   useEffect(() => {
     if (!baseUrl) return
     let cancelled = false
     createAppDeps(queryClient, baseUrl)
-      .then((d) => !cancelled && setDeps(d))
+      .then((d) => {
+        if (cancelled) return
+        // 이전 서버에서 읽은 캐시를 새 서버의 값으로 착각하지 않게
+        queryClient.clear()
+        setBound({ url: baseUrl, deps: d })
+      })
       .catch((e: unknown) => !cancelled && setBootError(e instanceof Error ? e.message : String(e)))
     return () => {
       cancelled = true
     }
   }, [queryClient, baseUrl])
+
+  const deps = bound && bound.url === baseUrl ? bound.deps : null
 
   let body
   if (bootError) body = <p className="p-6 text-sm text-destructive">앱을 시작할 수 없습니다: {bootError}</p>

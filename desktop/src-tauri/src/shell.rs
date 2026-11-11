@@ -1,7 +1,10 @@
 // 트레이와 창 닫기 — 창을 닫을 때 트레이로 숨길지(서버 유지, 원격 CLI 계속 사용) 앱을 끝낼지 사용자가 고른다.
 // 고른 방식은 server.json 의 closeAction(ask·tray·quit)에 두고, ask 면 웹뷰에 물어본다(close-requested 이벤트).
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
 use tauri::{AppHandle, Emitter, Manager, Window, WindowEvent};
 
 use crate::server::{CloseAction, ServerManager, State, Status};
@@ -99,29 +102,73 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
         CloseAction::Tray => hide_main(app),
         CloseAction::Quit => quit(app),
         CloseAction::Ask => {
-            let _ = window.emit(CLOSE_REQUESTED_EVENT, ());
+            // 물어본 지 얼마 안 돼 다시 닫으면 종료한다 — 웹뷰가 멈춰(새로 고침 중·응답 없음) 대화상자를 못 띄워도 끝낼 수 있게
+            if ask_again(&mut lock_last_ask(), Instant::now()) {
+                quit(app);
+            } else {
+                let _ = window.emit(CLOSE_REQUESTED_EVENT, ());
+            }
         }
     }
 }
 
-/// 닫기 대화상자의 선택. remember 면 다음부터 묻지 않도록 저장한다
+static LAST_ASK: Mutex<Option<Instant>> = Mutex::new(None);
+const ASK_AGAIN_WITHIN: Duration = Duration::from_secs(3);
+
+fn lock_last_ask() -> std::sync::MutexGuard<'static, Option<Instant>> {
+    LAST_ASK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 직전 물음에서 ASK_AGAIN_WITHIN 안에 다시 닫았는지. 아니면 이번 물음 시각을 기록한다
+fn ask_again(last: &mut Option<Instant>, now: Instant) -> bool {
+    if last.is_some_and(|t| now.duration_since(t) < ASK_AGAIN_WITHIN) {
+        *last = None;
+        true
+    } else {
+        *last = Some(now);
+        false
+    }
+}
+
+/// 닫기 대화상자의 선택. remember 면 다음부터 묻지 않도록 저장한다(저장에 실패해도 고른 동작은 한다)
 #[tauri::command]
 pub fn app_close(app: AppHandle, action: CloseAction, remember: bool) -> Result<(), String> {
-    if remember {
-        app.state::<ServerManager>()
-            .save_close_action(&app, action)?;
-    }
+    *lock_last_ask() = None;
+    let saved = if remember {
+        app.state::<ServerManager>().save_close_action(&app, action)
+    } else {
+        Ok(())
+    };
     match action {
         CloseAction::Tray => hide_main(&app),
         CloseAction::Quit => quit(&app),
         CloseAction::Ask => {}
     }
-    Ok(())
+    saved
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn second_close_within_window_quits() {
+        let t0 = Instant::now();
+        let mut last = None;
+        assert!(!ask_again(&mut last, t0), "첫 닫기는 묻는다");
+        assert!(
+            ask_again(&mut last, t0 + Duration::from_secs(1)),
+            "3초 안에 다시 닫으면 종료"
+        );
+        assert!(
+            !ask_again(&mut last, t0 + Duration::from_secs(2)),
+            "종료 판정 뒤에는 다시 묻는다"
+        );
+        assert!(
+            !ask_again(&mut last, t0 + Duration::from_secs(10)),
+            "오래 지나면 다시 묻는다"
+        );
+    }
 
     #[test]
     fn tooltip_shows_address_while_running() {

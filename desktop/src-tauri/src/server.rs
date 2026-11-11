@@ -6,6 +6,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -286,6 +287,8 @@ pub struct ServerManager {
     inner: Mutex<Inner>,
     /// 시작·재시작을 한 번에 하나만
     op: Mutex<()>,
+    /// 앱 종료 중 — 대기 중이던 재시작이 서버를 새로 띄우지 않게
+    shutting_down: AtomicBool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -337,6 +340,7 @@ impl ServerManager {
                 generation: 0,
             }),
             op: Mutex::new(()),
+            shutting_down: AtomicBool::new(false),
         }
     }
 
@@ -356,8 +360,7 @@ impl ServerManager {
             }
             inner.status = status.clone();
         }
-        let _ = app.emit(STATUS_EVENT, &status);
-        crate::shell::set_tray_tooltip(app, &status);
+        publish(app, &status);
     }
 
     /// 서버를 시작하고 준비될 때까지 기다린다(호출 스레드를 막는다 — 백그라운드 스레드에서 부른다)
@@ -366,23 +369,21 @@ impl ServerManager {
         self.start_locked(app);
     }
 
-    /// 백그라운드에서 정지 후 다시 시작한다. 상태는 곧바로 starting(새 포트)으로 알린다 —
-    /// 포트를 바꾸고 바로 창을 새로 고쳐도 이전 포트의 running 을 보고 붙지 않게
+    /// 백그라운드에서 정지 후 다시 시작한다. 진행 중인 시작은 무효로 하고(이전 설정으로 running 을 알리지 않게,
+    /// 남은 프로세스는 재시작 스레드의 stop_proc 이 끈다) 상태는 곧바로 starting(새 포트)으로 알린다
     pub fn restart(app: &AppHandle) {
         let mgr = app.state::<ServerManager>();
-        let (generation, port) = {
-            let inner = lock(&mgr.inner);
-            (inner.generation, inner.settings.port)
-        };
-        mgr.set_status(
-            app,
-            generation,
-            Status {
+        let status = {
+            let mut inner = lock(&mgr.inner);
+            inner.generation += 1;
+            inner.status = Status {
                 state: State::Starting,
-                port,
+                port: inner.settings.port,
                 message: None,
-            },
-        );
+            };
+            inner.status.clone()
+        };
+        publish(app, &status);
         let app = app.clone();
         std::thread::spawn(move || {
             let mgr = app.state::<ServerManager>();
@@ -394,6 +395,7 @@ impl ServerManager {
 
     /// 앱 종료 — 진행 중인 시작을 기다리지 않는다(남은 프로세스는 Job Object 가 함께 끝낸다)
     pub fn shutdown(&self, app: &AppHandle) {
+        self.shutting_down.store(true, Ordering::SeqCst);
         let generation = self.stop_proc();
         self.set_status(
             app,
@@ -420,6 +422,9 @@ impl ServerManager {
     }
 
     fn start_locked(&self, app: &AppHandle) {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return;
+        }
         let (settings, generation) = {
             let mut inner = lock(&self.inner);
             inner.generation += 1;
@@ -456,7 +461,9 @@ impl ServerManager {
                 self.set_status(app, generation, status(State::Failed, Some(msg)));
             }
             Ready::TimedOut => {
-                if let Some(p) = lock(&self.inner).proc.take() {
+                // 잠금을 쥔 채 프로세스를 기다리지 않는다(메인 스레드의 상태 조회가 막히지 않게)
+                let taken = lock(&self.inner).proc.take();
+                if let Some(p) = taken {
                     p.stop(Duration::ZERO);
                 }
                 let msg = format!(
@@ -558,7 +565,20 @@ impl ServerManager {
                 }
             }
             if accepting(port) {
-                return Ready::Yes;
+                // 그사이 다른 프로그램이 포트를 잡아 서버가 bind 에 실패했다면 곧바로 끝난다 — 잠시 뒤 한 번 더 본다
+                std::thread::sleep(Duration::from_millis(200));
+                let mut inner = lock(&self.inner);
+                if inner.generation != generation {
+                    return Ready::Superseded;
+                }
+                return match inner.proc.as_mut().map(|p| p.child.try_wait()) {
+                    Some(Ok(None)) => Ready::Yes,
+                    Some(Ok(Some(code))) => {
+                        inner.proc = None;
+                        Ready::Exited(code.to_string())
+                    }
+                    _ => Ready::Superseded,
+                };
             }
             if Instant::now() >= deadline {
                 return Ready::TimedOut;
@@ -669,6 +689,11 @@ impl ServerManager {
     }
 }
 
+fn publish(app: &AppHandle, status: &Status) {
+    let _ = app.emit(STATUS_EVENT, status);
+    crate::shell::set_tray_tooltip(app, status);
+}
+
 enum Ready {
     Yes,
     Exited(String),
@@ -682,12 +707,12 @@ pub fn server_status(app: AppHandle) -> Status {
     app.state::<ServerManager>().status()
 }
 
+/// 키체인 접근(macOS 는 권한 확인 창)이 느릴 수 있어 읽기·저장 모두 async(메인 스레드 밖)로 둔다
 #[tauri::command]
-pub fn server_settings_get(app: AppHandle) -> SettingsView {
+pub async fn server_settings_get(app: AppHandle) -> SettingsView {
     app.state::<ServerManager>().view()
 }
 
-/// 키체인 접근이 느릴 수 있어 async(메인 스레드 밖)로 둔다
 #[tauri::command]
 pub async fn server_settings_save(
     app: AppHandle,

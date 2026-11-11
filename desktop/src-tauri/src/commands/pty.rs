@@ -268,6 +268,17 @@ pub async fn pty_kill(state: State<'_, PtyState>, id: String) -> Result<(), Stri
     kill_sessions(removed.into_iter().collect()).await
 }
 
+/// 모든 PTY 를 백그라운드에서 끝낸다 — 웹뷰가 새로 고쳐지면(React 정리가 돌지 않음) 남은 셸·에이전트를 정리한다
+pub fn kill_all(state: &PtyState) {
+    let sessions: Vec<PtySession> = match state.sessions.lock() {
+        Ok(mut s) => s.drain().map(|(_, v)| v).collect(),
+        Err(_) => return,
+    };
+    if !sessions.is_empty() {
+        std::thread::spawn(move || kill_and_close(sessions));
+    }
+}
+
 /// cwd 가 path(또는 하위)인 PTY 를 모두 종료하고 종료 개수를 돌려준다 (worktree 삭제 전 — Windows 파일 잠금 방지)
 #[tauri::command]
 pub async fn pty_kill_by_cwd(state: State<'_, PtyState>, path: String) -> Result<u32, String> {
