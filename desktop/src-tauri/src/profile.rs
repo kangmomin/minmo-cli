@@ -15,8 +15,13 @@ fn profile_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// 격리 프로필로 실행 중인지 — 이때는 minmo:// 스킴을 시스템에 등록하지 않는다(설치된 앱의 딥링크를 가로채지 않게)
+pub fn isolated() -> bool {
+    profile_dir().is_some()
+}
+
 pub fn keychain_service() -> String {
-    if profile_dir().is_some() {
+    if isolated() {
         format!("{KEYCHAIN_SERVICE}.dev")
     } else {
         KEYCHAIN_SERVICE.to_string()

@@ -28,9 +28,10 @@ pub fn run() {
         .manage(pty::PtyState::default())
         .manage(script::ScriptState::default())
         .setup(|app| {
-            // 개발 실행(설치기 없음)에서는 minmo:// 스킴을 런타임에 등록한다
+            // 개발 실행(설치기 없음)에서는 minmo:// 스킴을 런타임에 등록한다. 격리 프로필(E2E)은 설치된 앱의
+            // 등록을 가로채지 않도록 건너뛴다 — 딥링크는 두 번째 인스턴스 인자로 전달해 시험한다
             #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
-            {
+            if !profile::isolated() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 app.deep_link().register_all()?;
             }
