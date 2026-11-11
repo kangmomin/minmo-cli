@@ -150,6 +150,11 @@ pub(crate) fn remote_command(
     Ok(out)
 }
 
+/// 원격 로그인 셸이 POSIX 가 아니어도(fish·csh 등) 같은 문법으로 실행되게 sh 에 넘긴다
+pub(crate) fn sh_wrap(command: &str) -> String {
+    format!("sh -c {}", quote(command))
+}
+
 fn unquote(v: &str) -> &str {
     let v = v.trim();
     v.strip_prefix('"')
@@ -219,11 +224,11 @@ fn include_targets(spec: &str, base: &Path, home: Option<&Path>) -> Vec<PathBuf>
     found
 }
 
-fn parse_into(path: &Path, home: Option<&Path>, depth: usize, out: &mut Vec<SshHost>) {
+/// base: Include 의 상대 경로 기준 — ssh 처럼 포함된 파일이 아니라 최상위 설정 파일의 폴더(~/.ssh)
+fn parse_into(path: &Path, base: &Path, home: Option<&Path>, depth: usize, out: &mut Vec<SshHost>) {
     let Ok(text) = std::fs::read_to_string(path) else {
         return;
     };
-    let base = path.parent().unwrap_or(Path::new("."));
     // 지금 블록에 속한 호스트들의 out 내 위치
     let mut current: Vec<usize> = Vec::new();
     for line in text.lines() {
@@ -235,7 +240,10 @@ fn parse_into(path: &Path, home: Option<&Path>, depth: usize, out: &mut Vec<SshH
                 current.clear();
                 for alias in value.split_whitespace().map(unquote) {
                     // 패턴(*, ?, !부정)은 접속 대상이 아니다
-                    if alias.is_empty() || alias.contains(['*', '?', '!']) || alias.starts_with('-')
+                    // '|' 는 호스트별 worktree id(ssh:<별칭>|…)의 구분자라 받지 않는다
+                    if alias.is_empty()
+                        || alias.contains(['*', '?', '!', '|'])
+                        || alias.starts_with('-')
                     {
                         continue;
                     }
@@ -272,7 +280,7 @@ fn parse_into(path: &Path, home: Option<&Path>, depth: usize, out: &mut Vec<SshH
             "include" if depth < INCLUDE_DEPTH => {
                 for spec in value.split_whitespace() {
                     for target in include_targets(spec, base, home) {
-                        parse_into(&target, home, depth + 1, out);
+                        parse_into(&target, base, home, depth + 1, out);
                     }
                 }
             }
@@ -283,7 +291,8 @@ fn parse_into(path: &Path, home: Option<&Path>, depth: usize, out: &mut Vec<SshH
 
 pub(crate) fn parse_hosts(path: &Path, home: Option<&Path>) -> Vec<SshHost> {
     let mut out = Vec::new();
-    parse_into(path, home, 0, &mut out);
+    let base = path.parent().unwrap_or(Path::new("."));
+    parse_into(path, base, home, 0, &mut out);
     out
 }
 
@@ -364,21 +373,28 @@ pub(crate) fn classify(stderr: &str) -> SshError {
     SshError::new(kind, last)
 }
 
+/// queued=false 는 줄을 서지 않는다 — 취소가 오래 걸리는 clone·fetch 뒤에서 기다리지 않게
 async fn run_ssh(
     state: &SshState,
     host: &str,
     remote: String,
     stdin: Option<String>,
+    queued: bool,
 ) -> Result<CmdResult, SshError> {
     validate_host(host).map_err(|m| SshError::new("unknown_host", m))?;
     let sem = state.sem(host);
-    let _permit = sem
-        .acquire()
-        .await
-        .map_err(|e| SshError::new("failed", e.to_string()))?;
+    let _permit = if queued {
+        Some(
+            sem.acquire()
+                .await
+                .map_err(|e| SshError::new("failed", e.to_string()))?,
+        )
+    } else {
+        None
+    };
     let mut cmd = tokio::process::Command::new(ssh_program());
     cmd.args(ssh_args(host, true))
-        .arg(remote)
+        .arg(sh_wrap(&remote))
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -464,7 +480,7 @@ pub fn ssh_hosts() -> Vec<SshHost> {
 
 #[tauri::command]
 pub async fn ssh_probe(state: State<'_, SshState>, host: String) -> Result<Probe, SshError> {
-    let res = run_ssh(&state, &host, PROBE.to_string(), None).await?;
+    let res = run_ssh(&state, &host, PROBE.to_string(), None, true).await?;
     parse_probe(&res.stdout)
 }
 
@@ -478,7 +494,7 @@ pub async fn ssh_exec(
     stdin: Option<String>,
 ) -> Result<CmdResult, String> {
     let remote = remote_command(&argv, cwd.as_deref(), &env.unwrap_or_default())?;
-    run_ssh(&state, &host, remote, stdin)
+    run_ssh(&state, &host, remote, stdin, true)
         .await
         .map_err(|e| format!("ssh({}): {}", e.kind, e.message))
 }
@@ -487,14 +503,17 @@ fn pid_file(run_id: &str) -> String {
     format!("\"$HOME\"/.minmo/run/{}.pid", safe_name(run_id))
 }
 
-/// 원격 스크립트 실행 명령. sshd 는 명령을 새 세션(프로세스 그룹)의 리더로 띄우고 exec 로 pid 가 유지되므로,
-/// 기록한 pid 가 곧 그룹 id 다 — 취소 때 그룹 전체에 신호를 보낸다
+/// 원격 스크립트 실행 명령.
+/// - 스크립트는 stdin 으로 받아 파일로 저장한 뒤 실행한다 — 바로 `sh -s` 로 읽히면 스크립트 안의 명령(read·ssh·
+///   docker run -i 등)이 stdin 으로 남은 줄을 먹어 뒷부분이 조용히 건너뛰어진다.
+/// - sshd 는 명령을 새 세션(프로세스 그룹)으로 띄운다. 그 그룹 id 를 기록해 취소 때 그룹 전체에 신호를 보낸다
+///   (로그인 셸이 exec 하지 않아 $$ 가 그룹 리더가 아닐 수 있어 ps 로 확인한다).
 pub(crate) fn script_command(
     run_id: &str,
     cwd: &str,
     env: &HashMap<String, String>,
 ) -> Result<String, String> {
-    let wrapper = r#"echo $$ > "$1"; sh -e -s; c=$?; rm -f "$1"; exit $c"#;
+    let wrapper = r#"g=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' '); echo "${g:-$$}" > "$1"; cat > "$1.sh"; sh -e "$1.sh" < /dev/null; c=$?; rm -f "$1" "$1.sh"; exit $c"#;
     let pid = pid_file(run_id);
     let argv = [
         "sh".to_string(),
@@ -513,8 +532,11 @@ pub(crate) fn script_command(
 
 pub(crate) fn cancel_command(run_id: &str) -> String {
     let pid = pid_file(run_id);
+    // TERM 뒤 그룹이 끝나기를 3초까지 기다렸다가 남았으면 KILL 한다.
+    // 그룹 지정은 `--` 없이 쓴다(busybox sh 의 kill 은 `--` 를 받지 않는다).
+    // 시작 직후 취소하면 pid 파일이 아직 없을 수 있다 — 잠깐 기다렸다가 없으면(이미 끝남) 그만둔다
     format!(
-        "p=$(cat {pid} 2>/dev/null) || exit 0; kill -TERM -- -\"$p\" 2>/dev/null || kill -TERM \"$p\" 2>/dev/null; sleep 3; kill -KILL -- -\"$p\" 2>/dev/null; rm -f {pid}"
+        "i=0; while [ ! -s {pid} ] && [ $i -lt 15 ]; do sleep 0.2; i=$((i+1)); done; p=$(cat {pid} 2>/dev/null); [ -n \"$p\" ] || exit 0; kill -TERM -\"$p\" 2>/dev/null || kill -TERM \"$p\" 2>/dev/null; j=0; while kill -0 -\"$p\" 2>/dev/null && [ $j -lt 15 ]; do sleep 0.2; j=$((j+1)); done; kill -KILL -\"$p\" 2>/dev/null; rm -f {pid} {pid}.sh"
     )
 }
 
@@ -539,7 +561,7 @@ pub async fn ssh_script_run(
     let remote = script_command(&run_id, &cwd, &env)?;
     let mut cmd = std::process::Command::new(ssh_program());
     cmd.args(ssh_args(&host, true))
-        .arg(remote)
+        .arg(sh_wrap(&remote))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -566,6 +588,10 @@ pub async fn ssh_script_run(
         .stderr
         .take()
         .map(|s| pump(app.clone(), run_id.clone(), "stderr", s));
+    // 시작 확인과 등록 사이에 취소가 들어왔으면 취소 쪽은 실행 중인 것을 보지 못했다 — 여기서 끝낸다
+    if lock(&state.cancelled).contains(&run_id) {
+        stop_running(&state, &run_id).await?;
+    }
     let status = tauri::async_runtime::spawn_blocking(move || {
         let st = child.wait();
         let _ = writer.join();
@@ -592,13 +618,22 @@ pub async fn ssh_script_run(
 #[tauri::command]
 pub async fn ssh_script_cancel(state: State<'_, SshState>, run_id: String) -> Result<(), String> {
     lock(&state.cancelled).insert(run_id.clone());
-    let running = lock(&state.scripts).get(&run_id).cloned();
+    stop_running(&state, &run_id).await
+}
+
+/// 실행 중인 스크립트를 끝낸다(실행 중이 아니면 아무것도 하지 않는다)
+async fn stop_running(state: &SshState, run_id: &str) -> Result<(), String> {
+    let running = lock(&state.scripts).get(run_id).cloned();
     if let Some((host, pid)) = running {
         // 로컬 ssh 를 끊어도 원격 프로세스는 남는다(tty 없음) — 원격 그룹을 먼저 끝낸다
-        let _ = run_ssh(&state, &host, cancel_command(&run_id), None).await;
-        tauri::async_runtime::spawn_blocking(move || super::script::kill_tree(pid))
-            .await
-            .map_err(|e| e.to_string())?;
+        let _ = run_ssh(state, &host, cancel_command(run_id), None, false).await;
+        // 원격 취소를 기다리는 동안 로컬 ssh 가 이미 끝났으면 그 pid 는 다른 프로세스일 수 있다 — 아직 실행 중일 때만 끝낸다
+        let still = lock(&state.scripts).get(run_id).map(|(_, p)| *p) == Some(pid);
+        if still {
+            tauri::async_runtime::spawn_blocking(move || super::script::kill_tree(pid))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -675,6 +710,40 @@ mod tests {
         assert_eq!(hosts[1].user.as_deref(), Some("me"));
         assert_eq!(hosts[3].user, None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_aliases_with_the_id_separator() {
+        let dir = tmp("pipe");
+        std::fs::write(dir.join("config"), "Host ok \"a|b\"\n").unwrap();
+        let hosts = parse_hosts(&dir.join("config"), None);
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "ok");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nested_include_resolves_against_the_top_config_dir() {
+        let dir = tmp("nested");
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+        std::fs::write(dir.join("config"), "Include a/one.conf\n").unwrap();
+        std::fs::write(
+            dir.join("a").join("one.conf"),
+            "Include a/two.conf\nHost one\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("a").join("two.conf"), "Host two\n").unwrap();
+        let aliases: Vec<String> = parse_hosts(&dir.join("config"), None)
+            .into_iter()
+            .map(|h| h.alias)
+            .collect();
+        assert_eq!(aliases, ["two", "one"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sh_wrap_quotes_the_whole_command() {
+        assert_eq!(sh_wrap("echo 'a b'"), "sh -c 'echo '\\''a b'\\'''");
     }
 
     #[test]
@@ -761,9 +830,12 @@ mod tests {
     fn script_and_cancel_commands_use_a_sanitized_pid_file() {
         let cmd = script_command("run-1;x", "/w/t", &HashMap::new()).unwrap();
         assert!(cmd.starts_with("mkdir -p \"$HOME\"/.minmo/run && cd -- '/w/t' && exec 'sh' '-c' "));
+        // 스크립트는 파일로 받아 stdin 을 끊고 실행한다
+        assert!(cmd.contains(r#"cat > "$1.sh"; sh -e "$1.sh" < /dev/null"#));
         assert!(cmd.ends_with("\"$HOME\"/.minmo/run/run-1x.pid"));
         let cancel = cancel_command("run-1;x");
         assert!(cancel.contains("run-1x.pid"));
-        assert!(cancel.contains("kill -TERM -- -\"$p\""));
+        assert!(cancel.contains("kill -TERM -\"$p\" "));
+        assert!(!cancel.contains("-- -"));
     }
 }

@@ -5,8 +5,8 @@ import { useCallback, useMemo } from 'react'
 
 import { isOfflineError } from '../../lib/apiErrors'
 import { useDeps } from '../../app/deps'
-import { useHost } from '../../app/host'
-import { GitHubError } from '@minmo/core'
+import { coreIdOf, useHost } from '../../app/host'
+import { GitHubError, worktreeId as coreWorktreeId } from '@minmo/core'
 import type { GitHubIssue, GitHubOwner } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
 import { useSessionStore } from '../../store/session'
@@ -34,9 +34,14 @@ export function useRepos(owner: GitHubOwner, enabled: boolean) {
   return useQuery({ queryKey: queryKeys.githubRepos(owner.login), queryFn: () => github.listRepos(owner), enabled, ...GITHUB_QUERY })
 }
 
-/** 이 저장소에서 로컬 worktree 가 있는 이슈 번호 (worktreePathMap 기준) */
-function worktreeNumbers(prefix: string): number[] {
+/**
+ * 이 저장소에서 worktree 가 있는 이슈 번호 (worktreePathMap 기준).
+ * 어느 호스트의 것이든 모은다 — 이슈 목록 캐시는 호스트와 무관하게 하나라, 호스트를 바꿔도 닫힌 이슈가 빠지지 않게
+ */
+function worktreeNumbers(owner: string, repo: string): number[] {
+  const prefix = coreWorktreeId(owner, repo, '')
   return Object.keys(useUiStore.getState().worktreePathMap)
+    .map(coreIdOf)
     .filter((id) => id.startsWith(prefix))
     .map((id) => Number(id.slice(prefix.length)))
     .filter((n) => Number.isInteger(n) && n > 0)
@@ -49,7 +54,7 @@ export function useIssues(owner: string, repo: string, enabled: boolean) {
   const map = useUiStore((s) => s.worktreePathMap)
   const query = useQuery({
     queryKey: queryKeys.githubIssues(owner, repo),
-    queryFn: () => github.listIssues(owner, repo, { ensureNumbers: worktreeNumbers(worktreeId(owner, repo, '')) }),
+    queryFn: () => github.listIssues(owner, repo, { ensureNumbers: worktreeNumbers(owner, repo) }),
     enabled,
     ...GITHUB_QUERY,
   })

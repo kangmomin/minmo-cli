@@ -175,7 +175,7 @@ fn remote_shell(r: &RemotePty, path: &str) -> Result<CommandBuilder, String> {
     ssh::validate_host(&r.host)?;
     let mut cmd = CommandBuilder::new(ssh::ssh_program());
     cmd.args(ssh::ssh_args(&r.host, false));
-    cmd.arg(remote_shell_command(r, path)?);
+    cmd.arg(ssh::sh_wrap(&remote_shell_command(r, path)?));
     if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
         cmd.cwd(home);
     }

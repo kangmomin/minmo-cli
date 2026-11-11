@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
 import { createFakeTauri, fail, ok } from '../test/fakes'
-import { assertRelative, assertRemovable, createSshOps, remotePty, sha1Hex, sshErrorOf, sshErrorText, tmuxSessionName } from './sshHost'
+import { assertRelative, assertRemovable, assertRoot, createSshOps, remotePty, sha1Hex, sshErrorOf, sshErrorText, tmuxSessionName } from './sshHost'
 import type { SshProbe } from './tauri'
 
 const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: true }
@@ -64,10 +64,11 @@ describe('createSshOps', () => {
     expect(tauri.sshExec).toHaveBeenCalledWith('my-server', ['git', '-C', '/w/t', 'status'], { cwd: undefined, env: { GIT_TERMINAL_PROMPT: '0', A: '1' } })
   })
 
-  it('pathExists 는 test -e 의 종료 코드로 판단한다', async () => {
-    const { ops } = setup(PROBE, { sshExec: async (_h, argv) => (argv[2] === '/yes' ? ok() : fail('', 1)) })
+  it('pathExists 는 test -e 의 종료 코드로 판단한다 — 1 만 없음, 그 밖의 실패는 오류', async () => {
+    const { ops } = setup(PROBE, { sshExec: async (_h, argv) => (argv[2] === '/yes' ? ok() : argv[2] === '/no' ? fail('', 1) : fail('sh: not found', 127)) })
     expect(await ops.pathExists('/yes')).toBe(true)
     expect(await ops.pathExists('/no')).toBe(false)
+    await expect(ops.pathExists('/broken')).rejects.toThrow('sh: not found')
   })
 
   it('removeDir 는 안전 조건을 통과한 경로만 rm -rf 한다', async () => {
@@ -82,18 +83,27 @@ describe('createSshOps', () => {
     const { tauri, ops } = setup(PROBE, {
       sshExec: async (_h, argv) => (argv.length === 4 ? ok('.env\nconfig/local.json\n') : ok('2\n')),
     })
-    expect(await ops.listFiles('/keep')).toEqual(['.env', 'config/local.json'])
-    expect(await ops.copyTree('/keep', '/w/t')).toBe(2)
+    expect(await ops.listFiles('/ws/o/r/_local')).toEqual(['.env', 'config/local.json'])
+    expect(await ops.copyTree('/ws/o/r/_local', '/ws/o/r/t')).toBe(2)
     const [, argv, opts] = tauri.sshExec.mock.calls[1]
-    expect(argv).toEqual(['sh', '-s', '--', '/keep', '/w/t'])
+    expect(argv).toEqual(['sh', '-s', '--', '/ws/o/r/_local', '/ws/o/r/t'])
     // 경로가 스크립트 본문에 섞이지 않는다(따옴표·공백이 있어도 안전)
-    expect(opts?.stdin).not.toContain('/keep')
+    expect(opts?.stdin).not.toContain('_local')
+  })
+
+  it('얕은 폴더(홈·루트)에서는 파일 작업을 하지 않는다', async () => {
+    const { tauri, ops } = setup()
+    for (const root of ['/', '/home/dev', 'rel/a/b/c', '/a/b/../c']) expect(() => assertRoot(root)).toThrow('사용할 수 없는 폴더')
+    await expect(ops.listFiles('/home/dev')).rejects.toThrow('사용할 수 없는 폴더')
+    await expect(ops.removeFileIn('/home', '.env')).rejects.toThrow('사용할 수 없는 폴더')
+    await expect(ops.copyTree('/ws/o/r/_local', '/')).rejects.toThrow('사용할 수 없는 폴더')
+    expect(tauri.sshExec).not.toHaveBeenCalled()
   })
 
   it('보관 실패는 원격 stderr 를 오류로 돌려준다', async () => {
     const { ops } = setup(PROBE, { sshExec: async () => fail('파일이 없습니다: .env') })
-    await expect(ops.copyFileInto('/w/t', '.env', '/keep')).rejects.toThrow('파일이 없습니다: .env')
-    await expect(ops.copyFileInto('/w/t', '../.env', '/keep')).rejects.toThrow('상대 경로')
+    await expect(ops.copyFileInto('/ws/o/r/t', '.env', '/ws/o/r/_local')).rejects.toThrow('파일이 없습니다: .env')
+    await expect(ops.copyFileInto('/ws/o/r/t', '../.env', '/ws/o/r/_local')).rejects.toThrow('상대 경로')
   })
 
   it('worktree 삭제 전: 이 PC 의 ssh 터미널과 원격 tmux 세션을 끝낸다', async () => {

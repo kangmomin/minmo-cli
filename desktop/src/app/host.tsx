@@ -57,6 +57,11 @@ export function aliasOfIssue(id: string): string | null {
   return end < 0 ? null : id.slice(SSH_PREFIX.length, end)
 }
 
+/** 호스트 접두사를 뗀 core worktree id */
+export function coreIdOf(id: string): string {
+  return id.startsWith(SSH_PREFIX) ? id.slice(id.indexOf(SEP) + 1) : id
+}
+
 const depsCache = new WeakMap<AppDeps, Map<string, AppDeps>>()
 
 /** base 에서 호스트에 따라 달라지는 부분(tauri 의 호스트 작업·home·platform)만 바꾼 deps */

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { worktreeId } from '@minmo/core'
 
 import { useDeps } from '../../app/deps'
-import { HostScope, aliasOfIssue, hostOf, useHost, useHostConnection } from '../../app/host'
+import { HostScope, aliasOfIssue, coreIdOf, hostOf, useHost, useHostConnection } from '../../app/host'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import type { SshProbe } from '../../lib/tauri'
 import { useHostsStore } from '../../store/hosts'
@@ -42,6 +42,8 @@ describe('호스트 id', () => {
     expect(hostOf('my').owns(remote.issueId('acme', 'app', '1'))).toBe(false)
     expect(aliasOfIssue(remote.issueId('acme', 'app', '1'))).toBe('my-server')
     expect(aliasOfIssue(local.issueId('acme', 'app', '1'))).toBeNull()
+    expect(coreIdOf(remote.issueId('acme', 'app', '1'))).toBe(worktreeId('acme', 'app', '1'))
+    expect(coreIdOf(local.issueId('acme', 'app', '1'))).toBe(worktreeId('acme', 'app', '1'))
   })
 })
 
@@ -161,6 +163,14 @@ describe('새로고침', () => {
     expect(tauri.pathExists).toHaveBeenCalledTimes(1)
     expect(tauri.pathExists).toHaveBeenCalledWith('C:\\w\\1')
     expect(Object.keys(useUiStore.getState().worktreePathMap)).toEqual([remote])
+  })
+})
+
+describe('연결 확인 값', () => {
+  it('실행 중에는 처음 확인한 값을 유지한다(열린 터미널이 다시 만들어지지 않게)', () => {
+    useHostsStore.getState().setProbe('my-server', { ...PROBE, tmux: false })
+    useHostsStore.getState().setProbe('my-server', PROBE)
+    expect(useHostsStore.getState().probes['my-server'].tmux).toBe(false)
   })
 })
 

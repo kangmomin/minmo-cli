@@ -22,26 +22,44 @@ export type HostOps = Pick<
   | 'platform'
 >
 
-/** 덮어쓰지 않고, 심볼릭 링크는 따라가지 않는다(로컬 copy_tree 와 같은 규칙). 복사한 개수를 출력한다 */
-const COPY_TREE = `src=$1; dst=$2
+/** root($1) 아래 rel($2)의 경로 요소 중 심볼릭 링크가 있으면 실패 — 저장소에 커밋된 링크를 따라 밖에 쓰거나 읽지 않게 */
+const NOLINK = `nolink() {
+  np=$1; nold=$IFS; IFS=/; set -f
+  for nc in $2; do np="$np/$nc"; if [ -L "$np" ]; then IFS=$nold; set +f; return 1; fi; done
+  IFS=$nold; set +f; return 0
+}
+NL='
+'`
+
+/**
+ * 덮어쓰지 않고, 심볼릭 링크는 따라가지 않는다(로컬 copy_tree 와 같은 규칙). 복사한 개수를 출력하고,
+ * 복사에 실패한 파일이 있으면 실패로 끝난다. 이름에 줄바꿈이 있는 파일은 건너뛴다(줄 단위로 읽으므로).
+ */
+const COPY_TREE = `${NOLINK}
+src=$1; dst=$2
 [ -d "$src" ] || { echo 0; exit 0; }
 cd -- "$src" || exit 1
-find . -type f -print | {
-  n=0
+find . -type f ! -name "*$NL*" -print | {
+  n=0; bad=0
   while IFS= read -r f; do
-    t="$dst/\${f#./}"
-    if [ -e "$t" ] || [ -L "$t" ]; then continue; fi
-    mkdir -p -- "$(dirname -- "$t")" && cp -p -- "$f" "$t" && n=$((n+1))
+    rel=\${f#./}; t="$dst/$rel"
+    nolink "$dst" "$rel" || continue
+    if [ -e "$t" ]; then continue; fi
+    if mkdir -p -- "$(dirname -- "$t")" && cp -p -- "$f" "$t"; then n=$((n+1)); else bad=1; fi
   done
   echo "$n"
+  exit $bad
 }`
 
-const LIST_FILES = `[ -d "$1" ] || exit 0
+const LIST_FILES = `NL='
+'
+[ -d "$1" ] || exit 0
 cd -- "$1" || exit 1
-find . -type f -print | sed 's|^\\./||' | LC_ALL=C sort`
+find . -type f ! -name "*$NL*" -print | sed 's|^\\./||' | LC_ALL=C sort`
 
-const COPY_FILE = `s="$1/$2"; t="$3/$2"
-if [ -L "$s" ]; then echo "심볼릭 링크는 보관할 수 없습니다: $2" >&2; exit 1; fi
+const COPY_FILE = `${NOLINK}
+s="$1/$2"; t="$3/$2"
+if ! nolink "$1" "$2" || ! nolink "$3" "$2"; then echo "심볼릭 링크는 보관할 수 없습니다: $2" >&2; exit 1; fi
 if [ ! -f "$s" ]; then echo "파일이 없습니다: $2" >&2; exit 1; fi
 mkdir -p -- "$(dirname -- "$t")" && cp -p -- "$s" "$t"`
 
@@ -100,6 +118,12 @@ export function assertRemovable(path: string, home: string): void {
   }
 }
 
+/** 파일 작업의 기준 폴더 — 로컬 guard_root(fs.rs)처럼 얕은 경로(홈·루트 등)에서는 하지 않는다 */
+export function assertRoot(root: string): void {
+  const parts = root.split('/').filter(Boolean)
+  if (!root.startsWith('/') || parts.includes('..') || parts.includes('.') || parts.length < 3) throw new Error(`사용할 수 없는 폴더입니다: ${root}`)
+}
+
 /** 보관 파일의 상대 경로 — 폴더 밖을 가리키지 못하게 한다 */
 export function assertRelative(rel: string): void {
   const parts = rel.split('/')
@@ -118,21 +142,35 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe): Ho
   return {
     // 원격 git 이 자격 증명을 물으며 멈추지 않게(실패로 끝나게) 한다
     gitRun: (args, opts) => exec(['git', ...args], { cwd: opts?.cwd, env: { GIT_TERMINAL_PROMPT: '0', ...opts?.env } }),
-    pathExists: async (path) => (await exec(['test', '-e', path])).code === 0,
+    pathExists: async (path) => {
+      const r = await exec(['test', '-e', path])
+      // 1 만 "없음" 이다 — 그 밖의 실패(원격 셸 오류 등)를 없음으로 보면 새로고침이 worktree 기록을 지운다
+      if (r.code > 1) throw new Error(r.stderr.trim() || `경로 확인 실패(종료 코드 ${r.code})`)
+      return r.code === 0
+    },
     removeDir: async (path) => {
       assertRemovable(path, probe.home)
       must(await exec(['rm', '-rf', '--', path]), '폴더 삭제')
     },
-    copyTree: async (src, dst) => Number(must(await script(COPY_TREE, [src, dst]), '파일 복사').stdout.trim()) || 0,
-    listFiles: async (root) =>
-      must(await script(LIST_FILES, [root]), '파일 목록')
+    copyTree: async (src, dst) => {
+      assertRoot(src)
+      assertRoot(dst)
+      return Number(must(await script(COPY_TREE, [src, dst]), '파일 복사').stdout.trim()) || 0
+    },
+    listFiles: async (root) => {
+      assertRoot(root)
+      return must(await script(LIST_FILES, [root]), '파일 목록')
         .stdout.split('\n')
-        .filter((l) => l !== ''),
+        .filter((l) => l !== '')
+    },
     copyFileInto: async (srcRoot, rel, dstRoot) => {
+      assertRoot(srcRoot)
+      assertRoot(dstRoot)
       assertRelative(rel)
       must(await script(COPY_FILE, [srcRoot, rel, dstRoot]), '파일 보관')
     },
     removeFileIn: async (root, rel) => {
+      assertRoot(root)
       assertRelative(rel)
       must(await exec(['rm', '-f', '--', `${root}/${rel}`]), '파일 삭제')
     },
