@@ -28,6 +28,8 @@ base64 = "0.21"
 # Windows 는 딥링크가 새 프로세스 인자로 들어오므로 single-instance 가 기존 창으로 전달해야 한다
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+# 자동 업데이트(서명 검증 후 설치) — 웹뷰가 아니라 Rust 명령(update.rs)에서만 쓴다
+tauri-plugin-updater = "2"
 
 # keyring 3.x 는 기본 백엔드가 없다 → 플랫폼별 네이티브 백엔드를 명시
 [target.'cfg(target_os = "windows")'.dependencies]

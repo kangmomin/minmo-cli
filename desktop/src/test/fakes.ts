@@ -6,7 +6,7 @@ import { ApiError } from '@minmo/api-client'
 import type { ApiClient, ApiErrorCode, Notes } from '@minmo/api-client'
 
 import type { GitHubClient } from '@minmo/core'
-import type { ServerSettings, ServerStatus, TauriApi } from '../lib/tauri'
+import type { ServerSettings, ServerStatus, TauriApi, UpdateProgress } from '../lib/tauri'
 import { ok } from '../lib/tauri.mock'
 
 export type Mocked<T> = { [K in keyof T]: T[K] extends (...args: infer A) => infer R ? Mock<(...args: A) => R> : T[K] }
@@ -24,6 +24,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
   const deepLinkListeners = new Set<(urls: string[]) => void>()
   const serverListeners = new Set<(s: ServerStatus) => void>()
   const closeListeners = new Set<() => void>()
+  const progressListeners = new Set<(p: UpdateProgress) => void>()
   const base: TauriApi = {
     gitRun: async () => ok(),
     ghRun: async () => ok(),
@@ -78,6 +79,15 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
       }
     },
     appClose: async () => {},
+    appVersion: async () => '0.4.0',
+    appUpdateCheck: async () => null,
+    appUpdateInstall: async () => {},
+    onUpdateProgress: async (cb) => {
+      progressListeners.add(cb)
+      return () => {
+        progressListeners.delete(cb)
+      }
+    },
   }
   const tauri = mockAll(base, overrides)
   return {
@@ -92,6 +102,9 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     },
     emitCloseRequested() {
       for (const l of [...closeListeners]) l()
+    },
+    emitUpdateProgress(p: UpdateProgress) {
+      for (const l of [...progressListeners]) l(p)
     },
   }
 }

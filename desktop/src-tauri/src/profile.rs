@@ -1,10 +1,19 @@
 // 앱 데이터 위치와 키체인 서비스 이름.
+// 키체인 서비스는 앱 identifier 를 따른다(identifier 를 바꾼 E2E 설치본이 실제 앱의 키체인을 쓰지 않게).
 // debug 빌드에서는 MINMO_DESKTOP_PROFILE=<폴더> 로 둘 다 바꿔, 개발·E2E 실행이 사용자의 실제 데이터와 키체인을 건드리지 않게 한다.
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use tauri::{AppHandle, Manager, Runtime};
 
 pub const KEYCHAIN_SERVICE: &str = "com.minmo.desktop";
+
+static IDENTIFIER: OnceLock<String> = OnceLock::new();
+
+/// 앱 시작 시(setup) 한 번 — 키체인을 쓰기 전에 부른다
+pub fn init(identifier: &str) {
+    let _ = IDENTIFIER.set(identifier.to_string());
+}
 
 fn profile_dir() -> Option<PathBuf> {
     if !cfg!(debug_assertions) {
@@ -21,10 +30,15 @@ pub fn isolated() -> bool {
 }
 
 pub fn keychain_service() -> String {
-    if isolated() {
-        format!("{KEYCHAIN_SERVICE}.dev")
+    service_name(IDENTIFIER.get().map(String::as_str), isolated())
+}
+
+fn service_name(identifier: Option<&str>, isolated: bool) -> String {
+    let base = identifier.unwrap_or(KEYCHAIN_SERVICE);
+    if isolated {
+        format!("{base}.dev")
     } else {
-        KEYCHAIN_SERVICE.to_string()
+        base.to_string()
     }
 }
 
@@ -52,4 +66,26 @@ pub fn dirs<R: Runtime>(app: &AppHandle<R>) -> Result<Dirs, String> {
         data: path.app_data_dir().map_err(err)?,
         logs: path.app_log_dir().map_err(err)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keychain_service_follows_identifier() {
+        assert_eq!(
+            service_name(Some("com.minmo.desktop"), false),
+            "com.minmo.desktop"
+        );
+        assert_eq!(
+            service_name(Some("com.minmo.desktop.e2e"), false),
+            "com.minmo.desktop.e2e"
+        );
+        assert_eq!(
+            service_name(Some("com.minmo.desktop.e2e"), true),
+            "com.minmo.desktop.e2e.dev"
+        );
+        assert_eq!(service_name(None, false), KEYCHAIN_SERVICE);
+    }
 }

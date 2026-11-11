@@ -408,6 +408,14 @@ impl ServerManager {
         );
     }
 
+    /// 종료(shutdown)를 취소하고 서버를 다시 띄운다 — 업데이트 설치가 실패했을 때
+    pub fn resume(app: &AppHandle) {
+        app.state::<ServerManager>()
+            .shutting_down
+            .store(false, Ordering::SeqCst);
+        Self::restart(app);
+    }
+
     /// 실행 중인 서버를 끝내고 새 세대 번호를 돌려준다
     fn stop_proc(&self) -> u64 {
         let (proc, generation) = {

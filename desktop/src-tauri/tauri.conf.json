@@ -31,6 +31,11 @@
     "externalBin": ["binaries/minmo-server"]
   },
   "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQwODU2MzJFREUxREQ2RkIKUldUNzFoM2VMbU9GUUVkTDQ0S09rSjZxMWZobGFaMlBRUFZESkVqZkErUHZoRDliMXM3L3NYV2EK",
+      "endpoints": ["https://github.com/kangmomin/minmo-cli/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    },
     "deep-link": {
       "desktop": {
         "schemes": ["minmo"]

@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 딥링크·브라우저 열기는 window.__MINMO_MOCK__ 로 노출해 E2E 가 조작한다.
-import type { CloseAction, CmdResult, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, TauriApi } from './tauri'
+import type { CloseAction, CmdResult, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, TauriApi, UpdateInfo, UpdateProgress } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -20,6 +20,10 @@ export interface MinmoMockHandle {
   /** 내장 서버 상태를 바꾸고 server-status 를 보낸다 */
   setServerStatus(s: ServerStatus): void
   readonly serverSettings: ServerSettings & { clientSecret: string }
+  /** 다음 업데이트 확인 결과(null = 최신) */
+  setAvailableUpdate(u: UpdateInfo | null): void
+  /** appUpdateInstall 호출 횟수 */
+  installCalls: number
 }
 
 /** mock 서버 포트 — VITE_MINMO_SERVER(Playwright) 주소를 따른다 */
@@ -90,6 +94,8 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     callbackUrl: `http://127.0.0.1:${server.port}/auth/github/callback`,
     warning: null,
   })
+  let availableUpdate: UpdateInfo | null = null
+  const progressListeners = new Set<(p: UpdateProgress) => void>()
   const emitServer = (next: ServerStatus) => {
     serverStatus = next
     for (const l of [...serverListeners]) l(next)
@@ -111,6 +117,10 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     get serverSettings() {
       return { ...serverView(), clientSecret: server.clientSecret }
     },
+    setAvailableUpdate: (u) => {
+      availableUpdate = u
+    },
+    installCalls: 0,
   }
   if (typeof window !== 'undefined') window.__MINMO_MOCK__ = handle
 
@@ -320,6 +330,19 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     appClose: async (action, remember) => {
       handle.closeCalls.push({ action, remember })
       if (remember) server.closeAction = action
+    },
+
+    appVersion: async () => '0.0.0-mock',
+    appUpdateCheck: async () => availableUpdate,
+    appUpdateInstall: async () => {
+      handle.installCalls += 1
+      for (const l of [...progressListeners]) l({ downloaded: 50, total: 100 })
+    },
+    onUpdateProgress: async (cb) => {
+      progressListeners.add(cb)
+      return () => {
+        progressListeners.delete(cb)
+      }
     },
   }
 }

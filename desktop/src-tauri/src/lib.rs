@@ -1,9 +1,10 @@
 // Tauri 진입점. invoke 이름은 desktop/src/lib/tauri.ts 의 TAURI_COMMANDS 와 1:1,
-// 이벤트 이름은 TAURI_EVENTS("pty-data", "script-log", "server-status", "close-requested") 와 일치해야 한다.
+// 이벤트 이름은 TAURI_EVENTS("pty-data", "script-log", "server-status", "close-requested", "update-progress") 와 일치해야 한다.
 mod commands;
 mod profile;
 mod server;
 mod shell;
+mod update;
 
 use commands::{fs, git, keychain, pty, script};
 use tauri::Manager;
@@ -25,8 +26,10 @@ pub fn run() {
     let app = builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(pty::PtyState::default())
         .manage(script::ScriptState::default())
+        .manage(update::UpdateState::default())
         .setup(|app| {
             // 개발 실행(설치기 없음)에서는 minmo:// 스킴을 런타임에 등록한다. 격리 프로필(E2E)은 설치된 앱의
             // 등록을 가로채지 않도록 건너뛴다 — 딥링크는 두 번째 인스턴스 인자로 전달해 시험한다
@@ -35,6 +38,8 @@ pub fn run() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 app.deep_link().register_all()?;
             }
+            // 키체인 서비스 이름이 identifier 를 따르므로 키체인을 쓰기 전에
+            profile::init(&app.config().identifier);
             let handle = app.handle().clone();
             app.manage(server::ServerManager::load(&handle));
             shell::setup_tray(&handle)?;
@@ -78,6 +83,8 @@ pub fn run() {
             server::server_restart,
             server::server_open_log_dir,
             shell::app_close,
+            update::app_update_check,
+            update::app_update_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -10,6 +10,7 @@ import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { getTauri } from '../../lib/tauri'
 import type { CloseAction, ServerSettings, ServerSettingsInput, TauriApi } from '../../lib/tauri'
 import { useServerStore } from '../../store/server'
+import { AppUpdateSection } from '../update/AppUpdateSection'
 import { CLOSE_OPTIONS, OAUTH_APP_NEW_URL, parsePort, statusText } from './serverSettings'
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -190,6 +191,8 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
           <p className="text-xs text-muted-foreground">Secret 은 OS 키체인에 저장하며 다시 보여 주지 않습니다.</p>
         </div>
       </section>
+
+      <AppUpdateSection tauri={tauri} headingId={fid('app')} />
 
       <section className="grid gap-2" aria-labelledby={fid('close')}>
         <h3 id={fid('close')} className="text-sm font-semibold">
