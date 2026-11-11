@@ -6,7 +6,8 @@ import type { PaneNode, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
 
 export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes'
-export type Theme = 'black' | 'light'
+/** ghostty = Ghostty 터미널의 기본 색(기본값) */
+export type Theme = 'ghostty' | 'black' | 'light'
 
 /** 이슈별 터미널 패널 배치. tree=null 이면 모든 패널을 닫은 상태 */
 export type IssuePanes = { tree: PaneNode | null; focused: string | null; seq: number }
@@ -46,7 +47,7 @@ export const useUiStore = create<UiState>()(
       tab: 'terminal',
       worktreePathMap: {},
       terminalIds: {},
-      theme: 'black',
+      theme: 'ghostty',
       panes: {},
       focusRequest: null,
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
