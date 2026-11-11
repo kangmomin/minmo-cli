@@ -22,7 +22,8 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 
 ### 업데이트
 
-- **데스크탑**: v0.4.0 부터 자동 업데이트된다. 앱을 켜면 새 버전을 확인해 상단에 안내하고, [설치하고 다시 시작]을 누르면 서버를 정상 종료한 뒤 서명을 확인한 설치 파일로 업데이트하고 다시 실행한다. 서버 설정의 **앱 → 업데이트 확인** 으로 직접 확인할 수도 있다. v0.3.0 이하는 v0.4.0 을 한 번 직접 설치해야 한다.
+- **데스크탑**: v0.4.0 부터 자동 업데이트된다. 앱을 켜면 새 버전을 확인해 상단에 안내하고, [설치하고 다시 시작]을 누르면 서버를 정상 종료한 뒤 서명을 확인한 설치 파일로 업데이트하고 다시 실행한다. 앱이 켜져 있는 동안 12시간마다 다시 확인하고, 서버 설정의 **앱 → 업데이트 확인** 으로 직접 확인할 수도 있다. 서명에 담긴 버전과 안내된 버전이 다르면 설치하지 않는다(다운그레이드 방지). v0.3.0 이하는 v0.4.0 을 한 번 직접 설치해야 한다.
+  - msi 로 설치했다면 업데이트 때 관리자 승인 창이 뜬다. 거절하면 업데이트되지 않고 앱도 다시 열리지 않으니 앱을 다시 켜면 된다.
 - **원격 CLI**: 명령이 끝날 때 새 버전이 있으면 알린다(하루 한 번 확인, `MINMO_NO_UPDATE_CHECK=1` 로 끔). `minmo update` 로 업데이트하고, `minmo update --check` 로 버전만 본다.
 
 ### 처음 실행
@@ -192,11 +193,11 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 릴리즈는 GitHub Actions(`.github/workflows/release.yml`)가 만든다.
 
 1. 버전을 올리는 PR 을 머지한다 — 루트·`desktop`·`packages/cli` 의 `package.json`, `tauri.conf.json`, `Cargo.toml`(+ lock). 릴리즈 노트는 `docs/releases/v<버전>.md`(없으면 자동 생성).
-2. `main` 에 `v<버전>` 태그를 push 한다. workflow 가 버전 일치를 확인하고, Windows 에서 설치 파일(사이드카 서버 포함)을 빌드해 업데이트 서명(`.sig`)·`latest.json`·체크섬과 함께 Release 로 올린 뒤, CLI 를 GitHub Packages 에 배포한다.
-3. 수동 실행(Actions → release → Run workflow)이나 릴리즈 파일을 바꾼 PR 은 dry-run(빌드·매니페스트까지, 결과는 artifact)이다.
+2. `main` 에 `v<버전>` 태그를 push 한다. workflow 가 버전 일치·CLI 테스트를 확인하고, Windows 에서 설치 파일(사이드카 서버 포함)을 업데이트 서명(`.sig`)과 함께 빌드한 뒤, CLI 를 GitHub Packages 에 배포하고, 마지막에 Release(설치 파일·`.sig`·`latest.json`·tgz·체크섬)를 공개한다.
+3. 수동 실행(Actions → release → Run workflow)이나 릴리즈 파일을 바꾼 PR 은 dry-run 이다 — 일회용 키로 서명해 빌드·매니페스트까지만 하고 결과는 artifact 로 남긴다.
 
 업데이트 서명 키
-- 공개키는 `tauri.conf.json` 의 `plugins.updater.pubkey`, 개인키는 저장소 secret `TAURI_SIGNING_PRIVATE_KEY` 에 있다(원본: 관리자 PC 의 `~/.tauri/minmo-updater.key`, 비밀번호 없음).
+- 공개키는 `tauri.conf.json` 의 `plugins.updater.pubkey`, 개인키는 environment **release** 의 secret `TAURI_SIGNING_PRIVATE_KEY` 에 있다(이 environment 는 `v*` 태그에서만 쓸 수 있다. 원본: 관리자 PC 의 `~/.tauri/minmo-updater.key`, 비밀번호 없음).
 - **개인키를 잃으면 이미 설치된 앱에 업데이트를 보낼 수 없다**(새 키로 바꾸면 사용자가 새 버전을 한 번 직접 설치해야 한다). 개인키는 따로 안전하게 백업한다.
 - 로컬 `tauri build` 는 서명 없이 된다(`createUpdaterArtifacts` 는 workflow 에서만 켠다). 로컬에서 서명까지 하려면 `TAURI_SIGNING_PRIVATE_KEY` 를 주고 `--config '{"bundle":{"createUpdaterArtifacts":true}}'`.
 

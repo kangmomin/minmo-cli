@@ -6,7 +6,7 @@ import { ls, note, openIssue, rm } from './commands/issues'
 import { modeCmd } from './commands/mode'
 import { configGet, configSet, reposAdd, reposAll, reposList, reposRemove, reposReset } from './commands/settings'
 import type { Ctx } from './context'
-import { runInherited, updateCmd } from './update'
+import { captureOutput, runInherited, updateCmd } from './update'
 
 export type ProgramDeps = {
   createCtx(): Promise<Ctx>
@@ -40,7 +40,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   const update =
     deps.update ??
     ((opts: { check?: boolean }) =>
-      updateCmd({ version: deps.version, fetch: (input, init) => globalThis.fetch(input, init), run: runInherited, out: (l) => console.log(l) }, opts))
+      updateCmd({ version: deps.version, fetch: (input, init) => globalThis.fetch(input, init), run: runInherited, capture: captureOutput, out: (l) => console.log(l) }, opts))
   program
     .command('update')
     .option('--check', '설치하지 않고 현재·최신 버전만 보기')

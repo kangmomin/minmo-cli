@@ -6,7 +6,7 @@ import type { UpdateInfo } from '../../lib/tauri'
 import { useUpdateStore } from '../../store/update'
 import { createFakeTauri } from '../../test/fakes'
 import { AppUpdateSection } from './AppUpdateSection'
-import { UPDATE_CHECK_DELAY_MS, UpdateNotice } from './UpdateNotice'
+import { UPDATE_CHECK_DELAY_MS, UPDATE_RECHECK_MS, UpdateNotice } from './UpdateNotice'
 import { checkForUpdate, progressPercent } from './update'
 
 const NEXT: UpdateInfo = { version: '0.4.1', currentVersion: '0.4.0', notes: null, date: null }
@@ -33,6 +33,15 @@ describe('UpdateNotice', () => {
   it('시작 후 잠시 뒤 확인하고, 새 버전이 있으면 안내한다', async () => {
     await showNotice()
     expect(await screen.findByTestId('update-notice')).toHaveTextContent('새 버전 v0.4.1 이 있습니다(현재 v0.4.0)')
+  })
+
+  it('트레이에 오래 떠 있어도 주기적으로 다시 확인한다', async () => {
+    const fake = await showNotice({ appUpdateCheck: async () => null })
+    await waitFor(() => expect(fake.tauri.appUpdateCheck).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(UPDATE_RECHECK_MS)
+    })
+    expect(fake.tauri.appUpdateCheck).toHaveBeenCalledTimes(2)
   })
 
   it('새 버전이 없거나 확인이 실패하면 아무것도 보이지 않는다', async () => {

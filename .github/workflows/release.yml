@@ -1,6 +1,8 @@
-# 릴리즈 — v* 태그를 push 하면 Windows 설치 파일(업데이트 서명 포함)·latest.json·CLI tgz 를 GitHub Release 로 올리고
-# CLI 를 GitHub Packages(@kangmomin/minmo-cli)에 배포한다. 수동 실행과 릴리즈 관련 파일을 바꾼 PR 은 빌드·매니페스트까지만 한다(dry-run).
-# 필요한 secret: TAURI_SIGNING_PRIVATE_KEY(업데이트 서명 개인키 내용), 비밀번호가 있으면 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# 릴리즈 — v* 태그를 push 하면: 버전 일치·테스트 → Windows 설치 파일(사이드카 서버 포함, 업데이트 서명) 빌드 →
+# CLI 를 GitHub Packages(@kangmomin/minmo-cli)에 배포 → GitHub Release(설치 파일·.sig·latest.json·tgz·체크섬).
+# CLI 배포가 끝난 뒤에 릴리즈를 공개한다(릴리즈가 먼저 나면 CLI 가 아직 없는 새 버전을 알린다).
+# 수동 실행·릴리즈 파일을 바꾼 PR 은 dry-run: 일회용 키로 서명해 빌드·매니페스트까지만 하고 결과는 artifact 로 남긴다.
+# 업데이트 서명 개인키는 environment "release"(v* 태그만 접근)의 secret TAURI_SIGNING_PRIVATE_KEY 에 둔다.
 name: release
 
 on:
@@ -15,8 +17,7 @@ on:
       - 'desktop/src-tauri/tauri.conf.json'
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -28,22 +29,28 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
-      publish: ${{ github.ref_type == 'tag' }}
+      publish: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - id: v
         run: node scripts/check-versions.mjs
       - run: npm run test:scripts
+      - run: npm ci
+      # 릴리즈를 만들기 전에 CLI 가 배포 가능한지 먼저 확인한다
+      - run: npm test --workspace packages/cli
 
   desktop:
     needs: verify
     runs-on: windows-latest
+    environment: ${{ needs.verify.outputs.publish == 'true' && 'release' || 'dry-run' }}
     env:
       VERSION: ${{ needs.verify.outputs.version }}
       TAG: ${{ needs.verify.outputs.tag }}
+      PUBLISH: ${{ needs.verify.outputs.publish }}
     defaults:
       run:
         shell: bash
@@ -66,7 +73,17 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri --workspace desktop -- build --config '{"bundle":{"createUpdaterArtifacts":true}}'
+        run: |
+          config='{"bundle":{"createUpdaterArtifacts":true}}'
+          if [ "$PUBLISH" = "true" ]; then
+            if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then echo "::error::environment release 에 TAURI_SIGNING_PRIVATE_KEY 가 없습니다"; exit 1; fi
+          else
+            # dry-run: 실제 키 대신 일회용 키로 서명하고 공개키도 그것으로 바꾼다(산출물은 배포하지 않는다)
+            npx --workspace desktop tauri signer generate --ci -w "$RUNNER_TEMP/dry-run.key" > /dev/null
+            export TAURI_SIGNING_PRIVATE_KEY="$(cat "$RUNNER_TEMP/dry-run.key")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+            config="{\"bundle\":{\"createUpdaterArtifacts\":true},\"plugins\":{\"updater\":{\"pubkey\":\"$(cat "$RUNNER_TEMP/dry-run.key.pub")\"}}}"
+          fi
+          npm run tauri --workspace desktop -- build --config "$config"
       - run: npm run pack:cli
       - name: 릴리즈 자산·latest.json·체크섬
         run: |
@@ -80,18 +97,14 @@ jobs:
         with:
           name: release-${{ env.TAG }}
           path: release/
-      - name: GitHub Release
-        if: needs.verify.outputs.publish == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ -f "docs/releases/$TAG.md" ]; then notes=(--notes-file "docs/releases/$TAG.md"); else notes=(--generate-notes); fi
-          gh release create "$TAG" --verify-tag --title "minmo $TAG" "${notes[@]}" release/*
 
   cli:
     needs: [verify, desktop]
     if: needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -101,8 +114,28 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@kangmomin'
       - run: npm ci
-      - run: npm test --workspace packages/cli
       - name: GitHub Packages 배포
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm publish --workspace packages/cli
+
+  release:
+    needs: [verify, desktop, cli]
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.verify.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ env.TAG }}
+          path: release
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "docs/releases/$TAG.md" ]; then notes=(--notes-file "docs/releases/$TAG.md"); else notes=(--generate-notes); fi
+          gh release create "$TAG" --verify-tag --title "minmo $TAG" "${notes[@]}" release/*

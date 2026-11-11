@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CliError } from './errors'
 import { buildProgram } from './program'
-import { CHECK_INTERVAL_MS, NPMRC_HINT, PACKAGE, cachePath, fetchLatest, isNewer, latestVersion, notifyUpdate, npmInstall, parseVersion, updateCmd } from './update'
+import { CHECK_INTERVAL_MS, NPMRC_HINT, PACKAGE, cachePath, fetchLatest, installedVersion, isNewer, latestVersion, notifyUpdate, npmInstall, parseVersion, updateCmd } from './update'
 
 const release = (tag: string, status = 200) => vi.fn(async () => new Response(JSON.stringify({ tag_name: tag }), { status }))
 
@@ -96,15 +96,30 @@ describe('notifyUpdate', () => {
 })
 
 describe('minmo update', () => {
-  const deps = (tag: string, code = 0) => {
+  const lsJson = (version: string) => JSON.stringify({ dependencies: { [PACKAGE]: { version } } })
+  const deps = (tag: string, code = 0, installed: string | null = tag.replace(/^v/, '')) => {
     const out = vi.fn()
     const run = vi.fn(async () => code)
-    return { out, run, d: { version: '0.4.0', fetch: release(tag), run, out, platform: 'linux' as const } }
+    const capture = vi.fn(async () => (installed ? lsJson(installed) : null))
+    return { out, run, capture, d: { version: '0.4.0', fetch: release(tag), run, capture, out, platform: 'linux' as const } }
   }
 
-  it('npm 명령 — Windows 는 셸로(npm.cmd)', () => {
+  it('npm 명령 — Windows 는 한 줄 명령을 셸로(npm.cmd, DEP0190 경고 없이)', () => {
     expect(npmInstall('linux')).toEqual({ cmd: 'npm', args: ['i', '-g', `${PACKAGE}@latest`], shell: false })
-    expect(npmInstall('win32').shell).toBe(true)
+    expect(npmInstall('win32')).toEqual({ cmd: `npm i -g ${PACKAGE}@latest`, args: [], shell: true })
+  })
+
+  it('installedVersion: npm ls -g --json', async () => {
+    const capture = vi.fn(async () => lsJson('0.4.1'))
+    expect(await installedVersion(capture, 'linux')).toBe('0.4.1')
+    expect(capture).toHaveBeenCalledWith('npm', ['ls', '-g', '--json', '--depth=0', PACKAGE], false)
+    expect(await installedVersion(async () => null, 'linux')).toBeNull()
+    expect(await installedVersion(async () => '{}', 'linux')).toBeNull()
+  })
+
+  it('설치 후에도 이전 버전이면(패키지 배포 전) 알린다', async () => {
+    const { d } = deps('v0.4.1', 0, '0.4.0')
+    await expect(updateCmd(d)).rejects.toThrow('아직 v0.4.1 를 받지 못했습니다(설치된 버전 v0.4.0)')
   })
 
   it('--check 는 버전만 보여 준다', async () => {

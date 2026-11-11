@@ -108,12 +108,17 @@ export async function notifyUpdate(d: NotifyDeps): Promise<void> {
   if (latest && isNewer(latest, d.version)) d.write(updateNotice(d.version, latest))
 }
 
-/** npm 전역 설치 명령 — Windows 의 npm 은 .cmd 라 셸로 실행한다(인자는 고정값) */
-export function npmInstall(platform: NodeJS.Platform = process.platform) {
-  return { cmd: 'npm', args: ['i', '-g', `${PACKAGE}@latest`], shell: platform === 'win32' }
+/** npm 명령 — Windows 의 npm 은 .cmd 라 셸로 실행한다. 셸에 인자 배열을 넘기면 Node 24 가 경고(DEP0190)하므로
+ *  고정된 명령 한 줄로 넘긴다(사용자 입력이 섞이지 않는다) */
+export function npmCommand(args: string[], platform: NodeJS.Platform = process.platform) {
+  return platform === 'win32' ? { cmd: ['npm', ...args].join(' '), args: [] as string[], shell: true } : { cmd: 'npm', args, shell: false }
 }
 
+export const npmInstall = (platform: NodeJS.Platform = process.platform) => npmCommand(['i', '-g', `${PACKAGE}@latest`], platform)
+
 export type RunCommand = (cmd: string, args: string[], shell: boolean) => Promise<number>
+/** 실행하고 stdout 을 돌려준다(실패하면 null) */
+export type CaptureCommand = (cmd: string, args: string[], shell: boolean) => Promise<string | null>
 
 export const runInherited: RunCommand = (cmd, args, shell) =>
   new Promise((resolve) => {
@@ -122,10 +127,32 @@ export const runInherited: RunCommand = (cmd, args, shell) =>
     child.on('close', (code) => resolve(code ?? 1))
   })
 
+export const captureOutput: CaptureCommand = (cmd, args, shell) =>
+  new Promise((resolve) => {
+    const out: Buffer[] = []
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], shell })
+    child.stdout?.on('data', (c: Buffer) => out.push(c))
+    child.on('error', () => resolve(null))
+    child.on('close', (code) => resolve(code === 0 ? Buffer.concat(out).toString('utf8') : null))
+  })
+
+/** 전역으로 설치된 이 패키지의 버전(npm ls -g --json) */
+export async function installedVersion(capture: CaptureCommand, platform: NodeJS.Platform = process.platform): Promise<string | null> {
+  const { cmd, args, shell } = npmCommand(['ls', '-g', '--json', '--depth=0', PACKAGE], platform)
+  const raw = await capture(cmd, args, shell)
+  try {
+    const v = (JSON.parse(raw ?? '') as { dependencies?: Record<string, { version?: unknown }> }).dependencies?.[PACKAGE]?.version
+    return typeof v === 'string' ? v : null
+  } catch {
+    return null
+  }
+}
+
 export type UpdateDeps = {
   version: string
   fetch: Fetch
   run: RunCommand
+  capture: CaptureCommand
   out(line: string): void
   platform?: NodeJS.Platform
 }
@@ -143,8 +170,13 @@ export async function updateCmd(d: UpdateDeps, opts: { check?: boolean } = {}): 
     return
   }
   const { cmd, args, shell } = npmInstall(d.platform)
-  d.out(`${cmd} ${args.join(' ')}`)
+  d.out([cmd, ...args].join(' '))
   const code = await d.run(cmd, args, shell)
   if (code !== 0) throw new CliError(`업데이트에 실패했습니다(npm 종료 코드 ${code}).\n${NPMRC_HINT}`)
-  d.out(latest ? `v${latest} 로 업데이트했습니다` : '업데이트했습니다')
+  // 릴리즈는 났는데 패키지 배포가 늦거나 실패했으면 npm 은 이전 버전을 그대로 둔다 — 설치된 버전으로 확인한다
+  const installed = await installedVersion(d.capture, d.platform)
+  if (latest && installed && isNewer(latest, installed)) {
+    throw new CliError(`npm 레지스트리에서 아직 v${latest} 를 받지 못했습니다(설치된 버전 v${installed}). 잠시 뒤 다시 시도하세요.`)
+  }
+  d.out(installed ? `v${installed} 로 업데이트했습니다` : '업데이트했습니다 — minmo --version 으로 확인하세요')
 }

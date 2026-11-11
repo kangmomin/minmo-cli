@@ -7,16 +7,25 @@ import type { TauriApi } from '../../lib/tauri'
 import { useUpdateStore } from '../../store/update'
 import { checkForUpdate, installUpdate, progressPercent } from './update'
 
-/** 앱이 뜬 뒤 이만큼 기다렸다가 한 번 확인한다(시작 작업과 겹치지 않게) */
+/** 앱이 뜬 뒤 이만큼 기다렸다가 확인한다(시작 작업과 겹치지 않게) */
 export const UPDATE_CHECK_DELAY_MS = 5_000
+/** 트레이로 오래 떠 있는 앱도 새 버전을 알도록 다시 확인하는 주기 */
+export const UPDATE_RECHECK_MS = 12 * 60 * 60 * 1000
 
 /** 새 버전 안내 띠 — [설치하고 다시 시작] / [나중에] */
 export function UpdateNotice({ tauri = getTauri() }: { tauri?: TauriApi }) {
   const { available, dismissed, installing, progress, error, set } = useUpdateStore()
 
   useEffect(() => {
-    const timer = setTimeout(() => void checkForUpdate(tauri), UPDATE_CHECK_DELAY_MS)
-    return () => clearTimeout(timer)
+    const first = setTimeout(() => void checkForUpdate(tauri), UPDATE_CHECK_DELAY_MS)
+    const again = setInterval(() => {
+      // 설치 중에는 상태를 바꾸지 않는다
+      if (!useUpdateStore.getState().installing) void checkForUpdate(tauri)
+    }, UPDATE_RECHECK_MS)
+    return () => {
+      clearTimeout(first)
+      clearInterval(again)
+    }
   }, [tauri])
 
   const visible = available !== null && (dismissed !== available.version || installing || error !== null)
