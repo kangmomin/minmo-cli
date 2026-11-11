@@ -71,7 +71,7 @@ function hostDeps(base: AppDeps, alias: string, probe: SshProbe): AppDeps {
   const key = `${alias}\n${probe.home}\n${probe.platform}\n${probe.tmux}`
   let deps = map.get(key)
   if (!deps) {
-    deps = { ...base, tauri: { ...base.tauri, ...createSshOps(base.tauri, alias, probe) }, home: probe.home, platform: probe.platform }
+    deps = { ...base, tauri: { ...base.tauri, ...createSshOps(base.tauri, alias, probe, base.gitToken) }, home: probe.home, platform: probe.platform }
     map.set(key, deps)
   }
   return deps
@@ -117,14 +117,14 @@ export function useHostConnection() {
   const error = useHostsStore((s) => s.error)
 
   const connect = useCallback(
-    async (alias: string | null) => {
+    async (alias: string | null, trustNew = false) => {
       const st = useHostsStore.getState()
       st.select(alias)
       st.setError(null)
       if (alias === null) return
       st.setConnecting(alias)
       try {
-        const p = await tauri.sshProbe(alias)
+        const p = await tauri.sshProbe(alias, trustNew)
         useHostsStore.getState().setProbe(alias, p)
       } catch (e) {
         // 그 사이 다른 호스트를 골랐으면 이전 시도의 오류는 보여 주지 않는다

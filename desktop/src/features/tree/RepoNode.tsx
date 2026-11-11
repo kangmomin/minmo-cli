@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, SettingsIcon } from 'lucide-react'
-import { useId, useMemo } from 'react'
+import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderInputIcon, SettingsIcon } from 'lucide-react'
+import { useId, useMemo, useState } from 'react'
 
 import { normalizePath, renderPath } from '@minmo/api-client'
 import type { SettingsScope } from '@minmo/api-client'
@@ -13,9 +13,11 @@ import type { GitHubRepo } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
 import { issueBranchContext } from '@minmo/core'
 import { useHost } from '../../app/host'
+import { baseRepoOf, useHostsStore } from '../../store/hosts'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
+import { BaseRepoDialog } from './BaseRepoDialog'
 import { IssueRow } from './IssueRow'
 import { githubErrorMessage, useIssues } from './useTree'
 
@@ -28,7 +30,10 @@ export interface RepoNodeProps {
 
 export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps) {
   const { api, home, platform } = useDeps()
-  const worktreeId = useHost().issueId
+  const host = useHost()
+  const worktreeId = host.issueId
+  const baseRepo = useHostsStore((s) => baseRepoOf(s, host.id, repo.owner, repo.name))
+  const [baseOpen, setBaseOpen] = useState(false)
   const nodeId = `repo:${repo.owner}/${repo.name}`
   const expanded = useUiStore((s) => !!s.expanded[nodeId])
   const setExpanded = useUiStore((s) => s.setExpanded)
@@ -101,12 +106,28 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
                   숨김
                 </Badge>
               )}
+              {baseRepo && (
+                <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]" title={`기준 저장소(${host.label}): ${baseRepo}`} data-testid="base-repo-badge">
+                  기준 저장소
+                </Badge>
+              )}
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent>
             <ContextMenuItem onSelect={openSettings}>프로젝트 설정</ContextMenuItem>
+            <ContextMenuItem onSelect={() => setBaseOpen(true)}>기준 저장소 폴더…</ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label={`${repo.name} 기준 저장소 폴더`}
+          title={`${repo.name} 기준 저장소 폴더(기존 폴더 가져오기)`}
+          onClick={() => setBaseOpen(true)}
+          className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          <FolderInputIcon className="size-3.5" />
+        </Button>
         {/* 우클릭 메뉴는 키보드로 열 수 없다 → 같은 동작의 버튼을 둔다(AX-01, WCAG 2.1.1). 이름에 대상을 넣어 여러 개를 구분한다(AX-21) */}
         <Button
           size="icon-sm"
@@ -119,6 +140,7 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
           <SettingsIcon className="size-3.5" />
         </Button>
       </div>
+      <BaseRepoDialog owner={repo.owner} repo={repo.name} open={baseOpen} onOpenChange={setBaseOpen} />
       <div id={childrenId} hidden={!expanded}>
         {expanded && (
           <div className="ml-4 border-l pl-1">

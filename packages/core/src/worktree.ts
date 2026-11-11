@@ -125,6 +125,8 @@ export interface WorktreeDeps {
   pathStore: WorktreePathStore
   home: string
   platform: Platform
+  /** 로컬 파일 보관 폴더를 직접 정한다(undefined 면 메인 clone 의 형제 `_local`) — 가져온 기존 저장소처럼 형제 폴더를 쓸 수 없을 때 */
+  localDirFor?(main: string): string | undefined
   onLog?(e: SetupLogEvent): void
   newRunId?(): string
 }
@@ -261,6 +263,8 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     }
   }
 
+  const localDir = (main: string) => deps.localDirFor?.(main) ?? localFilesDir(main, platform)
+
   async function plan(t: IssueTarget): Promise<Plan> {
     const issueId = worktreeId(t.owner, t.repo, t.key)
     log(issueId, 'effective', 'start')
@@ -293,7 +297,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       log(issueId, 'effective', 'error', `worktree 경로가 메인 clone 과 겹칩니다: ${path}`)
       throw new WorktreeError('overlaps_main_clone', { path, message: 'worktree 경로가 메인 clone 경로와 겹칩니다' })
     }
-    const local = localFilesDir(main, platform)
+    const local = localDir(main)
     if (isSameOrInside(path, local, platform)) {
       log(issueId, 'effective', 'error', `worktree 경로가 로컬 파일 보관 폴더와 겹칩니다: ${path}`)
       throw new WorktreeError('overlaps_main_clone', { path, message: 'worktree 경로가 로컬 파일 보관 폴더(_local)와 겹칩니다' })
@@ -558,7 +562,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     async localFilesDirFor(t) {
       const entry = deps.pathStore.get(worktreeId(t.owner, t.repo, t.key))
       const main = entry ? await mainCloneFor(t, entry.path) : (await plan(t)).main
-      return localFilesDir(main, platform)
+      return localDir(main)
     },
 
     async deleteWorktree(t, opts) {

@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 딥링크·브라우저 열기는 window.__MINMO_MOCK__ 로 노출해 E2E 가 조작한다.
-import type { CloseAction, CmdResult, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, TauriApi, UpdateInfo, UpdateProgress } from './tauri'
+import type { CloseAction, CmdResult, DirEntry, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, TauriApi, UpdateInfo, UpdateProgress } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -71,11 +71,39 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   }
 
   const paths = new Set<string>()
+  // 파일 탭: "root\nrel" → 내용. worktree 를 만들면 README.md 가 생긴 것으로 본다
+  const textFiles = new Map<string, string>()
+  const dirs = new Set<string>()
+  const fileKey = (root: string, rel: string) => `${root}\n${rel}`
+  const seedFiles = (root: string) => {
+    if ([...textFiles.keys()].some((k) => k.startsWith(`${root}\n`))) return
+    textFiles.set(fileKey(root, 'README.md'), '# mock\n')
+    textFiles.set(fileKey(root, 'src/index.ts'), "export const hello = 'world'\n")
+  }
+  const listEntries = (root: string, rel: string): DirEntry[] => {
+    seedFiles(root)
+    const prefix = rel === '' ? '' : `${rel}/`
+    const seen = new Map<string, DirEntry['kind']>()
+    const add = (path: string, leaf: DirEntry['kind']) => {
+      if (!path.startsWith(prefix)) return
+      const rest = path.slice(prefix.length)
+      if (rest === '') return
+      const [head, ...more] = rest.split('/')
+      seen.set(head, more.length > 0 ? 'dir' : (seen.get(head) ?? leaf))
+    }
+    for (const k of textFiles.keys()) if (k.startsWith(`${root}\n`)) add(k.slice(root.length + 1), 'file')
+    for (const k of dirs) if (k.startsWith(`${root}\n`)) add(k.slice(root.length + 1), 'dir')
+    return [...seen].map(([name, kind]) => ({ name, kind })).sort((a, b) => Number(a.kind !== 'dir') - Number(b.kind !== 'dir') || a.name.localeCompare(b.name))
+  }
+  const versionOf = (content: string) => `v${content.length}:${[...content].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)}`
+  let appHosts: SshHostInfo[] = []
+  const allHosts = (): SshHostInfo[] => [{ alias: 'mock-server', hostName: '10.0.0.5', user: 'dev', source: 'config', port: null, identityFile: null }, ...appHosts]
   const localFiles = new Map<string, string[]>()
   const repos = new Set<string>()
   /** worktree path → branch */
   const worktrees = new Map<string, string>()
   const branches = new Set<string>()
+  const trustedHosts = new Set<string>()
   const deepLinkListeners = new Set<(urls: string[]) => void>()
   const ptyListeners = new Set<(e: PtyDataEvent) => void>()
   const scriptListeners = new Set<(e: ScriptLogEvent) => void>()
@@ -223,10 +251,23 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       ptyCwd.delete(id)
     },
     // 원격 호스트: 호스트 하나(mock-server)가 이 mock 의 git·파일 상태를 함께 쓴다
-    sshHosts: async () => [{ alias: 'mock-server', hostName: '10.0.0.5', user: 'dev' }],
-    sshProbe: async (host) => {
-      if (host !== 'mock-server') throw { kind: 'unreachable', message: `ssh: connect to host ${host}: Connection timed out` }
+    sshHosts: async () => allHosts(),
+    // 앱에 등록한 호스트는 처음에 호스트 키가 없는 것으로 흉내 낸다(trustNew 로 등록)
+    sshProbe: async (host, trustNew) => {
+      const known = allHosts().find((h) => h.alias === host)
+      if (!known) throw { kind: 'unreachable', message: `ssh: connect to host ${host}: Connection timed out` }
+      if (known.source === 'app' && !trustNew && !trustedHosts.has(host)) throw { kind: 'host_key', message: 'Host key verification failed.' }
+      trustedHosts.add(host)
       return { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: true }
+    },
+    sshHostSave: async (h) => {
+      if (!/^[A-Za-z0-9._-]+$/.test(h.alias)) throw '이름은 영문·숫자와 . _ - 만 쓸 수 있습니다'
+      appHosts = [...appHosts.filter((x) => x.alias !== h.alias), { ...h, source: 'app' }]
+      return allHosts()
+    },
+    sshHostRemove: async (alias) => {
+      appHosts = appHosts.filter((x) => x.alias !== alias)
+      return allHosts()
     },
     sshExec: async (_host, argv, o) => {
       const [cmd, ...rest] = argv
@@ -320,6 +361,39 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       localFiles.set(root, (localFiles.get(root) ?? []).filter((f) => f !== rel))
     },
     openDir: async () => {},
+    listDir: async (root, rel) => listEntries(root, rel),
+    readTextFile: async (root, rel) => {
+      seedFiles(root)
+      const content = textFiles.get(fileKey(root, rel))
+      if (content === undefined) throw '파일이 아닙니다'
+      return { content, version: versionOf(content) }
+    },
+    writeTextFile: async (root, rel, content, o) => {
+      const cur = textFiles.get(fileKey(root, rel))
+      if (o?.create && cur !== undefined) throw 'file_exists: 같은 이름이 이미 있습니다'
+      if (o?.expected && cur !== undefined && versionOf(cur) !== o.expected) throw 'file_changed: 연 뒤에 파일이 바뀌었습니다'
+      textFiles.set(fileKey(root, rel), content)
+      return versionOf(content)
+    },
+    createDir: async (root, rel) => {
+      dirs.add(fileKey(root, rel))
+    },
+    renamePath: async (root, from, to) => {
+      for (const [k, v] of [...textFiles]) {
+        const rel = k.slice(root.length + 1)
+        if (k.startsWith(`${root}\n`) && (rel === from || rel.startsWith(`${from}/`))) {
+          textFiles.delete(k)
+          textFiles.set(fileKey(root, to + rel.slice(from.length)), v)
+        }
+      }
+    },
+    removePath: async (root, rel) => {
+      for (const k of [...textFiles.keys()]) {
+        const r = k.slice(root.length + 1)
+        if (k.startsWith(`${root}\n`) && (r === rel || r.startsWith(`${rel}/`))) textFiles.delete(k)
+      }
+      dirs.delete(fileKey(root, rel))
+    },
 
     openUrl: async (url) => {
       handle.openedUrls.push(url)

@@ -195,6 +195,7 @@ type SetupOpts = {
   scriptCancel?: (runId: string) => Promise<void>
   entries?: [string, WorktreeEntry][]
   copyTree?: (src: string, dst: string) => Promise<number>
+  localDirFor?: (main: string) => string | undefined
 }
 
 function setup(o: SetupOpts = {}) {
@@ -245,6 +246,7 @@ function setup(o: SetupOpts = {}) {
     platform: o.platform ?? 'linux',
     onLog: (e) => logs.push(e),
     newRunId: () => `run-${++n}`,
+    ...(o.localDirFor ? { localDirFor: o.localDirFor } : {}),
   })
   const cmds = () => tauri.gitRun.mock.calls.map(([args, opts]) => normalize(args, opts)[0])
   const find = (pred: (a: string[]) => boolean) => cmds().filter(pred)
@@ -638,6 +640,24 @@ describe('openIssue — 레포별 로컬 파일 보관 폴더(_local)', () => {
   it('보관 폴더는 메인 clone 의 형제 _local (Windows 구분자 포함)', () => {
     expect(localFilesDir(MAIN, 'linux')).toBe(LOCAL)
     expect(localFilesDir('C:/Users/u/ws/o/r/_main/', 'win32')).toBe(['C:', 'Users', 'u', 'ws', 'o', 'r', '_local'].join(String.fromCharCode(92)))
+  })
+
+  it('localDirFor 가 정한 폴더를 보관 폴더로 쓴다(가져온 기존 저장소) — undefined 면 형제 _local', async () => {
+    const copied: string[] = []
+    const t = setup({
+      localDirFor: (main) => `${main}/.git/minmo-local`,
+      copyTree: async (src) => {
+        copied.push(src)
+        return 0
+      },
+    })
+    await t.svc.openIssue(ISSUE42)
+    expect(copied).toEqual([`${MAIN}/.git/minmo-local`])
+    expect(await t.svc.localFilesDirFor(ISSUE42)).toMatch(/\.git\/minmo-local$/)
+
+    const fallback = setup({ localDirFor: () => undefined, copyTree: async (src) => (copied.push(src), 0) })
+    await fallback.svc.openIssue(ISSUE42)
+    expect(copied[1]).toBe(LOCAL)
   })
 
   it('새 worktree 에 _local 을 복사한 뒤 생성 후 스크립트를 실행한다', async () => {

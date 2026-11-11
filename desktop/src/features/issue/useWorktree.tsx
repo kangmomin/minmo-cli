@@ -3,7 +3,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
 
-import { ApiError } from '@minmo/api-client'
+import { ApiError, normalizePath } from '@minmo/api-client'
+import type { Platform } from '@minmo/api-client'
 
 import { useHost, useHostDeps } from '../../app/host'
 import type { Host } from '../../app/host'
@@ -11,8 +12,18 @@ import { fetchEffective } from '../../lib/effective'
 import { GitHubError } from '@minmo/core'
 import { WorktreeError, createWorktreeService } from '@minmo/core'
 import type { DeleteResult, IssueTarget, WorktreeService } from '@minmo/core'
+import { baseRepoOf, useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
+import { fileDrafts } from '../files/fileDrafts'
 import { uiWorktreePathStore, useUiStore } from '../../store/ui'
+
+const trimSep = (p: string) => p.replace(/[\\/]+$/, '')
+
+/** main 이 이 호스트에 등록된 기준 저장소 폴더인가 — git 이 돌려준 경로(구분자·대소문자가 다를 수 있다)와도 맞게 비교한다 */
+function isBaseRepo(hostId: string, main: string, platform: Platform): boolean {
+  const want = normalizePath(main, platform)
+  return Object.values(useHostsStore.getState().baseRepos[hostId] ?? {}).some((p) => normalizePath(p, platform) === want)
+}
 
 type ServiceFor = (host: Host) => WorktreeService
 
@@ -31,7 +42,17 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
       const paths = uiWorktreePathStore()
       const service = createWorktreeService({
         tauri: deps.tauri,
-        getEffective: (o, r) => fetchEffective(queryClient, deps.api, o, r),
+        // 기준 저장소(가져온 기존 폴더)가 있으면 설정의 메인 clone 대신 그 저장소에서 worktree 를 만든다
+        getEffective: async (o, r) => {
+          const eff = await fetchEffective(queryClient, deps.api, o, r)
+          const base = baseRepoOf(useHostsStore.getState(), host.id, o, r)
+          if (!base) return eff
+          // 폴더가 없어졌으면 그 자리에 새로 clone 하지 않고 알린다(사용자 폴더 자리에 빈 저장소를 만들지 않게)
+          if (!(await deps.tauri.pathExists(base))) throw new Error(`기준 저장소 폴더가 없습니다: ${base} — 저장소의 [기준 저장소 폴더] 에서 다시 지정하거나 해제하세요`)
+          return { ...eff, values: { ...eff.values, mainClonePath: base } }
+        },
+        // 기존 저장소의 옆 폴더는 다른 저장소와 겹칠 수 있어, 보관 폴더를 그 저장소의 .git 안에 둔다
+        localDirFor: (main) => (isBaseRepo(host.id, main, deps.platform) ? `${trimSep(main)}${deps.platform === 'win32' ? '\\' : '/'}.git${deps.platform === 'win32' ? '\\' : '/'}minmo-local` : undefined),
         defaultBranch: (o, r) => deps.github.defaultBranch(o, r),
         // core 는 호스트를 모른다 — 기록·로그의 id 만 이 호스트의 것으로 바꿔 준다
         pathStore: { get: (id) => paths.get(host.scope(id)), set: (id, e) => paths.set(host.scope(id), e), delete: (id) => paths.delete(host.scope(id)) },
@@ -160,6 +181,8 @@ export function useIssueActions() {
             delete script[id]
             return { open, script }
           })
+          // 지운 worktree 의 편집 내용이 다시 만든 worktree 에 나타나지 않게
+          fileDrafts.clearScope(id)
         }
         return res
       },

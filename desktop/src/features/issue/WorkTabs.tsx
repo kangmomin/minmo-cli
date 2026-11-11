@@ -9,6 +9,7 @@ import type { IssueOpenState } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import type { WorkTab } from '../../store/ui'
 import { ChangesTab } from '../changes/ChangesTab'
+import { FilesTab } from '../files/FilesTab'
 import { NotesTab } from '../notes/NotesTab'
 import { TerminalTab } from '../terminal/TerminalTab'
 
@@ -48,6 +49,7 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
           터미널
         </TabsTrigger>
         <TabsTrigger value="changes">변경</TabsTrigger>
+        <TabsTrigger value="files">파일</TabsTrigger>
         <TabsTrigger value="notes">메모</TabsTrigger>
       </TabsList>
       <div className="relative min-h-0 flex-1">
@@ -84,6 +86,13 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
             />
           ) : (
             <p className="p-4 text-sm text-muted-foreground">worktree 가 준비되면 변경 내역을 볼 수 있습니다.</p>
+          )}
+        </TabsContent>
+        <TabsContent value="files" tabIndex={state?.phase === 'ready' ? -1 : 0} className="absolute inset-0">
+          {state?.phase === 'ready' ? (
+            <FilesTab key={`${id}|${state.path}`} root={state.path} scope={id} />
+          ) : (
+            <p className="p-4 text-sm text-muted-foreground">worktree 가 준비되면 파일을 볼 수 있습니다.</p>
           )}
         </TabsContent>
         {/* 메모는 로딩·비활성 시 NotesTab 이 자체 Tab 정지점을 두므로 패널은 -1 (CR-20) */}
