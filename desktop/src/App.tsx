@@ -14,6 +14,7 @@ import { CloseDialog } from './features/app/CloseDialog'
 import { ServerSettingsDialog } from './features/server/ServerSettingsDialog'
 import { ServerStartScreen } from './features/server/ServerStartScreen'
 import { isServerReady, useServerStatusSubscription } from './features/server/useServerStatus'
+import { UpdateNotice } from './features/update/UpdateNotice'
 import { serverBaseUrl } from './lib/api'
 import { getTauri } from './lib/tauri'
 import { useApplyTheme } from './lib/theme'
@@ -105,11 +106,12 @@ export function App() {
     )
 
   return (
-    <>
-      {body}
-      {/* 서버 설정·닫기 대화상자는 서버에 붙기 전(시작 실패 화면)에도 쓸 수 있어야 한다 */}
+    <div className="flex h-full flex-col">
+      {/* 업데이트 안내·대화상자는 서버에 붙기 전(시작 실패 화면)에도 쓸 수 있어야 한다 */}
+      <UpdateNotice tauri={tauri} />
+      <div className="flex min-h-0 flex-1 flex-col">{body}</div>
       <ServerSettingsDialog tauri={tauri} />
       <CloseDialog tauri={tauri} />
-    </>
+    </div>
   )
 }

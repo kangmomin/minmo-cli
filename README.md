@@ -14,10 +14,17 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 | 파일 | 내용 |
 |------|------|
 | `minmo_<버전>_x64-setup.exe` · `minmo_<버전>_x64_en-US.msi` | 데스크탑 앱(Windows 설치 파일, 둘 중 하나). **서버가 함께 설치되어 앱과 같이 실행된다.** 코드 서명이 없어 처음 실행 때 SmartScreen 경고가 뜰 수 있다(추가 정보 → 실행) |
-| `minmo-cli-<버전>.tgz` | 원격 CLI. `npm i -g ./minmo-cli-<버전>.tgz` — 아래 [원격 CLI](#원격-cli-ssh) |
+| `*.sig` · `latest.json` | 자동 업데이트용 서명·버전 정보(앱이 읽는다) |
+| `kangmomin-minmo-cli-<버전>.tgz` | 원격 CLI 패키지 파일 — 보통은 아래처럼 npm(GitHub Packages)으로 설치한다 |
 | `SHA256SUMS.txt` | 체크섬 |
 
 (v0.2.0 까지는 서버 실행 파일을 따로 올렸다. v0.3.0 부터 서버는 데스크탑 설치 파일에 들어 있다.)
+
+### 업데이트
+
+- **데스크탑**: v0.4.0 부터 자동 업데이트된다. 앱을 켜면 새 버전을 확인해 상단에 안내하고, [설치하고 다시 시작]을 누르면 서버를 정상 종료한 뒤 서명을 확인한 설치 파일로 업데이트하고 다시 실행한다. 앱이 켜져 있는 동안 12시간마다 다시 확인하고, 서버 설정의 **앱 → 업데이트 확인** 으로 직접 확인할 수도 있다. 서명에 담긴 버전과 안내된 버전이 다르면 설치하지 않는다(다운그레이드 방지). v0.3.0 이하는 v0.4.0 을 한 번 직접 설치해야 한다.
+  - msi 로 설치했다면 업데이트 때 관리자 승인 창이 뜬다. 거절하면 업데이트되지 않고 앱도 다시 열리지 않으니 앱을 다시 켜면 된다.
+- **원격 CLI**: 명령이 끝날 때 새 버전이 있으면 알린다(하루 한 번 확인, `MINMO_NO_UPDATE_CHECK=1` 로 끔). `minmo update` 로 업데이트하고, `minmo update --check` 로 버전만 본다.
 
 ### 처음 실행
 
@@ -178,7 +185,21 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
   - `MINMO_DESKTOP_PROFILE=<폴더>`: 설정·DB·로그를 그 폴더에 두고 키체인 서비스를 `com.minmo.desktop.dev` 로 분리한다. 이때는 `minmo://` 스킴을 시스템에 등록하지 않는다(설치된 앱의 딥링크를 가로채지 않게).
   - `MINMO_EXTERNAL_SERVER=1`: 사이드카를 띄우지 않는다(따로 띄운 서버 + `VITE_MINMO_SERVER`).
   - `MINMO_GITHUB_OAUTH_BASE` / `MINMO_GITHUB_API_BASE`: 사이드카에 넘긴다(githubmock 로그인 E2E). 그 밖의 `MINMO_*` env 는 사이드카에 넘기지 않는다.
-- 설치된 앱이 켜져 있는 PC 에서 debug 앱을 함께 띄우려면 identifier 를 바꿔 빌드한다(같으면 single-instance 로 설치된 앱에 넘어간다): `TAURI_CONFIG='{"identifier":"com.minmo.desktop.e2e"}' cargo build`.
+- 설치된 앱이 켜져 있는 PC 에서 debug 앱을 함께 띄우려면 identifier 를 바꿔 빌드한다(같으면 single-instance 로 설치된 앱에 넘어간다): `TAURI_CONFIG='{"identifier":"com.minmo.desktop.e2e"}' cargo build`. 키체인 서비스 이름도 identifier 를 따라 분리된다.
+- 자동 업데이트: debug 빌드는 `MINMO_UPDATER_ENDPOINT`(latest.json URL, http 가능)·`MINMO_UPDATER_PUBKEY`(시험 키 공개키)가 있을 때만 확인한다.
+
+### 릴리즈 만들기
+
+릴리즈는 GitHub Actions(`.github/workflows/release.yml`)가 만든다.
+
+1. 버전을 올리는 PR 을 머지한다 — 루트·`desktop`·`packages/cli` 의 `package.json`, `tauri.conf.json`, `Cargo.toml`(+ lock). 릴리즈 노트는 `docs/releases/v<버전>.md`(없으면 자동 생성).
+2. `main` 에 `v<버전>` 태그를 push 한다. workflow 가 버전 일치·CLI 테스트를 확인하고, Windows 에서 설치 파일(사이드카 서버 포함)을 업데이트 서명(`.sig`)과 함께 빌드한 뒤, CLI 를 GitHub Packages 에 배포하고, 마지막에 Release(설치 파일·`.sig`·`latest.json`·tgz·체크섬)를 공개한다.
+3. 수동 실행(Actions → release → Run workflow)이나 릴리즈 파일을 바꾼 PR 은 dry-run 이다 — 일회용 키로 서명해 빌드·매니페스트까지만 하고 결과는 artifact 로 남긴다.
+
+업데이트 서명 키
+- 공개키는 `tauri.conf.json` 의 `plugins.updater.pubkey`, 개인키는 environment **release** 의 secret `TAURI_SIGNING_PRIVATE_KEY` 에 있다(이 environment 는 `v*` 태그에서만 쓸 수 있다. 원본: 관리자 PC 의 `~/.tauri/minmo-updater.key`, 비밀번호 없음).
+- **개인키를 잃으면 이미 설치된 앱에 업데이트를 보낼 수 없다**(새 키로 바꾸면 사용자가 새 버전을 한 번 직접 설치해야 한다). 개인키는 따로 안전하게 백업한다.
+- 로컬 `tauri build` 는 서명 없이 된다(`createUpdaterArtifacts` 는 workflow 에서만 켠다). 로컬에서 서명까지 하려면 `TAURI_SIGNING_PRIVATE_KEY` 를 주고 `--config '{"bundle":{"createUpdaterArtifacts":true}}'`.
 
 트리 상단의 **표시할 저장소** 버튼으로 보일 저장소를 고른다(서버에 저장되어 원격 CLI 와 공유). 로컬 worktree 가 있는 저장소는 빼도 "숨김" 표시와 함께 보인다.
 
@@ -196,15 +217,23 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 
 ### 설치
 
+CLI 는 GitHub Packages 에 `@kangmomin/minmo-cli` 로 배포된다. GitHub Packages 의 npm 레지스트리는 공개 패키지도 **토큰이 있어야 설치**되므로, 원격(예: Ubuntu)에서 한 번 `~/.npmrc` 를 설정한다.
+
 ```bash
-# 이 PC(저장소)에서 패키지 만들기 → dist/minmo-cli-<버전>.tgz
-npm ci && npm run pack:cli
-# 원격에 복사해 설치
-scp dist/minmo-cli-*.tgz my-server:
-ssh my-server 'npm i -g ./minmo-cli-*.tgz && mkdir -p ~/.minmo'
+# 1) read:packages 권한 토큰 — gh 를 쓰면 권한을 더한 뒤 그 토큰을 쓴다(없으면 GitHub 의 classic PAT 에 read:packages)
+gh auth refresh -h github.com -s read:packages
+cat >> ~/.npmrc <<EOF
+@kangmomin:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=$(gh auth token)
+EOF
+
+# 2) 설치(이후 업데이트는 minmo update)
+npm i -g @kangmomin/minmo-cli
+mkdir -p ~/.minmo
 ```
 
-릴리즈의 `minmo-cli-<버전>.tgz` 를 받아 같은 방법으로 설치해도 된다. Windows 는 PowerShell 에서 `npm i -g .\minmo-cli-<버전>.tgz`.
+- Node.js 22.12 이상이 필요하다. Ubuntu 기본 apt 의 `nodejs` 는 이보다 낮을 수 있으니 nvm 이나 NodeSource 로 22 를 설치한다.
+- 저장소에서 직접 만들려면 `npm ci && npm run pack:cli` → `dist/kangmomin-minmo-cli-<버전>.tgz` 를 원격에 복사해 `npm i -g ./kangmomin-minmo-cli-<버전>.tgz`.
 
 ### SSH 설정(이 PC 의 `~/.ssh/config`)
 

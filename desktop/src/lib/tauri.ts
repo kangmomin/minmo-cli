@@ -30,6 +30,10 @@ export type ServerSettings = {
 /** 바꿀 값만. githubClientSecret 이 빈 문자열이면 지운다 */
 export type ServerSettingsInput = Partial<Pick<ServerSettings, 'port' | 'githubClientId' | 'closeAction'>> & { githubClientSecret?: string }
 
+/** 새 버전 정보(src-tauri/src/update.rs UpdateInfo) */
+export type UpdateInfo = { version: string; currentVersion: string; notes: string | null; date: string | null }
+export type UpdateProgress = { downloaded: number; total: number | null }
+
 export const KEYCHAIN_KEYS = {
   session: 'minmo.session',
   githubToken: 'minmo.github-token',
@@ -92,6 +96,14 @@ export interface TauriApi extends WorktreeHost, GhHost {
   onCloseRequested(cb: () => void): Promise<Unlisten>
   /** 닫기 선택 — remember 면 다음부터 묻지 않는다 */
   appClose(action: Exclude<CloseAction, 'ask'>, remember: boolean): Promise<void>
+
+  /** 앱 버전(tauri.conf.json) */
+  appVersion(): Promise<string>
+  /** 새 버전이 있으면 그 정보, 없으면 null */
+  appUpdateCheck(): Promise<UpdateInfo | null>
+  /** 확인한 업데이트를 받아 설치하고 다시 시작한다(서버는 먼저 정상 종료). 돌아오면 실패 */
+  appUpdateInstall(): Promise<void>
+  onUpdateProgress(cb: (p: UpdateProgress) => void): Promise<Unlisten>
 }
 
 // Rust command 이름(src-tauri/src/commands/*.rs)과 1:1. 인자 키는 camelCase → Rust snake_case 로 자동 변환된다.
@@ -124,9 +136,11 @@ export const TAURI_COMMANDS = {
   serverRestart: 'server_restart',
   serverOpenLogDir: 'server_open_log_dir',
   appClose: 'app_close',
+  appUpdateCheck: 'app_update_check',
+  appUpdateInstall: 'app_update_install',
 } as const
 
-export const TAURI_EVENTS = { ptyData: 'pty-data', scriptLog: 'script-log', serverStatus: 'server-status', closeRequested: 'close-requested' } as const
+export const TAURI_EVENTS = { ptyData: 'pty-data', scriptLog: 'script-log', serverStatus: 'server-status', closeRequested: 'close-requested', updateProgress: 'update-progress' } as const
 
 /** @tauri-apps/api invoke 기반 실제 구현 */
 export function createTauriApi(): TauriApi {
@@ -184,6 +198,11 @@ export function createTauriApi(): TauriApi {
     serverOpenLogDir: () => call(C.serverOpenLogDir),
     onCloseRequested: async (cb) => (await event()).listen(TAURI_EVENTS.closeRequested, () => cb()),
     appClose: (action, remember) => call(C.appClose, { action, remember }),
+
+    appVersion: async () => (await import('@tauri-apps/api/app')).getVersion(),
+    appUpdateCheck: () => call(C.appUpdateCheck),
+    appUpdateInstall: () => call(C.appUpdateInstall),
+    onUpdateProgress: async (cb) => (await event()).listen<UpdateProgress>(TAURI_EVENTS.updateProgress, (e) => cb(e.payload)),
   }
 }
 
