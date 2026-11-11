@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip'
 import type { DeleteCheck, IssueTarget } from '@minmo/core'
 import { cn } from '../../lib/utils'
+import { isLocalOwner, useRepoLabel, useReposStore } from '../../store/repos'
 import { describeOpenError, useIssueActions } from '../issue/useWorktree'
 import type { TreeIssue } from './useTree'
 
@@ -39,6 +40,9 @@ function countText(label: string, n: number | null) {
 export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selected }: IssueRowProps) {
   const actions = useIssueActions()
   const isEtc = issue.key === 'etc'
+  const repoLabel = useRepoLabel(owner, repo)
+  // 로컬 저장소의 작업은 앱에서 닫고 다시 연다(GitHub 이슈는 GitHub 에서)
+  const isTask = isLocalOwner(owner) && issue.number !== null
   const target: IssueTarget = { owner, repo, key: issue.key, number: issue.number, title: isEtc ? '' : issue.title }
   const [confirm, setConfirm] = useState<DeleteCheck | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -114,6 +118,11 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onSelect={() => void actions.open(target)}>열기</ContextMenuItem>
+          {isTask && (
+            <ContextMenuItem onSelect={() => useReposStore.getState().setTaskState(repo, issue.number!, issue.state === 'open' ? 'closed' : 'open')}>
+              {issue.state === 'open' ? '작업 닫기' : '작업 다시 열기'}
+            </ContextMenuItem>
+          )}
           {deleteDisabledReason ? (
             <ContextMenuItem disabled variant="destructive" aria-label="worktree 삭제" aria-describedby={deleteReasonId}>
               worktree 삭제
@@ -148,7 +157,7 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
             <DialogTitle>worktree 삭제</DialogTitle>
             {/* 데이터 손실 경고는 설명으로 두어 대화상자가 열릴 때 함께 낭독된다(AX-23) */}
             <DialogDescription>
-              {owner}/{repo} #{issue.number} {issue.title}
+              {repoLabel} #{issue.number} {issue.title}
               {confirm && (
                 <span className="mt-2 block text-foreground">
                   {countText('미커밋 변경', confirm.uncommitted)}, {countText('미push 커밋', confirm.unpushed)}. 삭제하면 이 변경을 잃게 됩니다.

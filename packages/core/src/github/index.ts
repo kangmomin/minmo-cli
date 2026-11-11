@@ -4,7 +4,7 @@ import { GhFailure, createGhTransport } from './ghCli'
 import { createRestTransport } from './rest'
 import type { GitHubTransport } from './transport'
 import { GitHubError } from './types'
-import type { CreatePrInput, GitHubIssue, GitHubOwner, GitHubPr, GitHubRepo } from './types'
+import type { CreatePrInput, CreateRepoInput, GitHubIssue, GitHubOwner, GitHubPr, GitHubRepo } from './types'
 
 export * from './types'
 
@@ -37,10 +37,14 @@ export interface GitHubClient {
   getIssue(owner: string, repo: string, number: number): Promise<GitHubIssue>
   openPrForBranch(owner: string, repo: string, branch: string): Promise<GitHubPr | null>
   createPr(input: CreatePrInput): Promise<GitHubPr>
+  /** 빈 저장소를 만든다(README 등 첫 커밋 없이 — 로컬 저장소를 그대로 push 할 수 있게) */
+  createRepo(input: CreateRepoInput): Promise<GitHubRepo>
+  createIssue(owner: string, repo: string, title: string): Promise<GitHubIssue>
+  closeIssue(owner: string, repo: string, number: number): Promise<void>
 }
 
 type RawOwner = { login: string; avatar_url?: string | null }
-type RawRepo = { name: string; owner: { login: string }; default_branch: string }
+type RawRepo = { name: string; owner: { login: string }; default_branch?: string | null }
 type RawIssue = { number: number; title: string; state: string; html_url: string; pull_request?: unknown }
 type RawPr = { number: number; html_url: string }
 
@@ -53,7 +57,7 @@ const toIssue = (r: RawIssue): GitHubIssue => ({
   htmlUrl: r.html_url,
 })
 
-const toRepo = (r: RawRepo): GitHubRepo => ({ owner: r.owner.login, name: r.name, defaultBranch: r.default_branch })
+const toRepo = (r: RawRepo): GitHubRepo => ({ owner: r.owner.login, name: r.name, defaultBranch: r.default_branch || 'main' })
 
 export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
   const gh = createGhTransport(deps.tauri)
@@ -145,7 +149,7 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
       }),
 
     defaultBranch: (owner, repo) =>
-      withTransport(async (t) => ((await t.get(`repos/${enc(owner)}/${enc(repo)}`)).data as RawRepo).default_branch),
+      withTransport(async (t) => toRepo((await t.get(`repos/${enc(owner)}/${enc(repo)}`)).data as RawRepo).defaultBranch),
 
     getRepo: (owner, repo) => withTransport(async (t) => toRepo((await t.get(`repos/${enc(owner)}/${enc(repo)}`)).data as RawRepo)),
 
@@ -175,6 +179,20 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
         })
         const pr = res.data as RawPr
         return { number: pr.number, url: pr.html_url }
+      }),
+
+    createRepo: (input) =>
+      withTransport(async (t) => {
+        const path = input.org === null ? 'user/repos' : `orgs/${enc(input.org)}/repos`
+        return toRepo((await t.post(path, { name: input.name, private: input.private, auto_init: false })).data as RawRepo)
+      }),
+
+    createIssue: (owner, repo, title) =>
+      withTransport(async (t) => toIssue((await t.post(`repos/${enc(owner)}/${enc(repo)}/issues`, { title })).data as RawIssue)),
+
+    closeIssue: (owner, repo, number) =>
+      withTransport(async (t) => {
+        await t.patch(`repos/${enc(owner)}/${enc(repo)}/issues/${number}`, { state: 'closed' })
       }),
   }
 }

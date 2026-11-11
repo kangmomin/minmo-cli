@@ -120,6 +120,9 @@ export function createFakeGitHub(overrides: Partial<GitHubClient> = {}): Mocked<
     },
     openPrForBranch: async () => null,
     createPr: async () => ({ number: 1, url: 'u' }),
+    createRepo: async (input) => ({ owner: input.org ?? 'me', name: input.name, defaultBranch: 'main' }),
+    createIssue: async (_o, _r, title) => ({ number: 1, title, state: 'open', htmlUrl: '' }),
+    closeIssue: async () => {},
   }
   return mockAll(base, overrides)
 }

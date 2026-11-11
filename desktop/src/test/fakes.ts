@@ -68,6 +68,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     renamePath: async () => {},
     removePath: async () => {},
     openUrl: async () => {},
+    pickFolder: async () => null,
     onDeepLink: async (cb) => {
       deepLinkListeners.add(cb)
       return () => {
@@ -169,6 +170,9 @@ export function createFakeGitHub(overrides: Partial<GitHubClient> = {}): Mocked<
     getIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'open', htmlUrl: '' }),
     openPrForBranch: async () => null,
     createPr: async () => ({ number: 1, url: 'https://github.com/o/r/pull/1' }),
+    createRepo: async (input) => ({ owner: input.org ?? 'me', name: input.name, defaultBranch: 'main' }),
+    createIssue: async (_o, _r, title) => ({ number: 1, title, state: 'open', htmlUrl: '' }),
+    closeIssue: async () => {},
   }
   return mockAll(base, overrides)
 }

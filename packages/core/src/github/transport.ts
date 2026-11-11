@@ -11,4 +11,5 @@ export type TransportResponse = {
 export interface GitHubTransport {
   get(path: string): Promise<TransportResponse>
   post(path: string, body: unknown): Promise<TransportResponse>
+  patch(path: string, body: unknown): Promise<TransportResponse>
 }

@@ -36,5 +36,6 @@ export function createGhTransport(tauri: Pick<GhHost, 'ghRun'>): GitHubTransport
   return {
     get: (path) => run(['api', path]),
     post: (path, body) => run(['api', '-X', 'POST', path, '--input', '-'], JSON.stringify(body)),
+    patch: (path, body) => run(['api', '-X', 'PATCH', path, '--input', '-'], JSON.stringify(body)),
   }
 }
