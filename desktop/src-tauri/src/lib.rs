@@ -6,7 +6,7 @@ mod server;
 mod shell;
 mod update;
 
-use commands::{fs, git, keychain, pty, script};
+use commands::{fs, git, keychain, pty, script, ssh};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -29,6 +29,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(pty::PtyState::default())
         .manage(script::ScriptState::default())
+        .manage(ssh::SshState::default())
         .manage(update::UpdateState::default())
         .setup(|app| {
             // 개발 실행(설치기 없음)에서는 minmo:// 스킴을 런타임에 등록한다. 격리 프로필(E2E)은 설치된 앱의
@@ -65,6 +66,11 @@ pub fn run() {
             pty::pty_kill_by_cwd,
             script::script_run,
             script::script_cancel,
+            ssh::ssh_hosts,
+            ssh::ssh_probe,
+            ssh::ssh_exec,
+            ssh::ssh_script_run,
+            ssh::ssh_script_cancel,
             keychain::keychain_get,
             keychain::keychain_set,
             keychain::keychain_delete,

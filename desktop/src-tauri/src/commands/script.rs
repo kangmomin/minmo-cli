@@ -28,6 +28,22 @@ pub struct ScriptRunResult {
     cancelled: bool,
 }
 
+impl ScriptRunResult {
+    pub(crate) fn cancelled() -> Self {
+        Self {
+            exit_code: None,
+            cancelled: true,
+        }
+    }
+
+    pub(crate) fn exited(code: i32) -> Self {
+        Self {
+            exit_code: Some(code),
+            cancelled: false,
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ScriptLog {
@@ -36,7 +52,7 @@ struct ScriptLog {
     line: String,
 }
 
-fn safe_name(run_id: &str) -> String {
+pub(crate) fn safe_name(run_id: &str) -> String {
     run_id
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
@@ -102,7 +118,7 @@ fn build_command(path: &PathBuf, cwd: &str, env: &HashMap<String, String>) -> Co
     cmd
 }
 
-fn pump<R: std::io::Read + Send + 'static>(
+pub(crate) fn pump<R: std::io::Read + Send + 'static>(
     app: AppHandle,
     run_id: String,
     stream: &'static str,
@@ -133,7 +149,7 @@ fn pump<R: std::io::Read + Send + 'static>(
     })
 }
 
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     #[cfg(windows)]
     super::taskkill_tree(pid);
     #[cfg(not(windows))]
