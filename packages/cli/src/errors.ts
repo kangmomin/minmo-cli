@@ -2,7 +2,7 @@
 import { ApiError } from '@minmo/api-client'
 import { isOfflineError, isUnauthorized } from '@minmo/core'
 
-import { describeServer } from './server'
+import { WINDOWS_SERVER_HINT, describeServer } from './server'
 import type { ServerTarget } from './server'
 
 /** 스택 없이 메시지만 출력하고 종료 코드를 정한다 */
@@ -19,6 +19,7 @@ export class CliError extends Error {
 /** 서버 오류 → 사용자 안내 */
 export function serverErrorMessage(e: unknown, server: ServerTarget): string {
   if (isUnauthorized(e)) return '세션이 만료되었거나 끊겼습니다 — 데스크탑의 "원격 CLI 접속"에서 새 코드를 발급해 `minmo login <코드>` 하세요'
+  if (isOfflineError(e) && server.kind === 'unset') return `${WINDOWS_SERVER_HINT}. 서버 없이 쓰려면 \`minmo mode local\``
   if (isOfflineError(e))
     return `minmo 서버에 연결할 수 없습니다(${describeServer(server)}) — SSH 역터널(RemoteForward)로 접속했는지, PC 의 minmo 서버가 켜져 있는지 확인하세요(\`minmo doctor\`). 터널 없이 쓰려면 \`minmo mode local\``
   if (e instanceof ApiError) return `서버 오류(${e.code})`

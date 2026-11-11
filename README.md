@@ -7,6 +7,17 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 현재 범위는 **Phase 1**(로컬 Go 서버 + Tauri 데스크탑)이다. 상세 요구사항은
 [`docs/specs/20261109-minmo-issue-worktree-workspace-spec.md`](docs/specs/20261109-minmo-issue-worktree-workspace-spec.md) 참고.
 
+## 릴리즈 받기
+
+[GitHub Releases](https://github.com/kangmomin/minmo-cli/releases) 에 버전마다 다음 파일을 올린다.
+
+| 파일 | 내용 |
+|------|------|
+| `minmo_<버전>_x64-setup.exe` · `minmo_<버전>_x64_en-US.msi` | 데스크탑 앱(Windows 설치 파일, 둘 중 하나). 코드 서명이 없어 처음 실행 때 SmartScreen 경고가 뜰 수 있다(추가 정보 → 실행) |
+| `minmo-server-<os>-<arch>[.exe]` | 서버 실행 파일(windows-amd64·linux-amd64·darwin-arm64). 실행 env 는 아래 [서버 env](#서버-env) |
+| `minmo-cli-<버전>.tgz` | 원격 CLI. `npm i -g ./minmo-cli-<버전>.tgz` — 아래 [원격 CLI](#원격-cli-ssh) |
+| `SHA256SUMS.txt` | 체크섬 |
+
 ## 모노레포 구조
 
 | 경로 | 내용 |
@@ -147,7 +158,8 @@ Tauri 네이티브 빌드는 Rust(cargo)가 필요하다. 서버 주소는 `VITE
 
 ### 요구 사항(원격)
 
-- Linux 또는 macOS, Node.js 22.12 이상, git 2.31 이상, tmux(터미널)
+- Linux·macOS·Windows, Node.js 22.12 이상, git 2.31 이상
+- 터미널: Linux·macOS 는 tmux, Windows 는 PowerShell 5.1 이상(기본 포함, pwsh 7 이 있으면 그것) — [Windows 에서 쓰기](#windows-에서-쓰기)
 - GitHub: `gh auth login` + `gh auth setup-git` 권장(private 저장소 clone). gh 가 없으면 `GITHUB_TOKEN` 또는 서버의 GitHub 토큰으로 REST 를 쓴다(로컬 모드는 서버 토큰을 쓰지 않으므로 gh 나 `GITHUB_TOKEN` 이 꼭 있어야 한다)
 
 ### 설치
@@ -159,6 +171,8 @@ npm ci && npm run pack:cli
 scp dist/minmo-cli-*.tgz my-server:
 ssh my-server 'npm i -g ./minmo-cli-*.tgz && mkdir -p ~/.minmo'
 ```
+
+릴리즈의 `minmo-cli-<버전>.tgz` 를 받아 같은 방법으로 설치해도 된다. Windows 는 PowerShell 에서 `npm i -g .\minmo-cli-<버전>.tgz`.
 
 ### SSH 설정(이 PC 의 `~/.ssh/config`)
 
@@ -218,6 +232,21 @@ CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인�
 - **서버 사본:** 서버 모드에서 받은 값(전역 설정·보일 저장소·조직 설정·연 저장소의 설정)을 `state.json` 에 남겨 로컬 모드의 기본값으로 쓴다. `minmo mode local` 을 실행할 때 서버에 닿고 로그인돼 있으면 사본을 새로 받는다 — 관련 조직(보일 저장소·worktree 의 소유자, GitHub 에서 보이는 조직)의 설정과, worktree 가 있거나 보일 저장소로 고른 저장소의 설정까지. 서버 모드에서 `minmo config set` 으로 바꾼 값도 사본에 바로 반영된다. 사본에 없는 저장소의 서버 **프로젝트** 설정은 로컬 모드에서 쓰이지 않는다(조직·전역 사본·기본값).
 - **설정 우선순위(로컬 모드):** 기본값 ← 서버 사본 ← 로컬 전역 ← 로컬 조직 ← 로컬 프로젝트. 로컬 값은 서버 규칙과 같은 검증을 거친다. `minmo config get --effective owner/repo` 가 값마다 출처를 보여 준다.
 - worktree 기록은 두 모드가 함께 쓴다 — 어느 모드에서 만든 worktree 든 다른 모드에서 열고 지울 수 있다.
+
+### Windows 에서 쓰기
+
+| | Linux·macOS | Windows |
+|---|---|---|
+| 터미널(`minmo open`, TUI `t`) | 전용 tmux 세션 — 접속이 끊겨도 유지, detach 로 돌아옴 | worktree 에서 새 PowerShell — `exit` 로 돌아옴, **세션 유지 없음**(SSH 가 끊기면 함께 끝남) |
+| 생성 후 스크립트 | `postCreateScriptPosix`(sh) | `postCreateScript`(PowerShell, 데스크탑과 같은 실행기) |
+| worktree 삭제 때 정리 | tmux 세션 프로세스 트리 + (Linux) cwd 가 그 안인 프로세스 | 실행 경로·명령줄에 worktree 경로가 들어간 프로세스 트리(`taskkill /T /F`, minmo 가 연 터미널 포함). **창이 있는 프로그램(VS Code·IDE·편집기)과 다른 Windows 세션의 프로세스는 끝내지 않고** "직접 닫으세요" 로 알린다. 그 뒤에도 폴더를 쓰는 프로그램이 있으면 git 이 지우기 전에 멈춘다(내용만 지워진 채 남지 않게) |
+| 서버 모드 연결 | 역터널 Unix 소켓 `~/.minmo/server.sock` | **`MINMO_SERVER` 필수**(Node 가 Unix 소켓 파일에 붙지 못한다). 같은 PC: `MINMO_SERVER=http://127.0.0.1:8787` · 원격: `RemoteForward 127.0.0.1:18787 127.0.0.1:8787` + `ExitOnForwardFailure yes` 후 `MINMO_SERVER=http://127.0.0.1:18787` |
+| 설정 폴더 | `~/.config/minmo` | `%APPDATA%\minmo` |
+| 기본 편집기(`minmo note`) | `vi` | 메모장을 열고 저장한 뒤 Enter(`EDITOR` 로 바꿈, 예: `code --wait`) |
+
+- TCP 역터널 포트는 그 PC 의 다른 사용자도 열 수 있다. 다른 사용자가 먼저 포트를 열어 두면 CLI 가 세션 토큰을 그쪽에 보내고, 그쪽이 돌려준 설정(생성 후 스크립트 포함)을 실행할 수 있다 — CLI 의 계정 확인은 서버를 인증하지 못한다. `ExitOnForwardFailure yes` 로 포트를 열지 못하면 접속을 끊게 하고, 여러 사람이 쓰는 PC 라면 로컬 모드나 WSL 의 Linux 버전(Unix 소켓)을 쓴다.
+- 접속이 끊겨도 터미널·에이전트가 살아 있어야 하면 WSL(Ubuntu)에 Linux 버전을 설치해 tmux 로 쓴다.
+- 지우려는 worktree 안(cwd)이나 그 안의 프로세스가 띄운 셸에서 `minmo rm` 하면 시작 전에 막는다(Windows 는 사용 중인 폴더를 지울 수 없다).
 
 ## Windows 안내
 

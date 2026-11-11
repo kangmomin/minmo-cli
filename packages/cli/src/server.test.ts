@@ -5,12 +5,23 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { serverErrorMessage } from './errors'
 import { createServerApi, resolveServer, socketFetch } from './server'
 
 describe('서버 경로 선택', () => {
   it('MINMO_SERVER 를 명시했을 때만 TCP, 아니면 소켓만 — 소켓이 없어도 127.0.0.1:8787 로 넘어가 토큰을 보내지 않는다', () => {
-    expect(resolveServer('/s.sock', { MINMO_SERVER: 'http://x:1' })).toEqual({ kind: 'tcp', url: 'http://x:1' })
-    expect(resolveServer('/s.sock', {})).toEqual({ kind: 'socket', path: '/s.sock' })
+    expect(resolveServer('/s.sock', { MINMO_SERVER: 'http://x:1' }, 'linux')).toEqual({ kind: 'tcp', url: 'http://x:1' })
+    expect(resolveServer('/s.sock', {}, 'linux')).toEqual({ kind: 'socket', path: '/s.sock' })
+  })
+
+  it('Windows 는 MINMO_SERVER 가 없으면 아무 데도 보내지 않고 설정 방법을 안내한다', async () => {
+    expect(resolveServer('/s.sock', { MINMO_SERVER: 'http://x:1' }, 'win32')).toEqual({ kind: 'tcp', url: 'http://x:1' })
+    const target = resolveServer('/s.sock', {}, 'win32')
+    expect(target).toEqual({ kind: 'unset' })
+    const err = await createServerApi(target, () => 'tok')
+      .me()
+      .catch((e: unknown) => e)
+    expect(serverErrorMessage(err, target)).toContain('MINMO_SERVER=http://127.0.0.1:8787')
   })
 })
 

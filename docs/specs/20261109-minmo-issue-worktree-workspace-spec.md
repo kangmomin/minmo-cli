@@ -167,6 +167,7 @@ minmo-cli/
 - 로그인은 데스크탑이 발급한 1회용 코드(E17→E18). CLI 는 시작 시 `/me` 계정이 저장된 로그인과 같은지 확인한다.
 - worktree·GitHub 로직은 `@minmo/core` 를 데스크탑과 공유한다. 원격의 생성 후 스크립트는 `postCreateScriptPosix`(sh).
 - **로컬 모드**(`minmo mode local`, 명시 전환·기본은 서버 모드): 역터널·로그인 없이 쓴다. 설정·보일 저장소는 기본값 ← 서버 사본(서버 모드에서 받은 값) ← 로컬 전역 ← 로컬 조직 ← 로컬 프로젝트로 계산하고, 로컬 값은 서버로 올리지 않는다. 검증 규칙은 서버와 같다(`@minmo/core` settings). 메모는 서버 모드 전용, GitHub REST 는 gh·`GITHUB_TOKEN` 만(서버 토큰 미사용). 서버 계약 변경 없음.
+- **Windows**(v0.2.0): CLI 가 Windows 에서도 동작한다. 터미널은 worktree 에서 새 PowerShell(세션 유지 없음), 생성 후 스크립트는 `postCreateScript`(PowerShell), 삭제 시 정리는 실행 경로·명령줄 기준(`taskkill /T /F`), 서버 모드는 `MINMO_SERVER`(TCP) 필수, 설정 폴더는 `%APPDATA%\minmo`.
 
 ## 비즈니스 규칙
 - 조직 목록 = 개인 계정(최상단) + `/user/orgs`. 프로젝트 = 저장소, 이슈 = GitHub Issue(PR 제외)

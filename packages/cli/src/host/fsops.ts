@@ -1,11 +1,15 @@
 // 데스크탑 Rust fs 커맨드와 같은 규칙: 넓은 범위를 지우지 않고, 덮어쓰지 않고, 심볼릭 링크를 따라가지 않는다.
 import { copyFile, lstat, mkdir, readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { isAbsolute, join, normalize, relative, sep } from 'node:path'
+import { isAbsolute, join, normalize, parse, relative, sep } from 'node:path'
 
+/** 루트(`/`·`C:\`·UNC)를 뺀 구성 요소 수 — Rust fs.rs 가 Component::Normal 만 세는 것과 같다 */
 function depth(p: string): number {
-  return normalize(p).split(sep).filter(Boolean).length
+  const n = normalize(p)
+  return n.slice(parse(n).root.length).split(sep).filter(Boolean).length
 }
+
+const samePath = (a: string, b: string) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b)
 
 /** 절대 경로·`..` 없음·구성 요소 3개 이상 — 실수로 홈이나 루트를 건드리지 않게 */
 export function guardRoot(p: string): string {
@@ -33,7 +37,7 @@ async function isSymlink(p: string): Promise<boolean> {
 /** "이번 실행이 새로 만든 경로" 정리 전용 재귀 삭제 */
 export async function removeDir(p: string, home = homedir()): Promise<void> {
   const root = guardRoot(p)
-  if (normalize(home) === root) throw new Error('홈 디렉터리는 삭제하지 않습니다')
+  if (samePath(normalize(home), root)) throw new Error('홈 디렉터리는 삭제하지 않습니다')
   await rm(root, { recursive: true, force: true })
 }
 

@@ -7,11 +7,13 @@ import { ApiError } from '@minmo/api-client'
 import { isOwnerAllSelected, toggleOwnerAll, toggleRepo, worktreeId } from '@minmo/core'
 import type { GitHubRepo, IssueTarget, RepoSelection, SetupLogEvent } from '@minmo/core'
 
-import { loadSelection } from '../commands/issues'
+import { cleanupLines, loadSelection } from '../commands/issues'
 import { SOURCE_LABEL } from '../backend'
 import { serverErrorMessage } from '../context'
 import type { Ctx } from '../context'
 import { NOTES_SERVER_ONLY } from '../errors'
+import { terminalLabel } from '../host/terminal'
+import { describeServer } from '../server'
 import { reloadState } from '../store'
 import { buildRows, expandSelection } from './model'
 import type { IssueItem, Row, TreeData } from './model'
@@ -291,7 +293,7 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
               try {
                 await ctx.worktree.deleteWorktree(t, { confirmed: true })
                 syncWorktrees()
-                setMessage(`삭제했습니다: #${t.key}`)
+                setMessage([`삭제했습니다: #${t.key}`, ...cleanupLines(ctx)].join(' · '))
               } catch (e) {
                 setMessage(errText(e, ctx))
               }
@@ -343,12 +345,12 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
       ? `검색: ${search}▏  Enter 적용 · Esc 지우기`
       : mode.kind === 'confirm'
         ? mode.text
-        : '↑↓ 이동 · Enter 열기/준비 · t 터미널 · n 메모 · d 삭제 · f 보이기/숨기기 · a 숨긴 것 보기 · s 설정 · / 검색 · r 새로고침 · q 종료'
+        : `↑↓ 이동 · Enter 열기/준비 · t 터미널(${terminalLabel()}) · n 메모 · d 삭제 · f 보이기/숨기기 · a 숨긴 것 보기 · s 설정 · / 검색 · r 새로고침 · q 종료`
 
   return (
     <Box flexDirection="column">
       <Text>
-        <Text bold>minmo</Text> <Text dimColor>· {ctx.mode === 'local' ? '로컬 모드(서버 없이)' : `${login ?? ''} · ${ctx.server.kind === 'socket' ? '역터널 소켓' : ctx.server.url}`}{sel === null ? '' : ' · 보일 저장소 필터'}{showAll ? ' · 숨긴 것 포함' : ''}{search ? ` · 검색 "${search}"` : ''}</Text>
+        <Text bold>minmo</Text> <Text dimColor>· {ctx.mode === 'local' ? '로컬 모드(서버 없이)' : `${login ?? ''} · ${ctx.server.kind === 'socket' ? '역터널 소켓' : describeServer(ctx.server)}`}{sel === null ? '' : ' · 보일 저장소 필터'}{showAll ? ' · 숨긴 것 포함' : ''}{search ? ` · 검색 "${search}"` : ''}</Text>
       </Text>
       <Box>
         <Box flexDirection="column" width="50%" borderStyle="round" paddingX={1}>

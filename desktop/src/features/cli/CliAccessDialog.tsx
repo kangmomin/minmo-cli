@@ -10,7 +10,7 @@ import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { queryKeys } from '../../lib/queryKeys'
 import { useSessionStore } from '../../store/session'
-import { SSH_CONFIG_EXAMPLE, SSH_SERVER_NOTE } from './sshConfig'
+import { SSH_CONFIG_EXAMPLE, SSH_SERVER_NOTE, SSH_WINDOWS_NOTE } from './sshConfig'
 
 export interface CliAccessDialogProps {
   open: boolean
@@ -121,6 +121,7 @@ function CliAccessBody() {
           </span>
         </div>
         <p className="text-xs text-muted-foreground">{SSH_SERVER_NOTE}</p>
+        <p className="text-xs text-muted-foreground">{SSH_WINDOWS_NOTE}</p>
       </section>
 
       <SessionsSection uid={uid} setStatus={setStatus} setError={setError} />

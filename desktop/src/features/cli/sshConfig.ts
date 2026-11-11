@@ -6,5 +6,9 @@ export const SSH_CONFIG_EXAMPLE = `Host my-server
   RemoteForward /home/<사용자>/.minmo/server.sock 127.0.0.1:8787`
 
 /** RemoteForward 소켓은 원격 sshd 설정이 있어야 재접속 때 이전 것을 바꿔 쓴다(클라이언트 쪽 StreamLocalBindUnlink 는 효과 없음) */
+/** Windows 원격 호스트: Node 가 Unix 소켓 파일에 붙지 못해 TCP 로 역터널하고 MINMO_SERVER 로 주소를 정한다 */
+export const SSH_WINDOWS_NOTE =
+  '원격이 Windows 면 소켓 대신 RemoteForward 127.0.0.1:18787 127.0.0.1:8787 과 ExitOnForwardFailure yes 를 쓰고, 원격에서 MINMO_SERVER=http://127.0.0.1:18787 을 설정하세요. 포트는 그 PC 의 다른 사용자도 열 수 있어(먼저 열어 두면 세션과 설정을 가로챌 수 있다) 여러 사람이 쓰는 PC 면 minmo mode local 을 쓰세요.'
+
 export const SSH_SERVER_NOTE =
   '원격 sshd_config 에 StreamLocalBindUnlink yes 가 있어야 재접속 때 남은 소켓을 바꿔 씁니다(관리자 설정). 없으면 재접속 전에 원격에서 rm ~/.minmo/server.sock 하세요 — minmo doctor 가 알려 줍니다.'

@@ -7,17 +7,25 @@ import { request } from 'node:http'
 import { createApiClient } from '@minmo/api-client'
 import type { ApiClient } from '@minmo/api-client'
 
-export type ServerTarget = { kind: 'socket'; path: string } | { kind: 'tcp'; url: string }
+/** unset: Windows 에서 MINMO_SERVER 를 정하지 않음(Unix 소켓 역터널을 쓸 수 없다) */
+export type ServerTarget = { kind: 'socket'; path: string } | { kind: 'tcp'; url: string } | { kind: 'unset' }
 
-/** MINMO_SERVER 가 있으면 그 주소, 아니면 역터널 소켓(없으면 연결 시 network_error — 토큰을 다른 곳에 보내지 않는다) */
-export function resolveServer(socketPath: string, env: NodeJS.ProcessEnv = process.env): ServerTarget {
+/**
+ * MINMO_SERVER 가 있으면 그 주소, 아니면 역터널 소켓(없으면 연결 시 network_error — 토큰을 다른 곳에 보내지 않는다).
+ * Windows 는 Node 가 Unix 소켓 파일에 붙지 못하므로 MINMO_SERVER 를 명시해야 한다(기본 포트로 넘어가지 않는다).
+ */
+export function resolveServer(socketPath: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): ServerTarget {
   if (env.MINMO_SERVER) return { kind: 'tcp', url: env.MINMO_SERVER }
+  if (platform === 'win32') return { kind: 'unset' }
   return { kind: 'socket', path: socketPath }
 }
 
 export function describeServer(t: ServerTarget): string {
-  return t.kind === 'socket' ? `소켓 ${t.path}` : t.url
+  return t.kind === 'socket' ? `소켓 ${t.path}` : t.kind === 'tcp' ? t.url : 'MINMO_SERVER 미설정'
 }
+
+export const WINDOWS_SERVER_HINT =
+  'Windows 에서는 MINMO_SERVER 로 서버 주소를 정하세요 — 같은 PC: MINMO_SERVER=http://127.0.0.1:8787 · 원격: ~/.ssh/config 에 RemoteForward 127.0.0.1:18787 127.0.0.1:8787 + ExitOnForwardFailure yes 후 MINMO_SERVER=http://127.0.0.1:18787'
 
 /** Unix 소켓으로 보내는 fetch — api-client 가 쓰는 범위(method·headers·문자열 body)만 지원한다 */
 export function socketFetch(socketPath: string): typeof fetch {
@@ -60,8 +68,11 @@ export function socketFetch(socketPath: string): typeof fetch {
     })
 }
 
+/** 주소가 없으면 아무 데도 보내지 않고 연결 실패(network_error)로 끝낸다 */
+const noServer: typeof fetch = () => Promise.reject(new Error('MINMO_SERVER 미설정'))
+
 export function createServerApi(target: ServerTarget, getToken: () => string | null): ApiClient {
-  return target.kind === 'socket'
-    ? createApiClient({ baseUrl: 'http://minmo', getToken, fetch: socketFetch(target.path) })
-    : createApiClient({ baseUrl: target.url, getToken })
+  if (target.kind === 'socket') return createApiClient({ baseUrl: 'http://minmo', getToken, fetch: socketFetch(target.path) })
+  if (target.kind === 'tcp') return createApiClient({ baseUrl: target.url, getToken })
+  return createApiClient({ baseUrl: 'http://minmo', getToken, fetch: noServer })
 }
