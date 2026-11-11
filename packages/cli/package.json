@@ -1,6 +1,6 @@
 {
   "name": "@kangmomin/minmo-cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "minmo 원격 관리 CLI — SSH 로 접속한 서버에서 GitHub 이슈 단위 worktree 를 관리하는 TUI·명령어",
   "repository": {
     "type": "git",
