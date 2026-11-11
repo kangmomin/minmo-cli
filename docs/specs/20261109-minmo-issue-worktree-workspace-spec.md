@@ -169,6 +169,11 @@ minmo-cli/
 - **로컬 모드**(`minmo mode local`, 명시 전환·기본은 서버 모드): 역터널·로그인 없이 쓴다. 설정·보일 저장소는 기본값 ← 서버 사본(서버 모드에서 받은 값) ← 로컬 전역 ← 로컬 조직 ← 로컬 프로젝트로 계산하고, 로컬 값은 서버로 올리지 않는다. 검증 규칙은 서버와 같다(`@minmo/core` settings). 메모는 서버 모드 전용, GitHub REST 는 gh·`GITHUB_TOKEN` 만(서버 토큰 미사용). 서버 계약 변경 없음.
 - **Windows**(v0.2.0): CLI 가 Windows 에서도 동작한다. 터미널은 worktree 에서 새 PowerShell(세션 유지 없음), 생성 후 스크립트는 `postCreateScript`(PowerShell), 삭제 시 정리는 실행 경로·명령줄 기준(`taskkill /T /F`), 서버 모드는 `MINMO_SERVER`(TCP) 필수, 설정 폴더는 `%APPDATA%\minmo`.
 
+### 서버 내장 (v0.3.0, 후속 추가)
+- 서버는 데스크탑 설치 파일에 사이드카로 들어가 앱과 함께 실행된다. 서버 env 는 데스크탑이 채운다: 포트(기본 8787, loopback)·DB(앱 데이터 폴더)·토큰 키(첫 실행에 생성, OS 키체인)·OAuth Client ID(설정 파일)/Secret(키체인, 쓰기 전용). 데스크탑 **서버 설정** 화면에서 바꾸며, 바뀌면 서버를 다시 시작한다.
+- 정상 종료는 stdin 닫기(`MINMO_STOP_ON_STDIN_CLOSE=1`), 앱이 비정상 종료하면 Job Object 로 함께 끝난다.
+- 창을 닫을 때: 매번 묻기(기본)·트레이로 최소화(서버 유지)·종료 중 사용자가 고른다. 서버 계약 변경 없음.
+
 ## 비즈니스 규칙
 - 조직 목록 = 개인 계정(최상단) + `/user/orgs`. 프로젝트 = 저장소, 이슈 = GitHub Issue(PR 제외)
 - 모든 저장소 노드의 첫 행은 "기타" 고정 이슈. GitHub에 존재하지 않으며 삭제·닫힘 불가
