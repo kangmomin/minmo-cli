@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "minmo",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "com.minmo.desktop",
   "build": {
     "beforeDevCommand": "npm run build:server && npm run dev",
