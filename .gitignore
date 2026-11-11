@@ -9,6 +9,8 @@ playwright-report/
 # Tauri / Rust
 desktop/src-tauri/target/
 desktop/src-tauri/gen/schemas/
+# 내장 서버 사이드카(desktop/scripts/build-server.mjs 가 만든다)
+desktop/src-tauri/binaries/
 
 # Go
 server/bin/
