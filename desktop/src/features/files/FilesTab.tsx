@@ -12,7 +12,7 @@ import type { DirEntry } from '../../lib/tauri'
 import { cn } from '../../lib/utils'
 import { useUiStore } from '../../store/ui'
 import { CodeEditor } from './CodeEditor'
-import { fileDrafts, fileError, joinRel, nameOf, nameProblem, parentOf } from './fileDrafts'
+import { eolOf, fileDrafts, fileError, joinRel, nameOf, nameProblem, parentOf, withEol } from './fileDrafts'
 
 export interface FilesTabProps {
   /** worktree 경로 */
@@ -344,8 +344,11 @@ function FileEditor({ root, scope, rel }: { root: string; scope: string; rel: st
     }
   }, [tauri, root, scope, rel])
 
+  // 저장 안 한 내용이 없으면 열 때마다 다시 읽는다 — 터미널·에이전트가 바꾼 내용을 보여 주기 위해.
+  // 저장 안 한 내용이 있으면 그대로 두고, 그 사이 파일이 바뀌었는지는 저장할 때 확인한다
   useEffect(() => {
-    if (!fileDrafts.get(scope, rel)) void read()
+    const d = fileDrafts.get(scope, rel)
+    if (!d || d.text === d.saved) void read()
   }, [read, scope, rel])
 
   async function save(overwrite = false) {
@@ -384,7 +387,7 @@ function FileEditor({ root, scope, rel }: { root: string; scope: string; rel: st
           {notice}
         </span>
         <Button size="sm" variant="ghost" onClick={() => void read()} disabled={saving}>
-          다시 불러오기
+          {dirty ? '변경 버리고 다시 불러오기' : '다시 불러오기'}
         </Button>
         <Button size="sm" disabled={!dirty || saving} onClick={() => void save()}>
           <SaveIcon /> 저장
@@ -414,9 +417,11 @@ function FileEditor({ root, scope, rel }: { root: string; scope: string; rel: st
             fileName={nameOf(rel)}
             dark={dark}
             label={`${rel} 편집`}
-            onChange={(text) => {
+            onChange={(edited) => {
               const d = fileDrafts.get(scope, rel)
               if (!d) return
+              // 편집기가 \n 으로 바꾼 줄바꿈을 파일의 원래 방식(CRLF 등)으로 되돌린다 — 안 그러면 저장할 때 파일 전체가 바뀐다
+              const text = withEol(edited, eolOf(d.saved))
               fileDrafts.set(scope, rel, { ...d, text })
               setDirty(text !== d.saved)
               setNotice('')

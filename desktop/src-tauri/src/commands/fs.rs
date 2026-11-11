@@ -307,7 +307,12 @@ fn list_dir_impl(dir: &Path) -> std::io::Result<Vec<DirEntry>> {
 /// 폴더 내용(폴더 먼저, 이름순). rel 이 비면 root
 #[tauri::command]
 pub fn fs_list_dir(root: String, rel: String) -> Result<Vec<DirEntry>, String> {
-    list_dir_impl(&resolve_in(&root, &rel)?).map_err(|e| e.to_string())
+    let dir = resolve_in(&root, &rel)?;
+    // 링크된 폴더는 열지 않는다(worktree 밖을 보여 주지 않게 — 원격 구현과 같은 규칙)
+    if !rel.trim().is_empty() && is_symlink(&dir) {
+        return Err("심볼릭 링크를 지나는 경로는 쓸 수 없습니다".into());
+    }
+    list_dir_impl(&dir).map_err(|e| e.to_string())
 }
 
 /// 텍스트 파일 읽기. 실패 사유는 코드로 시작한다: file_too_large · file_binary · file_link
@@ -367,7 +372,13 @@ pub fn fs_write_text(
     }
     let parent = p.parent().ok_or("경로가 올바르지 않습니다")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let tmp = parent.join(format!(".minmo-tmp-{}", std::process::id()));
+    // 같은 폴더에 동시에 저장해도 임시 파일이 겹치지 않게 번호를 붙인다
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tmp = parent.join(format!(
+        ".minmo-tmp-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let write = || -> std::io::Result<()> {
         std::fs::write(&tmp, content.as_bytes())?;
         // 실행 권한 등 원래 권한을 유지한다
@@ -554,6 +565,7 @@ mod tests {
         assert!(fs_read_text(root.clone(), "link/secret".into()).is_err());
         assert!(fs_write_text(root.clone(), "link/new".into(), "x".into(), None, true).is_err());
         assert!(fs_remove(root.clone(), "link/secret".into()).is_err());
+        assert!(fs_list_dir(root.clone(), "link".into()).is_err());
         // 링크 자체는 지울 수 있고, 가리키던 곳은 그대로다
         fs_remove(root.clone(), "link".into()).unwrap();
         assert!(outside.join("secret").is_file());

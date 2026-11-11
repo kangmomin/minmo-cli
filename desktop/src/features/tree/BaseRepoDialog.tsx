@@ -1,7 +1,7 @@
 import { useId, useState } from 'react'
 import type { FormEvent } from 'react'
 
-import { expandHome } from '@minmo/api-client'
+import { expandHome, normalizePath } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
 import { useHost } from '../../app/host'
@@ -74,9 +74,21 @@ function BaseRepoBody({ owner, repo, onDone }: { owner: string; repo: string; on
       setCheck({ state: 'error', note: '경로에 { } 를 쓸 수 없습니다' })
       return null
     }
-    const git = await tauri.gitRun(['-C', full, 'rev-parse', '--git-dir'])
+    // 작업 폴더가 있는 일반 저장소의 최상위만 받는다 — 하위 폴더·다른 저장소의 worktree·bare 저장소는 보관 폴더(.git 안)와
+    // 삭제 때의 저장소 찾기가 어긋난다
+    const git = await tauri.gitRun(['-C', full, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'])
     if (git.code !== 0) {
-      setCheck({ state: 'error', note: `git 저장소가 아닙니다: ${git.stderr.trim() || full}` })
+      setCheck({ state: 'error', note: `git 저장소(작업 폴더)가 아닙니다: ${git.stderr.trim() || full}` })
+      return null
+    }
+    const [top = '', common = ''] = git.stdout.split(/\r?\n/)
+    const same = (a: string, b: string) => normalizePath(a, platform) === normalizePath(b, platform)
+    if (!same(top, full)) {
+      setCheck({ state: 'error', note: `저장소의 최상위 폴더를 지정하세요: ${top}` })
+      return null
+    }
+    if (!same(common, `${top}/.git`)) {
+      setCheck({ state: 'error', note: '다른 저장소에 딸린 worktree 입니다 — 원래 저장소 폴더를 지정하세요' })
       return null
     }
     const origin = await tauri.gitRun(['-C', full, 'remote', 'get-url', 'origin'])
@@ -84,7 +96,8 @@ function BaseRepoBody({ owner, repo, onDone }: { owner: string; repo: string; on
     if (found === null) setCheck({ state: 'warn', note: 'origin 원격을 확인할 수 없습니다 — fetch·push 가 되지 않을 수 있습니다' })
     else if (found.toLowerCase() !== `${owner}/${repo}`.toLowerCase()) setCheck({ state: 'warn', note: `origin 이 다른 저장소입니다: ${found}` })
     else setCheck({ state: 'ok', note: `확인됨 — origin: ${found}` })
-    return full
+    // git 이 돌려준 경로를 저장한다(나중에 git 이 알려 주는 경로와 같은 모양이라 비교가 어긋나지 않는다)
+    return top
   }
 
   async function guarded(action: () => Promise<void>) {

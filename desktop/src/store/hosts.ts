@@ -20,6 +20,8 @@ export interface HostsState {
   remove(alias: string): void
   select(alias: string | null): void
   setProbe(alias: string, probe: SshProbe): void
+  /** 등록 정보를 고친 호스트 — 다시 연결해 확인하게 한다 */
+  clearProbe(alias: string): void
   setConnecting(alias: string | null): void
   setError(e: HostsState['error']): void
   /** path 가 null 이면 해제 */
@@ -59,6 +61,13 @@ export const useHostsStore = create<HostsState>()(
       // 실행 중에는 처음 확인한 값을 유지한다 — 중간에 바뀌면(tmux 설치 등) 그 호스트의 열린 터미널·worktree 서비스가
       // 다시 만들어진다. 바뀐 값은 앱을 다시 시작하면 반영된다
       setProbe: (alias, probe) => set((s) => (s.probes[alias] ? s : { probes: { ...s.probes, [alias]: probe } })),
+      clearProbe: (alias) =>
+        set((s) => {
+          if (!s.probes[alias]) return s
+          const probes = { ...s.probes }
+          delete probes[alias]
+          return { probes }
+        }),
       setConnecting: (connecting) => set({ connecting }),
       setError: (error) => set({ error }),
     }),

@@ -146,6 +146,10 @@ pub(crate) fn check_app_host(h: &AppHost, config_aliases: &[String]) -> Result<A
     let identity_file = match h.identity_file.as_deref().map(str::trim) {
         None | Some("") => None,
         Some(p) => {
+            // 따옴표는 옵션 값의 인용을 깬다
+            if p.contains('"') {
+                return Err("키 파일 경로에 따옴표를 쓸 수 없습니다".into());
+            }
             if !expand_home(p).is_file() {
                 return Err(format!("키 파일을 찾을 수 없습니다: {p}"));
             }
@@ -462,6 +466,12 @@ pub(crate) fn validate_host(host: &str) -> Result<(), String> {
     }
 }
 
+/// IdentityFile 옵션 값. ssh 는 옵션 값을 설정 줄처럼 읽는다 — 공백이 있는 경로는 따옴표로 묶고, `%` 는 토큰(%h 등)으로
+/// 풀리지 않게 `%%` 로 쓴다
+pub(crate) fn identity_option(path: &str) -> String {
+    format!("IdentityFile=\"{}\"", path.replace('%', "%%"))
+}
+
 /// 앱에 등록한 호스트의 접속 옵션. 사용자 ssh 설정의 `Host *` 기본값은 그대로 적용된다
 pub(crate) fn app_host_options(h: &AppHost) -> Vec<String> {
     let mut o = vec![
@@ -474,10 +484,7 @@ pub(crate) fn app_host_options(h: &AppHost) -> Vec<String> {
     ];
     if let Some(key) = &h.identity_file {
         o.push("-o".into());
-        o.push(format!(
-            "IdentityFile={}",
-            expand_home(key).to_string_lossy()
-        ));
+        o.push(identity_option(&expand_home(key).to_string_lossy()));
         o.push("-o".into());
         o.push("IdentitiesOnly=yes".into());
     }
@@ -1155,6 +1162,15 @@ mod tests {
             args[args.len() - 2..],
             ["--".to_string(), "one".to_string()]
         );
+        assert_eq!(
+            identity_option(r"C:\Users\Kang Min\.ssh\id 100%"),
+            r#"IdentityFile="C:\Users\Kang Min\.ssh\id 100%%""#
+        );
+        let quoted = AppHost {
+            identity_file: Some("a\"b".into()),
+            ..app("q")
+        };
+        assert!(check_app_host(&quoted, &[]).is_err());
         let trusting = ssh_args_for("one", Some(&h), true, true).join(" ");
         assert!(trusting.contains("StrictHostKeyChecking=accept-new"));
     }

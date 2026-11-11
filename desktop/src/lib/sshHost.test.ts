@@ -1,10 +1,10 @@
 // 원격 호스트 구현 — 명령 구성·안전 조건·tmux 세션 이름·오류 안내
 import { createHash } from 'node:crypto'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createFakeTauri, fail, ok } from '../test/fakes'
-import { assertRelative, assertRemovable, assertRoot, createSshOps, remotePty, sha1Hex, sshErrorOf, sshErrorText, tmuxSessionName } from './sshHost'
+import { assertRelative, assertRemovable, assertRoot, gitSubcommand, createSshOps, remotePty, sha1Hex, sshErrorOf, sshErrorText, tmuxSessionName } from './sshHost'
 import type { SshProbe } from './tauri'
 
 const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: true }
@@ -151,9 +151,24 @@ describe('원격 git 인증(토큰 전달)', () => {
   it('토큰이 없거나 얻지 못하면 원격 자체의 자격 증명으로 실행한다', async () => {
     for (const getToken of [async () => null, async () => Promise.reject(new Error('offline')), async () => 'bad\ntoken']) {
       const { tauri } = createFakeTauri()
-      await createSshOps(tauri, 'my-server', PROBE, getToken).gitRun(['status'])
-      expect(tauri.sshExec).toHaveBeenCalledWith('my-server', ['git', 'status'], { cwd: undefined, env: { GIT_TERMINAL_PROMPT: '0' } })
+      await createSshOps(tauri, 'my-server', PROBE, getToken).gitRun(['push', 'origin', 'main'])
+      expect(tauri.sshExec).toHaveBeenCalledWith('my-server', ['git', 'push', 'origin', 'main'], { cwd: undefined, env: { GIT_TERMINAL_PROMPT: '0' } })
     }
+  })
+
+  it('GitHub 와 통신하는 명령에만 넘긴다 — status·diff·commit 등에는 토큰을 묻지도 보내지도 않는다', async () => {
+    const getToken = vi.fn(async () => 'gho_SECRET')
+    const { tauri } = createFakeTauri()
+    const ops = createSshOps(tauri, 'my-server', PROBE, getToken)
+    for (const args of [['-C', '/w', 'status', '--porcelain'], ['-C', '/w', 'diff', '--', 'a'], ['-C', '/w', 'commit', '-m', 'push it'], ['-c', 'x.y=fetch', 'rev-parse', 'HEAD']]) {
+      await ops.gitRun(args)
+    }
+    expect(getToken).not.toHaveBeenCalled()
+    expect(tauri.sshExec.mock.calls.every(([, argv, o]) => argv[0] === 'git' && o?.stdin === undefined)).toBe(true)
+    for (const args of [['clone', 'u', 'd'], ['-C', '/w', 'fetch', 'origin'], ['-C', '/w', 'worktree', 'add', 'p']]) await ops.gitRun(args)
+    expect(getToken).toHaveBeenCalledTimes(3)
+    expect(gitSubcommand(['-C', '/w', '-c', 'a=b', 'push'])).toBe('push')
+    expect(gitSubcommand(['--version'])).toBeNull()
   })
 })
 
@@ -182,11 +197,14 @@ describe('원격 파일 탭 작업', () => {
     expect(await ops.writeTextFile(ROOT, 'dir/a.txt', 'hello', { expected: '123 9' })).toBe('999 5')
     const [, argv, opts] = tauri.sshExec.mock.calls[0]
     expect(argv.slice(0, 2)).toEqual(['sh', '-c'])
-    expect(argv.slice(3)).toEqual(['sh', ROOT, 'dir/a.txt', '123 9', '0'])
+    expect(argv.slice(3)).toEqual(['sh', ROOT, 'dir/a.txt', '123 9', '0', '5'])
     expect(opts?.stdin).toBe('hello')
+    // 바이트 수는 UTF-8 기준(전송이 끊겼는지 원격에서 확인한다)
+    await ops.writeTextFile(ROOT, 'k.txt', '한글')
+    expect(tauri.sshExec.mock.calls[1][1][8]).toBe('6')
     await expect(ops.writeTextFile(ROOT, 'conflict.txt', 'x', { expected: 'old' })).rejects.toThrow('file_changed')
     await ops.writeTextFile(ROOT, 'new.txt', '', { create: true })
-    expect(tauri.sshExec.mock.calls[2][1].slice(3)).toEqual(['sh', ROOT, 'new.txt', '', '1'])
+    expect(tauri.sshExec.mock.calls[3][1].slice(3)).toEqual(['sh', ROOT, 'new.txt', '', '1', '0'])
   })
 
   it('루트 밖을 가리키는 경로는 원격에 보내지 않는다', async () => {

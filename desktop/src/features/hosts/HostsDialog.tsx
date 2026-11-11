@@ -163,6 +163,8 @@ function HostsBody() {
           onCancel={() => setForm(null)}
           onSave={async (value) => {
             setHosts(await tauri.sshHostSave(value))
+            // 주소가 바뀌었을 수 있다 — 예전 호스트에서 확인한 값(홈·tmux)을 쓰지 않게 다시 확인하게 한다
+            useHostsStore.getState().clearProbe(value.alias)
             // 새로 등록한 호스트는 바로 쓸 수 있게 작업 호스트 목록에 넣는다
             if (form.editing === null) add(value.alias)
             setForm(null)

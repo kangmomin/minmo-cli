@@ -135,7 +135,7 @@ if [ -n "$2" ]; then nolink "$1" "$2" || { ${LINK_ERR}; }; d="$1/$2"; fi
 cd -- "$d" || exit 1
 for f in .* *; do
   case "$f" in .|..|.git|*"$NL"*) continue ;; esac
-  if [ -L "$f" ]; then echo "l/$f"; elif [ -d "$f" ]; then echo "d/$f"; elif [ -e "$f" ]; then echo "f/$f"; fi
+  if [ -L "$f" ]; then printf 'l/%s\\n' "$f"; elif [ -d "$f" ]; then printf 'd/%s\\n' "$f"; elif [ -e "$f" ]; then printf 'f/%s\\n' "$f"; fi
 done`
 
 /** 첫 줄은 version(cksum), 그 뒤가 내용. 2MB(512바이트 블록 4096개) 초과는 열지 않는다 */
@@ -148,8 +148,9 @@ cksum < "$f" || exit 1
 cat -- "$f"`
 
 /**
- * 내용은 stdin 으로 받는다(그래서 스크립트는 sh -c 의 인자로 넘긴다). $3 = 읽을 때의 version, $4 = 1 이면 새 파일만.
- * 같은 폴더의 임시 파일에 쓴 뒤 바꾸고(끊겨도 원본 유지), 기존 파일을 먼저 복사해 권한을 유지한다
+ * 내용은 stdin 으로 받는다(그래서 스크립트는 sh -c 의 인자로 넘긴다). $3 = 읽을 때의 version, $4 = 1 이면 새 파일만,
+ * $5 = 내용의 바이트 수. 같은 폴더의 임시 파일에 쓴 뒤 바꾸고, 기존 파일을 먼저 복사해 권한을 유지한다.
+ * 전송 중 연결이 끊기면 받은 만큼만 쓰이므로, 바이트 수가 맞을 때만 원본을 바꾼다
  */
 const WRITE_TEXT = `${NOLINK}
 f="$1/$2"
@@ -163,6 +164,7 @@ d=$(dirname -- "$f"); mkdir -p -- "$d" || exit 1
 t="$d/.minmo-tmp-$$"
 if [ -f "$f" ]; then cp -p -- "$f" "$t" || exit 1; fi
 cat > "$t" || { rm -f -- "$t"; exit 1; }
+if [ "$(wc -c < "$t" | tr -d ' ')" != "$5" ]; then rm -f -- "$t"; echo "전송이 중간에 끊겼습니다 — 파일을 바꾸지 않았습니다" >&2; exit 1; fi
 mv -f -- "$t" "$f" || { rm -f -- "$t"; exit 1; }
 cksum < "$f"`
 
@@ -191,6 +193,22 @@ rm -rf -- "$1/$2"`
  */
 const GIT_WITH_TOKEN =
   'IFS= read -r MINMO_GH_TOKEN || exit 1; export MINMO_GH_TOKEN; exec git -c credential.https://github.com.helper= -c \'credential.https://github.com.helper=!f() { test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$MINMO_GH_TOKEN"; }; f\' "$@" < /dev/null'
+
+/**
+ * 토큰을 넘길 git 하위 명령 — GitHub 와 통신하는 것, 그리고 부분 clone 에서 파일 내용을 그때 받아 오는 것.
+ * status·diff·commit 같은 나머지에는 넘기지 않는다(저장소의 hook·필터가 토큰을 볼 기회를 줄인다)
+ */
+const TOKEN_SUBCOMMANDS = new Set(['clone', 'fetch', 'pull', 'push', 'ls-remote', 'submodule', 'worktree', 'read-tree', 'sparse-checkout', 'checkout'])
+
+/** git 인자에서 하위 명령을 찾는다(-C <dir>·-c <k=v> 같은 전역 옵션은 건너뛴다) */
+export function gitSubcommand(args: string[]): string | null {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (a === '-C' || a === '-c') i++
+    else if (!a.startsWith('-')) return a
+  }
+  return null
+}
 
 const byName = (a: DirEntry, b: DirEntry) => Number(a.kind !== 'dir') - Number(b.kind !== 'dir') || a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.name.localeCompare(b.name)
 
@@ -225,7 +243,7 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
     gitRun: async (args, opts) => {
       const env = { GIT_TERMINAL_PROMPT: '0', ...opts?.env }
       // 토큰에 줄바꿈이 있으면 한 줄 전달이 깨진다 — 그런 값은 쓰지 않는다
-      const token = await getToken?.().catch(() => null)
+      const token = TOKEN_SUBCOMMANDS.has(gitSubcommand(args) ?? '') ? await getToken?.().catch(() => null) : null
       if (token && !/[\r\n]/.test(token)) return exec(['sh', '-c', GIT_WITH_TOKEN, 'sh', ...args], { cwd: opts?.cwd, env, stdin: `${token}\n` })
       return exec(['git', ...args], { cwd: opts?.cwd, env })
     },
@@ -284,7 +302,8 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
     },
     writeTextFile: async (root, rel, content, opts) => {
       inRoot(root, rel)
-      const r = await exec(['sh', '-c', WRITE_TEXT, 'sh', root, rel, opts?.expected ?? '', opts?.create ? '1' : '0'], { stdin: content })
+      const bytes = String(new TextEncoder().encode(content).length)
+      const r = await exec(['sh', '-c', WRITE_TEXT, 'sh', root, rel, opts?.expected ?? '', opts?.create ? '1' : '0', bytes], { stdin: content })
       return must(r, '파일 저장').stdout.trim()
     },
     createDir: async (root, rel) => {

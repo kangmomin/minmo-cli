@@ -1,12 +1,12 @@
 // 파일 탭 — 트리(펼치기), 열기·편집·저장, 외부 변경 충돌, 새 파일·이름 바꾸기·삭제, 탭을 오가도 유지되는 편집 상태
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DirEntry, TauriApi } from '../../lib/tauri'
 import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { fileDrafts, fileError, nameProblem } from './fileDrafts'
+import { eolOf, fileDrafts, fileError, nameProblem, withEol } from './fileDrafts'
 import { FilesTab } from './FilesTab'
 
 // CodeMirror 는 jsdom 에서 레이아웃을 잴 수 없어 textarea 로 대신한다(저장 단축키는 버튼으로 흉내)
@@ -143,11 +143,43 @@ describe('편집·저장', () => {
     expect(again.tauri.readTextFile).not.toHaveBeenCalled()
   })
 
+  it('CRLF 파일은 고쳐도 줄바꿈이 CRLF 로 저장된다(파일 전체가 바뀌지 않게)', async () => {
+    const t = setup({ listDir: async () => [{ name: 'win.txt', kind: 'file' }], readTextFile: async () => ({ content: 'a\r\nb\r\n', version: 'v0' }) })
+    await t.user.click(await screen.findByRole('treeitem', { name: 'win.txt' }))
+    const box = await screen.findByRole('textbox', { name: 'win.txt 편집' })
+    // 편집기는 줄바꿈을 \n 으로 알려 준다
+    fireEvent.change(box, { target: { value: 'a\nb\nc\n' } })
+    await t.user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(t.tauri.writeTextFile).toHaveBeenCalledWith(ROOT, 'win.txt', 'a\r\nb\r\nc\r\n', { expected: 'v0' }))
+    // 내용이 같으면(줄바꿈만 편집기 표현으로 달라 보일 뿐) 바뀐 것으로 보지 않는다
+    fireEvent.change(box, { target: { value: 'a\nb\nc\n' } })
+    expect(screen.queryByText('● 저장 안 됨')).toBeNull()
+  })
+
+  it('저장 안 한 내용이 없으면 다시 열 때 디스크에서 새로 읽는다(밖에서 바뀐 내용 반영)', async () => {
+    const t = setup()
+    await t.user.click(await screen.findByRole('treeitem', { name: 'README.md' }))
+    await screen.findByRole('textbox', { name: 'README.md 편집' })
+    t.unmount()
+    const again = setup({ readTextFile: async () => ({ content: '# changed by agent\n', version: 'v7' }) })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'README.md 편집' })).toHaveValue('# changed by agent\n'))
+    expect(again.tauri.readTextFile).toHaveBeenCalledWith(ROOT, 'README.md')
+  })
+
+  it('worktree 가 없어지면 편집 상태를 버린다', async () => {
+    const t = setup()
+    await t.user.click(await screen.findByRole('treeitem', { name: 'README.md' }))
+    await t.user.type(await screen.findByRole('textbox', { name: 'README.md 편집' }), 'x')
+    fileDrafts.clearScope(SCOPE)
+    expect(fileDrafts.dirty(SCOPE)).toEqual([])
+    expect(fileDrafts.openFile(SCOPE)).toBeNull()
+  })
+
   it('[다시 불러오기] 는 디스크의 내용으로 되돌린다', async () => {
     const t = setup()
     await t.user.click(await screen.findByRole('treeitem', { name: 'README.md' }))
     await t.user.type(await screen.findByRole('textbox', { name: 'README.md 편집' }), 'zzz')
-    await t.user.click(screen.getByRole('button', { name: '다시 불러오기' }))
+    await t.user.click(screen.getByRole('button', { name: '변경 버리고 다시 불러오기' }))
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'README.md 편집' })).toHaveValue('# hi\n'))
     expect(screen.queryByText('● 저장 안 됨')).toBeNull()
   })
@@ -215,6 +247,14 @@ describe('도우미', () => {
   it('오류 코드와 설명을 나눈다', () => {
     expect(fileError('file_changed: 바뀜')).toEqual({ code: 'file_changed', message: '바뀜' })
     expect(fileError(new Error('boom'))).toEqual({ code: null, message: 'boom' })
+  })
+
+  it('줄바꿈 방식: 많이 쓰인 쪽을 따르고, 저장할 때 그 방식으로 되돌린다', () => {
+    expect(eolOf('a\r\nb\r\nc\n')).toBe('\r\n')
+    expect(eolOf('a\nb\n')).toBe('\n')
+    expect(eolOf('no newline')).toBe('\n')
+    expect(withEol('a\nb\r\nc', '\r\n')).toBe('a\r\nb\r\nc')
+    expect(withEol('a\nb', '\n')).toBe('a\nb')
   })
 
   it('이름 검사', () => {

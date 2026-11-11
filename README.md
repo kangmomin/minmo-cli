@@ -235,6 +235,7 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 앱이 원격에서 실행하는 git(clone·fetch·push 등)에는 이 PC 의 GitHub 토큰(`gh` 로그인 토큰, 없으면 minmo 로그인 토큰)을 그때그때 넘긴다. 원격에 자격 증명을 따로 설정하지 않아도 된다.
 
 - 토큰은 ssh 연결의 입력으로만 보내 git 프로세스의 환경 변수로 둔다 — 원격의 디스크·git 설정·명령줄(`ps`)에 남지 않는다.
+- GitHub 와 통신하는 명령(clone·fetch·push 등)과 worktree 생성에만 넘기고, status·diff·commit 등에는 넘기지 않는다. 넘긴 명령이 실행하는 저장소 hook 은 그 환경 변수를 볼 수 있으므로, 믿지 않는 호스트·저장소에서는 쓰지 않는다.
 - `https://github.com` 주소에만 적용된다. SSH 주소(`git@github.com:`)를 쓰는 저장소는 원격의 SSH 키를 쓴다.
 - 터미널에서 직접 치는 `git push` 에는 적용되지 않는다(원격 자체의 자격 증명 필요).
 

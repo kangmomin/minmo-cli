@@ -3,6 +3,16 @@
 /** 연 파일의 편집 상태: saved = 마지막으로 읽거나 저장한 내용, text = 지금 편집 중인 내용 */
 export type Draft = { text: string; saved: string; version: string }
 
+/** 파일의 줄바꿈 방식 — 많이 쓰인 쪽 */
+export function eolOf(text: string): '\r\n' | '\n' {
+  const crlf = text.split('\r\n').length - 1
+  const lf = text.split('\n').length - 1 - crlf
+  return crlf > lf ? '\r\n' : '\n'
+}
+
+/** 편집기는 줄바꿈을 \n 으로 다룬다 — 저장할 내용은 파일의 원래 줄바꿈으로 되돌린다 */
+export const withEol = (text: string, eol: '\r\n' | '\n') => (eol === '\n' ? text : text.replace(/\r?\n/g, '\r\n'))
+
 const drafts = new Map<string, Draft>()
 const openFiles = new Map<string, string>()
 
@@ -30,6 +40,11 @@ export const fileDrafts = {
   setOpenFile(scope: string, rel: string | null) {
     if (rel === null) openFiles.delete(scope)
     else openFiles.set(scope, rel)
+  },
+  /** 작업 공간(worktree)이 없어졌을 때 그 편집 상태를 모두 버린다 */
+  clearScope(scope: string) {
+    for (const k of [...drafts.keys()]) if (k.startsWith(`${scope}\n`)) drafts.delete(k)
+    openFiles.delete(scope)
   },
   /** 테스트용 */
   clear() {
