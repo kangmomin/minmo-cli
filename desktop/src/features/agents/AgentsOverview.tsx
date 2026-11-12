@@ -9,27 +9,37 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '../../components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip'
 import { repoLabelOf, useReposStore } from '../../store/repos'
+import { useBaseDeps } from '../../app/deps'
 import { useSetupStore } from '../../store/setup'
 import { DEFAULT_AGENTS_VIEW, useUiStore } from '../../store/ui'
 import type { AgentsView } from '../../store/ui'
+import { usePeerAgentsStore } from '../remote/peerAgents'
 import { StatusDot } from './AgentBadge'
 import { STATUS_LABEL, STATUS_ORDER, useAgentStore } from './agentStore'
 import type { AgentStatus } from './agentStore'
 import { AGENT_LABEL } from './detect'
 import type { AgentKind } from './detect'
-import { GROUP_LABEL, SORT_LABEL, ago, filterRows, groupRows, sortRows, toRows } from './overview'
+import { GROUP_LABEL, SORT_LABEL, ago, filterRows, groupRows, rowKey, sortRows, toRows } from './overview'
 import type { AgentRow } from './overview'
 import type { Subagent } from './subagents'
 
 const AGENTS: readonly AgentKind[] = ['claude', 'codex', 'gemini', 'other']
 const agentName = (a: AgentKind) => (a === 'other' ? '기타' : AGENT_LABEL[a])
 
-function useRows(): AgentRow[] {
+/** 이 PC 의 에이전트 줄(다른 PC 에 올려 주는 것도 이것이다) */
+export function useLocalRows(): AgentRow[] {
   const panes = useAgentStore((s) => s.panes)
   const subagents = useAgentStore((s) => s.subagents)
   const targets = useSetupStore((s) => s.targets)
   const local = useReposStore((s) => s.local)
   return useMemo(() => toRows(panes, { targets, hostOf: aliasOfIssue, repoLabel: (o, r) => repoLabelOf({ local }, o, r) }, subagents), [panes, targets, local, subagents])
+}
+
+/** 이 PC 와 등록한 다른 PC 의 에이전트를 합친 줄 */
+function useRows(): AgentRow[] {
+  const local = useLocalRows()
+  const remote = usePeerAgentsStore((s) => s.rows)
+  return useMemo(() => [...local, ...Object.values(remote).flat()], [local, remote])
 }
 
 /** 상단 바의 버튼 — 주의가 필요한(입력 대기·끝남) 에이전트 수를 함께 보인다 */
@@ -114,6 +124,7 @@ function SubagentList({ subs, now }: { subs: Subagent[]; now: number }) {
 
 function OverviewBody({ onDone }: { onDone(): void }) {
   const uid = useId()
+  const { tauri } = useBaseDeps()
   const rows = useRows()
   const view = useUiStore((s) => s.agentsView)
   const setView = useUiStore((s) => s.setAgentsView)
@@ -128,6 +139,11 @@ function OverviewBody({ onDone }: { onDone(): void }) {
   }, [])
 
   function go(row: AgentRow) {
+    // 다른 PC 의 에이전트: 그 PC 의 화면을 열고 그 이슈의 터미널로 간다
+    if (row.peer) {
+      void tauri.peerOpen(row.peer.id, row.target ? { target: row.target, paneId: row.paneId } : undefined).catch(() => undefined)
+      return onDone()
+    }
     const ui = useUiStore.getState()
     ui.selectIssue(row.issueId)
     ui.setTab('terminal')
@@ -188,7 +204,7 @@ function OverviewBody({ onDone }: { onDone(): void }) {
             )}
             <ul>
               {g.rows.map((r) => (
-                <li key={r.paneId}>
+                <li key={rowKey(r)}>
                   <button
                     type="button"
                     data-testid="agent-row"
@@ -203,7 +219,7 @@ function OverviewBody({ onDone }: { onDone(): void }) {
                       <span className="text-muted-foreground">{r.repo}</span> {r.issue}
                       {r.label && <span className="text-muted-foreground"> — {r.label}</span>}
                     </span>
-                    {r.host !== null && (
+                    {(r.host !== null || r.peer) && (
                       <Badge variant="outline" className="shrink-0">
                         {r.hostLabel}
                       </Badge>

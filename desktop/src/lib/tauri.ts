@@ -1,7 +1,7 @@
 // Tauri invoke 래퍼 인터페이스. UI·도메인 코드는 이 인터페이스에만 의존하고
 // 실제 구현(invoke)과 tauri.mock.ts(dev·Playwright) 를 getTauri() 로 고른다.
 import type { Platform } from '@minmo/api-client'
-import type { CmdResult, GhHost, RunOptions, ScriptLogEvent, ScriptRunRequest, ScriptRunResult, Unlisten, WorktreeHost } from '@minmo/core'
+import type { CmdResult, GhHost, IssueTarget, RunOptions, ScriptLogEvent, ScriptRunRequest, ScriptRunResult, Unlisten, WorktreeHost } from '@minmo/core'
 
 import { createTauriMock } from './tauri.mock'
 
@@ -52,6 +52,11 @@ export type RemoteRpcRequest = { id: number; method: string; args: unknown[] }
 export type SharedChangedEvent = { key: string; origin: string; rev?: number }
 /** rev: 판 번호 — 저장할 때마다 오른다 */
 export type SharedValue = { value: string | null; rev: number }
+/** 다른 PC(이 PC 가 접속하는 minmo 호스트). token 은 그 PC 가 이 PC 에 발급한 기기 토큰(키체인에 둔다) */
+export type Peer = { id: string; name: string; url: string; token: string | null }
+export type PeerInput = { url: string; code: string; name: string }
+/** 그 PC 의 화면에서 바로 보여 줄 이슈·터미널 패널 */
+export type PeerOpen = { target: IssueTarget; paneId: string | null }
 /** native = Tauri 창, remote = 다른 기기의 브라우저(호스트에 붙음), mock = 개발·테스트 */
 export type RuntimeKind = 'native' | 'remote' | 'mock'
 
@@ -124,6 +129,14 @@ export interface TauriApi extends WorktreeHost, GhHost {
   /** 기기가 등록·접속·끊김 */
   onRemoteChanged(cb: () => void): Promise<Unlisten>
   onRemoteRpc(cb: (req: RemoteRpcRequest) => void): Promise<Unlisten>
+  /** 다른 PC 등록·삭제 — 그 PC 의 화면에 뜬 6자리 코드로 이 PC 를 기기로 등록한다. 전체 목록을 돌려준다 */
+  peersList(): Promise<Peer[]>
+  peerAdd(input: PeerInput): Promise<Peer[]>
+  peerRemove(id: string): Promise<Peer[]>
+  /** 그 PC 의 화면을 별도 창으로 연다(이미 열려 있으면 앞으로). open 이 있으면 그 이슈의 터미널로 간다 */
+  peerOpen(id: string, open?: PeerOpen): Promise<void>
+  /** 이 PC 의 에이전트 현황(줄 목록)을 올려 둔다 — 이 PC 를 등록한 다른 PC 가 받아 간다 */
+  agentsPublish(rows: unknown[]): Promise<void>
   remoteRpcReply(id: number, ok: boolean, value: unknown): Promise<void>
 
   scriptRun(req: ScriptRunRequest): Promise<ScriptRunResult>
@@ -264,6 +277,11 @@ export const TAURI_COMMANDS = {
   remotePairCancel: 'remote_pair_cancel',
   remoteDeviceRemove: 'remote_device_remove',
   remoteRpcReply: 'remote_rpc_reply',
+  peersList: 'peers_list',
+  peerAdd: 'peer_add',
+  peerRemove: 'peer_remove',
+  peerOpen: 'peer_open',
+  agentsPublish: 'agents_publish',
 } as const
 
 export const TAURI_EVENTS = {
@@ -277,6 +295,7 @@ export const TAURI_EVENTS = {
   sharedChanged: 'shared-changed',
   remoteChanged: 'remote-changed',
   remoteRpc: 'remote-rpc',
+  agentsChanged: 'agents-changed',
 } as const
 
 /** @tauri-apps/api invoke 기반 실제 구현 */
@@ -309,6 +328,11 @@ export function createTauriApi(): TauriApi {
     onRemoteChanged: async (cb) => (await event()).listen(TAURI_EVENTS.remoteChanged, () => cb()),
     onRemoteRpc: async (cb) => (await event()).listen<RemoteRpcRequest>(TAURI_EVENTS.remoteRpc, (e) => cb(e.payload)),
     remoteRpcReply: (id, ok, value) => call(C.remoteRpcReply, { id, ok, value: value ?? null }),
+    peersList: () => call(C.peersList),
+    peerAdd: (input) => call(C.peerAdd, { input }),
+    peerRemove: (id) => call(C.peerRemove, { id }),
+    peerOpen: (id, open) => call(C.peerOpen, { id, open: open ?? null }),
+    agentsPublish: (rows) => call(C.agentsPublish, { rows }),
     ptyWrite: (id, data) => call(C.ptyWrite, { id, data }),
     ptyResize: (id, cols, rows) => call(C.ptyResize, { id, cols, rows }),
     ptyKill: (id) => call(C.ptyKill, { id }),
@@ -388,6 +412,9 @@ let instance: TauriApi | null = null
  */
 export function runtimeKind(): RuntimeKind {
   if (import.meta.env.VITE_TAURI_MOCK === '1') return 'mock'
+  // 호스트(다른 PC·이 PC 의 원격 접속 서버)가 내준 화면에는 표시가 있다(src-tauri/src/remote.rs). 다른 PC 의 minmo 앱이
+  // 이 화면을 자기 창으로 열면 그 창에도 Tauri 런타임이 있으므로, 런타임 유무보다 이 표시를 먼저 본다
+  if (typeof document !== 'undefined' && document.querySelector('meta[name="minmo-runtime"][content="remote"]')) return 'remote'
   if (hasTauriRuntime()) return 'native'
   return import.meta.env.PROD ? 'remote' : 'mock'
 }

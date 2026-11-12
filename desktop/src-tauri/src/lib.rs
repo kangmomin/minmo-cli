@@ -50,7 +50,10 @@ pub fn run() {
         .on_window_event(shell::on_window_event)
         // 웹뷰가 새로 고쳐지면 React 정리(pty_kill)가 돌지 않으므로, 남은 터미널 프로세스를 여기서 끝낸다
         .on_page_load(|webview, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Started {
+            // main 창만 — 다른 PC 의 화면을 여는 창(peer-*)이 뜰 때 이 PC 의 터미널을 끝내면 안 된다
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Started
+            {
                 pty::kill_all(&webview.state::<pty::PtyState>());
                 // 붙은 기기의 호출 중 이 화면에 맡겨 둔 것은 답이 오지 않는다 — 기다리게 두지 않는다
                 if let Some(remote) = webview.try_state::<remote::RemoteManager>() {
@@ -112,6 +115,11 @@ pub fn run() {
             remote::remote_pair_cancel,
             remote::remote_device_remove,
             remote::remote_rpc_reply,
+            remote::agents_publish,
+            remote::peers_list,
+            remote::peer_add,
+            remote::peer_remove,
+            remote::peer_open,
             remote::shared_get,
             remote::shared_set,
         ])

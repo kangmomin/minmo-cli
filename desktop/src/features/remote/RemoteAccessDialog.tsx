@@ -1,5 +1,5 @@
 // 원격 접속 설정(이 PC 의 창에서만) — 켜기/끄기, 접속 주소, 기기 등록 코드, 등록된 기기 끊기
-import { CopyIcon, SmartphoneIcon, Trash2Icon } from 'lucide-react'
+import { CopyIcon, MonitorIcon, SmartphoneIcon, Trash2Icon } from 'lucide-react'
 import qrcode from 'qrcode-generator'
 import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 
@@ -7,7 +7,11 @@ import { useBaseDeps } from '../../app/deps'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
+import { Input } from '../../components/ui/input'
+import { Label } from '../../components/ui/label'
 import type { RemoteAddress, RemoteStatus } from '../../lib/tauri'
+import { usePeersStore } from '../../store/peers'
+import { usePeerAgentsStore } from './peerAgents'
 
 const KIND_LABEL: Record<RemoteAddress['kind'], string> = { tailscale: 'Tailscale', lan: '같은 네트워크(LAN)', local: '이 PC' }
 
@@ -230,6 +234,103 @@ function Body() {
           {error}
         </p>
       )}
+
+      <PeersSection />
     </div>
+  )
+}
+
+/** 다른 PC — 이 PC 가 접속할 minmo 호스트. 등록하면 호스트 고르는 곳에 나오고, 그 PC 의 에이전트가 전체 현황·알림에 합쳐진다 */
+function PeersSection() {
+  const uid = useId()
+  const { tauri } = useBaseDeps()
+  const peers = usePeersStore((s) => s.peers)
+  const setPeers = usePeersStore((s) => s.setPeers)
+  const online = usePeerAgentsStore((s) => s.online)
+  const [url, setUrl] = useState('')
+  const [code, setCode] = useState('')
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void tauri
+      .peersList()
+      .then(setPeers)
+      .catch(() => undefined)
+  }, [tauri, setPeers])
+
+  const run = async (job: () => Promise<typeof peers>, after?: () => void) => {
+    setBusy(true)
+    setError(null)
+    try {
+      setPeers(await job())
+      after?.()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="grid gap-2 border-t pt-3" aria-labelledby={`${uid}-peers`}>
+      <h3 id={`${uid}-peers`} className="font-medium">
+        다른 PC
+      </h3>
+      <p className="text-xs text-muted-foreground">minmo 가 깔린 다른 PC 를 등록하면 그 PC 의 화면을 이 앱 안에서 열고, 그 PC 의 에이전트도 전체 현황과 알림에 함께 나옵니다. 그 PC 의 [원격 접속] → [기기 등록] 에서 나온 주소와 코드를 넣으세요.</p>
+      {peers.length > 0 && (
+        <ul className="grid gap-1">
+          {peers.map((p) => (
+            <li key={p.id} className="flex items-center gap-2" data-testid="peer">
+              <MonitorIcon className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">
+                {p.name}
+                <span className="block truncate font-mono text-xs text-muted-foreground">{p.url}</span>
+              </span>
+              <Badge variant={online[p.id] ? 'default' : 'outline'}>{online[p.id] ? '연결됨' : '연결 안 됨'}</Badge>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => tauri.peerRemove(p.id))}>
+                <Trash2Icon /> 삭제
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="grid gap-2 sm:grid-cols-[2fr_1fr_1.5fr_auto] sm:items-end"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void run(
+            () => tauri.peerAdd({ url: url.trim(), code: code.replace(/\D/g, ''), name: name.trim() }),
+            () => {
+              setUrl('')
+              setCode('')
+              setName('')
+            },
+          )
+        }}
+      >
+        <div className="grid gap-1">
+          <Label htmlFor={`${uid}-purl`}>그 PC 의 주소</Label>
+          <Input id={`${uid}-purl`} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://100.64.0.5:8790" spellCheck={false} className="font-mono" />
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor={`${uid}-pcode`}>등록 코드</Label>
+          <Input id={`${uid}-pcode`} value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" maxLength={7} placeholder="123456" className="font-mono" />
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor={`${uid}-pname`}>이름(선택)</Label>
+          <Input id={`${uid}-pname`} value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="회사 PC" />
+        </div>
+        <Button type="submit" size="sm" disabled={busy || url.trim() === '' || code.replace(/\D/g, '').length !== 6}>
+          PC 등록
+        </Button>
+      </form>
+      {error && (
+        <p role="alert" className="text-destructive">
+          {error}
+        </p>
+      )}
+    </section>
   )
 }

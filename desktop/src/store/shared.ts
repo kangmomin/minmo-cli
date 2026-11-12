@@ -8,6 +8,8 @@ import { bindShared } from '../lib/sharedState'
 import type { TauriApi } from '../lib/tauri'
 import { useReposStore } from './repos'
 import type { ReposState } from './repos'
+import { useSetupStore } from './setup'
+import type { SetupState } from './setup'
 import { useUiStore } from './ui'
 import type { IssuePanes, UiState } from './ui'
 
@@ -17,6 +19,11 @@ type SharedUi = {
   agentCommands: UiState['agentCommands']
   /** 포커스는 기기마다 다르므로 뺀다 */
   panes: Record<string, Pick<IssuePanes, 'tree' | 'seq'>>
+  /**
+   * 열어 본 이슈의 정보(번호·제목) — 다른 기기가 연 이슈의 터미널도 이 화면의 에이전트 현황에 이름과 함께 나오고,
+   * 다른 PC 에서 그 이슈를 바로 열 수 있다
+   */
+  targets?: SetupState['targets']
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -53,6 +60,18 @@ export function applySharedUi(value: unknown) {
   })
 }
 
+/**
+ * 다른 화면이 연 이슈의 정보를 받는다. 같은 이슈는 받은 값으로 덮어쓴다 — 이 화면의 값을 남겨 두면 두 화면이 서로 다른 값을
+ * 되올리며 끝없이 오간다(이 화면만 아는 이슈는 그대로 두고, 그것은 한 번 올라가면 끝난다).
+ */
+export function applySharedTargets(value: unknown) {
+  if (!isRecord(value)) return
+  const known = useSetupStore.getState().targets
+  const valid = Object.entries(value).filter(([, t]) => isRecord(t) && typeof t.owner === 'string' && typeof t.repo === 'string' && typeof t.key === 'string' && typeof t.title === 'string' && (t.number === null || typeof t.number === 'number'))
+  const changed = valid.filter(([id, t]) => JSON.stringify(known[id]) !== JSON.stringify(t))
+  if (changed.length > 0) useSetupStore.setState({ targets: { ...known, ...(Object.fromEntries(changed) as SetupState['targets']) } })
+}
+
 export function applySharedRepos(value: unknown) {
   if (!isRecord(value)) return
   const next: Partial<SharedRepos> = {}
@@ -75,9 +94,15 @@ export function bindSharedStores(tauri: Pick<TauriApi, 'sharedGet' | 'sharedSet'
     }),
     bindShared<SharedUi>(tauri, {
       key: 'ui',
-      pick: () => pickSharedUi(useUiStore.getState()),
-      apply: applySharedUi,
-      subscribe: (cb) => useUiStore.subscribe(cb),
+      pick: () => ({ ...pickSharedUi(useUiStore.getState()), targets: useSetupStore.getState().targets }),
+      apply: (v) => {
+        applySharedUi(v)
+        applySharedTargets(isRecord(v) ? v.targets : undefined)
+      },
+      subscribe: (cb) => {
+        const stops = [useUiStore.subscribe(cb), useSetupStore.subscribe(cb)]
+        return () => stops.forEach((s) => s())
+      },
     }),
   ]
   return () => stops.forEach((s) => s())

@@ -81,3 +81,24 @@ test.describe('휴대폰 크기', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
   })
 })
+
+test('다른 PC 등록: 주소와 코드로 등록하면 호스트 고르는 곳에 나오고, 고르면 그 PC 의 화면을 새 창으로 연다', async ({ page }) => {
+  await page.getByRole('button', { name: '원격 접속', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '원격 접속' })
+  await dialog.getByLabel('그 PC 의 주소').fill('http://100.64.0.5:8790')
+  await dialog.getByLabel('등록 코드').fill('000000')
+  await dialog.getByLabel('이름(선택)').fill('회사 PC')
+  await dialog.getByRole('button', { name: 'PC 등록' }).click()
+  await expect(dialog.getByRole('alert').filter({ hasText: '코드가 맞지 않습니다' })).toBeVisible()
+  await dialog.getByLabel('등록 코드').fill('123456')
+  await dialog.getByRole('button', { name: 'PC 등록' }).click()
+  await expect(dialog.getByTestId('peer')).toContainText('회사 PC')
+  await page.keyboard.press('Escape')
+
+  // 호스트 고르는 곳: 다른 PC 를 고르면 새 창으로 열고, 이 창의 호스트는 그대로 "이 PC" 다
+  const select = page.getByTestId('host-select')
+  await expect(select.locator('option', { hasText: '회사 PC' })).toHaveCount(1)
+  await select.selectOption({ label: '회사 PC' })
+  await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__!.openedPeers)).toEqual([{ id: 'peer-1', open: null }])
+  await expect(select).toHaveValue('')
+})

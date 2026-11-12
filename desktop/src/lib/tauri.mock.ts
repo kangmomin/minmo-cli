@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 브라우저 열기 등은 window.__MINMO_MOCK__ 로 노출해 E2E 가 확인한다.
-import type { CloseAction, CmdResult, DirEntry, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, RemoteStatus } from './tauri'
+import type { CloseAction, CmdResult, DirEntry, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -11,6 +11,8 @@ export type TauriMockOptions = {
 export interface MinmoMockHandle {
   /** openUrl 로 연 URL 목록 (로그인 승인 주소 확인용) */
   openedUrls: string[]
+  /** peerOpen 으로 연 다른 PC(와 열 곳) */
+  openedPeers: { id: string; open: unknown }[]
   readonly keychain: Record<string, string>
   /** 창 닫기 버튼을 누른 것처럼 close-requested 를 보낸다 */
   emitCloseRequested(): void
@@ -84,6 +86,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   }
 
   let remote: RemoteStatus = { enabled: false, lan: false, port: 8790, addresses: [], devices: [{ id: 'd1', name: '내 휴대폰', createdMs: 1, lastSeenMs: 1, connected: false }], error: null }
+  let peers: Peer[] = []
   const paths = new Set<string>()
   // 파일 탭: "root\nrel" → 내용. worktree 를 만들면 README.md 가 생긴 것으로 본다
   const textFiles = new Map<string, string>()
@@ -147,6 +150,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
 
   const handle: MinmoMockHandle = {
     openedUrls: [],
+    openedPeers: [],
     get keychain() {
       return Object.fromEntries(keychain)
     },
@@ -315,6 +319,20 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     onRemoteChanged: async () => () => {},
     onRemoteRpc: async () => () => {},
     remoteRpcReply: async () => {},
+    peersList: async () => peers,
+    peerAdd: async (input) => {
+      if (input.code !== '123456') throw new Error('코드가 맞지 않습니다(남은 시도 4번)')
+      peers = [...peers.filter((p) => p.url !== input.url), { id: `peer-${peers.length + 1}`, name: input.name || input.url, url: input.url, token: 'mock-peer-token' }]
+      return peers
+    },
+    peerRemove: async (id) => {
+      peers = peers.filter((p) => p.id !== id)
+      return peers
+    },
+    agentsPublish: async () => {},
+    peerOpen: async (id, open) => {
+      handle.openedPeers.push({ id, open: open ?? null })
+    },
     ptyProcesses: async (id) => ptyProcs.get(id) ?? [],
     claudeSubagents: async (cwd) => subagents.get(cwd) ?? [],
     notify: async (title, body) => {

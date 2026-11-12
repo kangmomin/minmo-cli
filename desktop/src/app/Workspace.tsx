@@ -6,8 +6,10 @@ import type { SettingsScope } from '@minmo/api-client'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
-import { AgentsButton, AgentsOverview } from '../features/agents/AgentsOverview'
+import { AgentsButton, AgentsOverview, useLocalRows } from '../features/agents/AgentsOverview'
 import { useAgentTracker } from '../features/agents/useAgentTracker'
+import { useDeepLinkOpen } from '../features/remote/deepLink'
+import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
 import { RemoteAccessDialog } from '../features/remote/RemoteAccessDialog'
 import { useSharedTerminals } from '../features/remote/useRemoteHost'
 import { useBaseDeps } from './deps'
@@ -51,6 +53,10 @@ export function Workspace() {
   useSharedTerminals(baseTauri)
   // 원격으로 붙은 화면에서는 이 PC 전용 설정(원격 접속·서버·원격 CLI)을 보이지 않는다
   const isHost = baseTauri.runtime !== 'remote'
+  // 여러 PC: 등록한 다른 PC 의 현황을 받아 합치고, 이 PC 의 현황은 올려 둔다
+  usePeerAgents(baseTauri)
+  useAgentPublisher(baseTauri, useLocalRows())
+  useDeepLinkOpen()
   // 열어 둔 모든 터미널의 에이전트 상태를 추적한다(이슈 행·패널·현황·알림)
   useAgentTracker()
   const connection = useHostConnection()
