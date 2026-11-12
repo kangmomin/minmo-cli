@@ -181,6 +181,8 @@ function TerminalSession({
     const el = host.current
     if (!el) return
     let disposed = false
+    /** 한글 등의 조합이 방금 끝났다(그 글자를 xterm 이 아직 보내지 않았다) */
+    let justComposed = false
     const t = new Terminal({
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -207,11 +209,14 @@ function TerminalSession({
           clearSelection: () => t.clearSelection(),
         },
         // 사용자가 친 글자처럼 넣는다 — onData 를 거쳐 PTY 로 간다.
-        // 한 박자 늦춘다: xterm 은 조합이 끝난 한글을 setTimeout(0) 으로 보내므로, 바로 보내면 마지막 글자보다 먼저 간다
-        (data) =>
-          void setTimeout(() => {
+        // 한글 조합이 막 끝났을 때만 한 박자 늦춘다: xterm 은 조합이 끝난 글자를 setTimeout(0) 으로 보내므로,
+        // 바로 보내면 마지막 글자보다 먼저 간다. 평소에는 바로 보낸다(늦추면 바로 뒤에 친 키와 순서가 뒤바뀐다)
+        (data) => {
+          if (!justComposed) return t.input(data)
+          setTimeout(() => {
             if (!disposed) t.input(data)
-          }, 0),
+          }, 0)
+        },
       ),
     )
     const fit = new FitAddon()
@@ -228,6 +233,12 @@ function TerminalSession({
     // xterm 이 프로그램의 질의에 자동으로 답하는 것(포커스·마우스·커서 위치 보고)은 입력으로 치지 않는다
     const onUserInput = () => noteTerminalInput(paneId)
     t.textarea?.addEventListener('keydown', onUserInput)
+    // xterm 의 compositionend 처리(위 open 때 등록) 뒤에 실행되므로, 이 타이머는 xterm 이 조합 글자를 보내는 타이머 다음에 돈다
+    const onCompositionEnd = () => {
+      justComposed = true
+      setTimeout(() => (justComposed = false), 0)
+    }
+    t.textarea?.addEventListener('compositionend', onCompositionEnd)
     t.textarea?.addEventListener('paste', onUserInput)
     // [다시 시작] 버튼이 사라지며 포커스를 잃으므로, 사용자가 시작한 재시작에 한해 새 터미널로 포커스를 옮긴다(자동 포커스 금지 AX-02 의 예외)
     if (focusAfterRestart.current) {
@@ -331,6 +342,7 @@ function TerminalSession({
       disposed = true
       t.textarea?.removeEventListener('focus', onFocus)
       t.textarea?.removeEventListener('keydown', onUserInput)
+      t.textarea?.removeEventListener('compositionend', onCompositionEnd)
       t.textarea?.removeEventListener('paste', onUserInput)
       for (const c of cleanups) c()
       // kill 의 reject(이미 종료된 PTY 등)는 무시한다
