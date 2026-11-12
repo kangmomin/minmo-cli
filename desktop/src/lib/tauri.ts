@@ -40,7 +40,7 @@ export type ServerState = 'starting' | 'running' | 'failed' | 'stopped' | 'exter
 export type ServerStatus = { state: ServerState; port: number; message: string | null }
 /** 창을 닫을 때: 매번 묻기 · 트레이로 숨기기(서버 유지) · 종료 */
 export type CloseAction = 'ask' | 'tray' | 'quit'
-/** 서버 설정 — Client Secret 은 돌려주지 않고 저장 여부만 */
+/** 서버 설정(포트·창 닫기 동작) */
 export type ServerSettings = {
   port: number
   closeAction: CloseAction

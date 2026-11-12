@@ -15,7 +15,8 @@ import { useNoteDraftStore } from '../../store/noteDrafts'
 import { useSessionStore } from '../../store/session'
 import type { AuthMessage } from '../../store/session'
 
-export type AuthPhase = 'restoring' | 'anonymous' | 'pending' | 'authenticated'
+/** busy = 로그인 시작 요청 중이거나 승인 뒤 확정하는 중(버튼을 막는다) */
+export type AuthPhase = 'restoring' | 'anonymous' | 'busy' | 'pending' | 'authenticated'
 
 export interface UseAuthResult {
   phase: AuthPhase
@@ -32,13 +33,14 @@ export interface UseAuthResult {
 export const KEYRING_FAILED_NOTICE = '세션이 저장되지 않음(재시작 시 재로그인) — OS 키체인에 접근할 수 없습니다'
 export const LOGIN_EXPIRED_MESSAGE = '코드가 만료되었습니다 — 다시 로그인하세요'
 export const LOGIN_DENIED_MESSAGE = 'GitHub 에서 승인을 거부했습니다'
+export const LOGIN_FAILED_MESSAGE = 'GitHub 승인은 됐지만 로그인을 끝내지 못했습니다 — 다시 로그인하세요'
 
-/** 승인 페이지는 github.com 의 기기 코드 주소만 연다. loopback http(E2E githubmock)만 예외 */
+/** 승인 페이지는 github.com 의 기기 코드 주소만 연다. http://127.0.0.1(E2E githubmock — 앱이 열 수 있게 허용한 주소)만 예외 */
 export function isAllowedVerificationUri(raw: string): boolean {
   try {
     const u = new URL(raw)
     if (u.protocol === 'https:') return u.hostname === 'github.com' && u.pathname === '/login/device'
-    return u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]')
+    return u.protocol === 'http:' && u.hostname === '127.0.0.1'
   } catch {
     return false
   }
@@ -47,8 +49,9 @@ export function isAllowedVerificationUri(raw: string): boolean {
 function apiMessage(err: unknown): AuthMessage {
   if (err instanceof ApiError) {
     if (err.code === 'github_oauth_not_configured') {
-      return { code: err.code, message: '이 앱에는 GitHub 로그인 설정(Client ID)이 들어 있지 않습니다 — 최신 버전으로 업데이트하세요' }
+      return { code: err.code, message: '이 앱의 GitHub 로그인 설정(Client ID·Device Flow)이 올바르지 않습니다 — 최신 버전으로 업데이트하세요' }
     }
+    if (err.code === 'login_failed') return { code: err.code, message: LOGIN_FAILED_MESSAGE }
     if (err.code === 'github_unavailable') return { code: err.code, message: 'GitHub 에 연결하지 못했습니다 — 잠시 후 다시 시도하세요' }
     if (isOfflineError(err)) return { code: err.code, message: `서버에 연결할 수 없습니다(${err.code}) — 서버 설정에서 상태를 확인하세요` }
     return { code: err.code, message: `로그인 실패(${err.code}) — 다시 시도` }
@@ -71,11 +74,12 @@ export function useAuth(): UseAuthResult {
   const restoring = useSessionStore((s) => s.restoring)
   const token = useSessionStore((s) => s.token)
   const pendingLogin = useSessionStore((s) => s.pendingLogin)
+  const loginBusy = useSessionStore((s) => s.loginBusy)
   const me = useSessionStore((s) => s.me)
   const error = useSessionStore((s) => s.authError)
   const notice = useSessionStore((s) => s.notice)
 
-  const phase: AuthPhase = restoring ? 'restoring' : token ? 'authenticated' : pendingLogin ? 'pending' : 'anonymous'
+  const phase: AuthPhase = restoring ? 'restoring' : token ? 'authenticated' : loginBusy ? 'busy' : pendingLogin ? 'pending' : 'anonymous'
 
   const openVerification = useCallback(async () => {
     const store = useSessionStore.getState()
@@ -91,6 +95,9 @@ export function useAuth(): UseAuthResult {
 
   const startLogin = useCallback(async () => {
     const store = useSessionStore.getState()
+    // 두 번 눌러도 로그인 흐름은 하나만 — 둘을 시작하면 브라우저에 입력한 코드와 앱이 기다리는 코드가 어긋난다
+    if (store.loginBusy || store.token) return
+    store.setLoginBusy(true)
     store.setAuthError(null)
     store.setNotice(null)
     let start
@@ -101,7 +108,11 @@ export function useAuth(): UseAuthResult {
       store.setPendingLogin(null)
       store.setAuthError(apiMessage(e))
       return
+    } finally {
+      useSessionStore.getState().setLoginBusy(false)
     }
+    // 기다리는 사이 다른 경로(세션 복원)로 로그인됐으면 이 코드는 쓰지 않는다
+    if (useSessionStore.getState().token) return
     if (!isAllowedVerificationUri(start.verificationUri)) {
       store.setPendingLogin(null)
       store.setAuthError({ code: 'invalid_verification_uri', message: '서버가 GitHub 가 아닌 승인 주소를 돌려주었습니다' })
@@ -241,8 +252,14 @@ export function useAuthController(): void {
             await api.logout({ token: res.session }).catch(() => undefined)
             return
           }
-          useSessionStore.getState().setPendingLogin(null)
-          await confirm(res.session)
+          const store = useSessionStore.getState()
+          store.setLoginBusy(true)
+          store.setPendingLogin(null)
+          try {
+            await confirm(res.session)
+          } finally {
+            useSessionStore.getState().setLoginBusy(false)
+          }
           return
         }
         if (current()) schedule(res.interval)
@@ -250,6 +267,8 @@ export function useAuthController(): void {
         if (!current()) return
         if (e instanceof ApiError && e.code === 'access_denied') return fail({ code: e.code, message: LOGIN_DENIED_MESSAGE })
         if (e instanceof ApiError && e.code === 'device_code_expired') return fail({ code: e.code, message: LOGIN_EXPIRED_MESSAGE })
+        // 다시 확인해도 같은 답인 오류(설정 문제·승인 뒤 저장 실패·허용하지 않은 출처)는 바로 끝낸다
+        if (e instanceof ApiError && (e.code === 'github_oauth_not_configured' || e.code === 'login_failed' || e.code === 'forbidden_origin')) return fail(apiMessage(e))
         // 서버·GitHub 의 일시 오류는 코드가 살아 있는 동안 계속 확인한다
         if (isOfflineError(e)) handleApiError(e)
         schedule(pending.interval)

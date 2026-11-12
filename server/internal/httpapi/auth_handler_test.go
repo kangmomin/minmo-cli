@@ -75,9 +75,74 @@ func TestAuth_DeviceStartNotConfigured(t *testing.T) {
 	status, m := s.DoJSON("POST", "/auth/github/device/start", "", nil)
 	expectErr(t, status, m, 503, "github_oauth_not_configured", "")
 
+	// 다시 해도 같은 결과이므로 "잠시 후 다시" 가 아니라 설정 문제로 답한다
 	s = testutil.NewTestServer(t, func(c *httpapi.Config) { c.GitHubClientID = githubmock.ClientDisabled })
 	status, m = s.DoJSON("POST", "/auth/github/device/start", "", nil)
-	expectErr(t, status, m, 502, "github_unavailable", "")
+	expectErr(t, status, m, 503, "github_oauth_not_configured", "")
+}
+
+// 다른 웹 페이지(허용하지 않은 Origin)에서 온 로그인 시작·확인은 받지 않는다. Origin 이 없는 요청(CLI)과 앱 화면은 받는다
+func TestAuth_DeviceOrigin(t *testing.T) {
+	s := testutil.NewTestServer(t)
+	evil := map[string]string{"Origin": "https://evil.example"}
+	for _, path := range []string{"/auth/github/device/start", "/auth/github/device/poll"} {
+		resp, b := s.Do("POST", path, "", map[string]string{"deviceId": "x"}, evil)
+		if resp.StatusCode != 403 || !strings.Contains(string(b), "forbidden_origin") {
+			t.Errorf("%s from evil origin: %d %q", path, resp.StatusCode, b)
+		}
+	}
+	resp, b := s.Do("POST", "/auth/github/device/start", "", nil, map[string]string{"Origin": "http://tauri.localhost"})
+	if resp.StatusCode != 200 {
+		t.Errorf("app origin: %d %q", resp.StatusCode, b)
+	}
+	startDevice(t, s) // Origin 없음
+}
+
+// 승인 뒤 사용자 확인(/user)이 실패하면 "만료"가 아니라 login_failed 로 끝낸다
+func TestAuth_DevicePollLoginFailedAfterApproval(t *testing.T) {
+	s := testutil.NewTestServer(t)
+	s.SetNextDevice(githubmock.CodeBadUser)
+	id, _ := startDevice(t, s)["deviceId"].(string)
+	status, m := pollDevice(s, id)
+	expectErr(t, status, m, 502, "login_failed", "")
+	if n := countRows(t, s, "sessions"); n != 0 {
+		t.Errorf("sessions = %d", n)
+	}
+}
+
+// 같은 deviceId 를 동시에 여러 번 확인해도 GitHub 에는 한 번만 묻고 세션도 하나만 만든다
+func TestAuth_DevicePollConcurrent(t *testing.T) {
+	s := testutil.NewTestServer(t)
+	id, _ := startDevice(t, s)["deviceId"].(string)
+	const n = 8
+	results := make(chan string, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			_, m := pollDevice(s, id)
+			if st, _ := m["status"].(string); st != "" {
+				results <- st
+				return
+			}
+			code, _ := m["error"].(string)
+			results <- code
+		}()
+	}
+	ok := 0
+	for i := 0; i < n; i++ {
+		switch r := <-results; r {
+		case "ok":
+			ok++
+		case "pending", "device_code_expired":
+		default:
+			t.Errorf("unexpected result %q", r)
+		}
+	}
+	if ok != 1 {
+		t.Errorf("ok responses = %d, want 1", ok)
+	}
+	if c := countRows(t, s, "sessions"); c != 1 {
+		t.Errorf("sessions = %d, want 1", c)
+	}
 }
 
 // E2 성공: 세션 토큰을 돌려주고 사용자·세션·기본 설정을 만든다. GitHub 토큰은 암호화해 저장하고, 같은 deviceId 는 다시 쓸 수 없다

@@ -16,6 +16,8 @@ const (
 	CodeGitHubOAuthNotConfigured ErrorCode = "github_oauth_not_configured"
 	CodeAccessDenied             ErrorCode = "access_denied"
 	CodeDeviceCodeExpired        ErrorCode = "device_code_expired"
+	CodeLoginFailed              ErrorCode = "login_failed"
+	CodeForbiddenOrigin          ErrorCode = "forbidden_origin"
 	CodeGitHubUnavailable        ErrorCode = "github_unavailable"
 	CodeGlobalRequiresAllFields  ErrorCode = "global_requires_all_fields"
 	CodeInvalidTemplate          ErrorCode = "invalid_template"

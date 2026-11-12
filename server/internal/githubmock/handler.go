@@ -9,6 +9,7 @@
 //     · CodeOK → 바로 TokenOK · CodeUser2 → 바로 TokenUser2
 //     · CodePending → authorization_pending 2번 뒤 TokenOK · CodeSlowDown → slow_down(interval 10) 1번 뒤 TokenOK
 //     · CodeDenied → access_denied · CodeExpired → expired_token · CodeGitHubDown → HTTP 500
+//     · CodeBadUser → 토큰은 주지만 /user 가 401
 //   - POST /login/oauth/access_token (form: client_id, device_code, grant_type=urn:ietf:params:oauth:grant-type:device_code)
 //     · 발급한 적 없거나 이미 토큰을 받은 device_code → expired_token (1회용)
 //   - GET  /user (Authorization: Bearer|token <access token>)
@@ -36,6 +37,8 @@ const (
 	CodeDenied     = "mock-code-denied"
 	CodeExpired    = "mock-code-expired"
 	CodeGitHubDown = "mock-code-5xx"
+	// CodeBadUser 는 승인은 되지만 받은 토큰으로 /user 를 부르면 401 이 나는 경우다
+	CodeBadUser = "mock-code-bad-user"
 
 	TokenOK    = "gho_mock_token"
 	TokenUser2 = "gho_mock_token2"
@@ -157,6 +160,8 @@ func (m *mock) accessToken(w http.ResponseWriter, r *http.Request) {
 		token = TokenOK
 	case result == CodeUser2:
 		token = TokenUser2
+	case result == CodeBadUser:
+		token = "gho_mock_unknown"
 	case result == CodePending:
 		if polls <= 2 {
 			fail("authorization_pending", nil)

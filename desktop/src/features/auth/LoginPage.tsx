@@ -1,5 +1,5 @@
 import { CopyIcon, ExternalLinkIcon, LogInIcon, Loader2Icon, ServerIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { ThemeToggle } from '../../components/ThemeToggle'
 import { Button } from '../../components/ui/button'
@@ -14,6 +14,9 @@ export function LoginPage() {
   const pending = useSessionStore((s) => s.pendingLogin)
   const setNotice = useSessionStore((s) => s.setNotice)
   const [copied, setCopied] = useState('')
+  // 새 코드를 받으면 이전 코드의 "복사했습니다" 안내를 지운다
+  const userCode = pending?.userCode
+  useEffect(() => setCopied(''), [userCode])
 
   async function copyCode() {
     if (!pending) return
@@ -57,9 +60,13 @@ export function LoginPage() {
           <div className="grid gap-3" data-testid="device-login">
             <p className="text-sm">브라우저에 열린 GitHub 페이지에 아래 코드를 입력하고 승인하세요. 승인하면 자동으로 로그인됩니다.</p>
             <div className="flex items-center gap-2">
-              <code className="flex-1 rounded bg-muted px-3 py-2 text-center font-mono text-2xl font-semibold tracking-widest" data-testid="device-user-code" aria-label={`로그인 코드 ${pending.userCode}`}>
-                {pending.userCode}
-              </code>
+              {/* 화면 낭독기가 "로그인 코드" 라는 이름과 함께 코드 글자를 읽게 한다 */}
+              <p className="flex-1 rounded bg-muted px-3 py-2 text-center">
+                <span className="sr-only">로그인 코드: </span>
+                <code className="font-mono text-2xl font-semibold tracking-widest" data-testid="device-user-code">
+                  {pending.userCode}
+                </code>
+              </p>
               <Button type="button" variant="outline" size="sm" onClick={() => void copyCode()}>
                 <CopyIcon /> 복사
               </Button>
@@ -67,7 +74,7 @@ export function LoginPage() {
             <p className="text-xs text-muted-foreground" role="status">
               {copied}
             </p>
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
               <Loader2Icon className="size-4 animate-spin" /> GitHub 승인을 기다리는 중…
             </p>
             <div className="flex flex-wrap gap-2">
@@ -83,8 +90,8 @@ export function LoginPage() {
             </p>
           </div>
         ) : (
-          <Button onClick={() => void auth.startLogin()} disabled={auth.phase === 'restoring'}>
-            <LogInIcon /> GitHub로 로그인
+          <Button onClick={() => void auth.startLogin()} disabled={auth.phase === 'restoring' || auth.phase === 'busy'}>
+            {auth.phase === 'busy' ? <Loader2Icon className="animate-spin" /> : <LogInIcon />} GitHub로 로그인
           </Button>
         )}
         <Button variant="ghost" size="sm" onClick={openServerSettings}>

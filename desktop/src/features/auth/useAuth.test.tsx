@@ -9,7 +9,7 @@ import type { TauriApi } from '../../lib/tauri'
 import { useSessionStore } from '../../store/session'
 import { apiError, createFakeApi, createFakeTauri } from '../../test/fakes'
 import { makeDeps, makeQueryClient, renderHookWithDeps } from '../../test/render'
-import { LOGIN_DENIED_MESSAGE, LOGIN_EXPIRED_MESSAGE, isAllowedVerificationUri, useAuth, useAuthController } from './useAuth'
+import { LOGIN_DENIED_MESSAGE, LOGIN_EXPIRED_MESSAGE, LOGIN_FAILED_MESSAGE, isAllowedVerificationUri, useAuth, useAuthController } from './useAuth'
 
 const ME: Me = { id: 'usr_00000000-0000-0000-0000-000000000001', githubLogin: 'octocat', avatarUrl: null }
 const VERIFY_URL = 'https://github.com/login/device'
@@ -85,7 +85,8 @@ describe('로그인 시작', () => {
   it('승인 주소는 github.com 의 기기 코드 페이지만(loopback http 는 E2E 용 예외)', async () => {
     expect(isAllowedVerificationUri('https://github.com/login/device')).toBe(true)
     expect(isAllowedVerificationUri('http://127.0.0.1:8790/login/device')).toBe(true)
-    for (const bad of ['https://evil.example/login/device', 'https://github.com.evil.example/login/device', 'https://github.com/other', 'http://github.com/login/device', 'javascript:alert(1)', '']) {
+    // 앱이 브라우저로 열 수 있게 허용한 loopback 은 127.0.0.1 뿐이다
+    for (const bad of ['http://localhost:8790/login/device', 'http://[::1]:8790/login/device', 'https://evil.example/login/device', 'https://github.com.evil.example/login/device', 'https://github.com/other', 'http://github.com/login/device', 'javascript:alert(1)', '']) {
       expect(isAllowedVerificationUri(bad), bad).toBe(false)
     }
     const t = setup({ startDeviceLogin: async () => ({ ...START, verificationUri: 'https://evil.example/login/device' }) })
@@ -95,6 +96,28 @@ describe('로그인 시작', () => {
     expect(t.tauri.openUrl).not.toHaveBeenCalled()
     expect(t.result.current.phase).toBe('anonymous')
     expect(t.result.current.error?.code).toBe('invalid_verification_uri')
+  })
+
+  it('두 번 눌러도 로그인 흐름은 하나만 시작한다 — 시작 요청 중에는 busy', async () => {
+    let resolve!: (v: typeof START) => void
+    const t = setup({ startDeviceLogin: () => new Promise<typeof START>((r) => (resolve = r)) })
+    // 시작할 때의 세션 복원이 끝난 뒤에 누른다
+    await waitFor(() => expect(t.result.current.phase).toBe('anonymous'))
+    let first!: Promise<void>
+    act(() => {
+      first = t.result.current.startLogin()
+    })
+    expect(t.result.current.phase).toBe('busy')
+    await act(async () => {
+      await t.result.current.startLogin()
+    })
+    expect(t.api.startDeviceLogin).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolve(START)
+      await first
+    })
+    expect(t.result.current.phase).toBe('pending')
+    expect(t.tauri.openUrl).toHaveBeenCalledTimes(1)
   })
 
   it('브라우저를 열지 못해도 코드는 유효하다 — 대기를 유지하고 직접 열 주소를 알린다', async () => {
@@ -154,6 +177,44 @@ describe('승인 확인', () => {
     await tick(5000)
     expect(expired.result.current.phase).toBe('anonymous')
     expect(expired.result.current.error?.message).toBe(LOGIN_EXPIRED_MESSAGE)
+  })
+
+  it('다시 확인해도 같은 오류(승인 뒤 저장 실패·설정 문제)는 바로 끝내고 사유를 보인다', async () => {
+    vi.useFakeTimers()
+    const failed = setup({ pollDeviceLogin: polls(apiError(502, 'login_failed')) })
+    await startPending(failed)
+    await tick(5000)
+    expect(failed.result.current.phase).toBe('anonymous')
+    expect(failed.result.current.error?.message).toBe(LOGIN_FAILED_MESSAGE)
+    await tick(60_000)
+    expect(failed.api.pollDeviceLogin).toHaveBeenCalledTimes(1)
+    failed.unmount()
+
+    useSessionStore.setState(useSessionStore.getInitialState(), true)
+    const misconfigured = setup({ pollDeviceLogin: polls(apiError(503, 'github_oauth_not_configured')) })
+    await startPending(misconfigured)
+    await tick(5000)
+    expect(misconfigured.result.current.phase).toBe('anonymous')
+    expect(misconfigured.result.current.error?.message).toContain('Device Flow')
+  })
+
+  it('승인 뒤 확정(E3·E4)하는 동안에는 busy — 로그인 버튼을 다시 누를 수 없다', async () => {
+    vi.useFakeTimers()
+    let resolveMe!: (m: Me) => void
+    const t = setup({ pollDeviceLogin: polls({ status: 'ok', session: 'cand-token' }), me: () => new Promise<Me>((r) => (resolveMe = r)) })
+    await startPending(t)
+    await tick(5000)
+    expect(t.result.current.phase).toBe('busy')
+    await act(async () => {
+      await t.result.current.startLogin()
+    })
+    expect(t.api.startDeviceLogin).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolveMe(ME)
+      await Promise.resolve()
+    })
+    await tick(0)
+    expect(t.result.current.phase).toBe('authenticated')
   })
 
   it('만료 시각(15분)이 지나면 서버에 묻지 않고 대기를 끝낸다', async () => {
@@ -346,7 +407,7 @@ describe('CT-38(v2.5) E1 503 github_oauth_not_configured 는 offline 아님', ()
     await act(async () => {
       await t.result.current.startLogin().catch(() => undefined)
     })
-    await waitFor(() => expect(t.result.current.error?.message).toBe('이 앱에는 GitHub 로그인 설정(Client ID)이 들어 있지 않습니다 — 최신 버전으로 업데이트하세요'))
+    await waitFor(() => expect(t.result.current.error?.message).toBe('이 앱의 GitHub 로그인 설정(Client ID·Device Flow)이 올바르지 않습니다 — 최신 버전으로 업데이트하세요'))
     expect(useSessionStore.getState().status).toBe('online')
   })
 

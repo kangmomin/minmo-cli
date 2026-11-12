@@ -14,6 +14,8 @@ export interface SessionState {
   status: ConnectionStatus
   /** E1 호출로 켠 로그인 대기(코드 만료까지, 메모리) */
   pendingLogin: PendingLogin | null
+  /** 로그인 시작 요청 중이거나 승인 뒤 확정(E3·E4)하는 중 — 그동안 로그인 버튼을 막는다 */
+  loginBusy: boolean
   /** 키체인 복원 진행 중 */
   restoring: boolean
   /** 로그인 화면 오류(승인 거부·코드 만료·E1 실패 등) */
@@ -24,6 +26,7 @@ export interface SessionState {
   setSession(token: string, me: Me): void
   clearSession(): void
   setPendingLogin(p: PendingLogin | null): void
+  setLoginBusy(v: boolean): void
   setStatus(s: ConnectionStatus): void
   setRestoring(v: boolean): void
   setAuthError(e: AuthMessage | null): void
@@ -36,6 +39,7 @@ export const useSessionStore = create<SessionState>()((set) => ({
   me: null,
   status: 'online',
   pendingLogin: null,
+  loginBusy: false,
   restoring: false,
   authError: null,
   notice: null,
@@ -43,6 +47,7 @@ export const useSessionStore = create<SessionState>()((set) => ({
   // 연결 상태(status)는 세션과 무관하므로 유지한다
   clearSession: () => set({ token: null, me: null }),
   setPendingLogin: (pendingLogin) => set({ pendingLogin }),
+  setLoginBusy: (loginBusy) => set({ loginBusy }),
   setStatus: (status) => set({ status }),
   setRestoring: (restoring) => set({ restoring }),
   setAuthError: (authError) => set({ authError }),

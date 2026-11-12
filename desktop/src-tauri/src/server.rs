@@ -1,6 +1,6 @@
 // 내장 서버 — 설치 파일에 함께 들어간 사이드카 minmo-server 를 앱과 함께 띄우고 끈다.
 // 서버 설정은 데스크탑이 갖고(server.json + OS 키체인) env 로 넘긴다. 토큰 암호화 키는 처음 실행할 때 만들어
-// 키체인에 두고, OAuth Client Secret 은 쓰기 전용(웹뷰에는 저장 여부만)이다.
+// 키체인에 둔다. GitHub 로그인(기기 코드 방식)의 Client ID 는 서버에 들어 있어 따로 넘기지 않는다.
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
@@ -485,8 +485,11 @@ impl ServerManager {
             token_key: token_key()
                 .map_err(|e| format!("키체인에서 서버 키를 준비하지 못했습니다: {e}"))?,
         };
-        // 실패해도(항목 없음 포함) 시작에는 지장이 없다
-        let _ = keychain::delete(LEGACY_CLIENT_SECRET_KEY);
+        // 앱 실행당 한 번이면 된다(서버를 다시 시작할 때마다 할 필요는 없다). 실패해도(항목 없음 포함) 시작에는 지장이 없다
+        static LEGACY_CLEANUP: std::sync::Once = std::sync::Once::new();
+        LEGACY_CLEANUP.call_once(|| {
+            let _ = keychain::delete(LEGACY_CLIENT_SECRET_KEY);
+        });
         let exe = sidecar_path()?;
         if !exe.exists() {
             return Err(format!("서버 실행 파일이 없습니다: {}", exe.display()));

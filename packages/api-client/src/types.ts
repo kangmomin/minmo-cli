@@ -40,6 +40,8 @@ export type ErrorCode =
   | 'github_oauth_not_configured'
   | 'access_denied'
   | 'device_code_expired'
+  | 'login_failed'
+  | 'forbidden_origin'
   | 'github_unavailable'
   | 'global_requires_all_fields'
   | 'invalid_template'

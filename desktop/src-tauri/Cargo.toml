@@ -25,7 +25,7 @@ tokio = { version = "1", features = ["process", "io-util", "rt", "sync", "time"]
 getrandom = "0.3"
 base64 = "0.21"
 
-# Windows 는 딥링크가 새 프로세스 인자로 들어오므로 single-instance 가 기존 창으로 전달해야 한다
+# 앱을 한 번 더 실행하면 새 창 대신 이미 떠 있는 창(트레이로 숨긴 창 포함)을 띄운다
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
 # 자동 업데이트(서명 검증 후 설치) — 웹뷰가 아니라 Rust 명령(update.rs)에서만 쓴다

@@ -23,6 +23,9 @@ var (
 	ErrDeviceExpired = errors.New("github: device code expired")
 	// ErrAccessDenied 는 사용자가 브라우저에서 승인을 거부한 경우다.
 	ErrAccessDenied = errors.New("github: access denied")
+	// ErrOAuthMisconfigured 는 OAuth App 설정이 잘못돼 다시 해도 소용없는 경우다
+	// (Device Flow 를 켜지 않음·Client ID 가 틀림) → 503 github_oauth_not_configured.
+	ErrOAuthMisconfigured = errors.New("github: oauth app misconfigured")
 )
 
 // OAuthScope 는 로그인으로 받는 권한 범위다.
@@ -79,8 +82,10 @@ func (c *GitHubClient) RequestDeviceCode(ctx context.Context) (DeviceCode, error
 	if err := c.postForm(ctx, "/login/device/code", url.Values{"client_id": {c.ClientID}, "scope": {OAuthScope}}, &body); err != nil {
 		return DeviceCode{}, err
 	}
+	if misconfigured(body.Error) {
+		return DeviceCode{}, fmt.Errorf("%w: 기기 코드 발급 오류 %q", ErrOAuthMisconfigured, body.Error)
+	}
 	if body.Error != "" || body.DeviceCode.DeviceCode == "" || body.UserCode == "" || body.VerificationURI == "" {
-		// device_flow_disabled(OAuth App 에서 Device Flow 를 켜지 않음)·잘못된 client_id 등
 		return DeviceCode{}, fmt.Errorf("%w: 기기 코드 발급 오류 %q", ErrGitHubUnavailable, body.Error)
 	}
 	return body.DeviceCode, nil
@@ -113,8 +118,20 @@ func (c *GitHubClient) PollDeviceToken(ctx context.Context, deviceCode string) (
 	case "access_denied":
 		return "", 0, ErrAccessDenied
 	default:
+		if misconfigured(body.Error) {
+			return "", 0, fmt.Errorf("%w: 토큰 확인 오류 %q", ErrOAuthMisconfigured, body.Error)
+		}
 		return "", 0, fmt.Errorf("%w: 토큰 확인 오류 %q", ErrGitHubUnavailable, body.Error)
 	}
+}
+
+// misconfigured 는 GitHub 오류 코드가 OAuth App 설정 문제인지(다시 해도 같은 결과) 본다.
+func misconfigured(code string) bool {
+	switch code {
+	case "device_flow_disabled", "incorrect_client_credentials", "unsupported_grant_type":
+		return true
+	}
+	return false
 }
 
 // FetchUser 는 access token 으로 GET /user 를 호출한다.
@@ -145,6 +162,10 @@ func (c *GitHubClient) doJSON(req *http.Request, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxGitHubResponse))
+		// 없는 Client ID 로 기기 코드를 요청하면 GitHub 는 404 로 답한다
+		if resp.StatusCode == http.StatusNotFound && req.URL.Path == "/login/device/code" {
+			return fmt.Errorf("%w: %s → 404", ErrOAuthMisconfigured, req.URL.Path)
+		}
 		return fmt.Errorf("%w: %s %s → %d", ErrGitHubUnavailable, req.Method, req.URL.Path, resp.StatusCode)
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxGitHubResponse)).Decode(out); err != nil {

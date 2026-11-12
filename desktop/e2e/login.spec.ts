@@ -62,11 +62,11 @@ test('취소하면 더 확인하지 않는다', async ({ page }) => {
   expect(calls.filter((c) => c.path === '/auth/github/device/poll').length).toBe(before)
 })
 
-test('E1 503(Client ID 없음) → 안내만 보이고, 서버 설정에는 OAuth App 항목이 없다', async ({ page }) => {
+test('E1 503(Client ID 없음·Device Flow 꺼짐) → 안내만 보이고, 서버 설정에는 OAuth App 항목이 없다', async ({ page }) => {
   await routeServer(page, (_req, path) => (path === '/auth/github/device/start' ? { status: 503, body: { error: 'github_oauth_not_configured' } } : undefined))
   await page.goto('/')
   await page.getByRole('button', { name: 'GitHub로 로그인' }).click()
-  await expect(page.getByRole('alert')).toContainText('GitHub 로그인 설정(Client ID)이 들어 있지 않습니다')
+  await expect(page.getByRole('alert')).toContainText('GitHub 로그인 설정(Client ID·Device Flow)이 올바르지 않습니다')
   await page.getByRole('button', { name: '서버 설정' }).click()
   const dialog = page.getByRole('dialog', { name: '서버 설정' })
   await expect(dialog.getByLabel('포트')).toBeVisible()

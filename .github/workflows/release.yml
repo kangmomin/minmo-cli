@@ -38,6 +38,14 @@ jobs:
           cache: npm
       - id: v
         run: node scripts/check-versions.mjs
+      # GitHub 로그인(기기 코드)의 Client ID 가 비어 있으면 아무도 로그인할 수 없다 — 그런 빌드는 릴리즈하지 않는다
+      - name: Client ID 확인
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          if grep -q 'DefaultGitHubClientID = ""' server/internal/config/config.go; then
+            echo "::error::server/internal/config/config.go 의 DefaultGitHubClientID 가 비어 있습니다 — minmo OAuth App 의 Client ID 를 넣은 뒤 릴리즈하세요"
+            exit 1
+          fi
       - run: npm run test:scripts
       - run: npm ci
       # 릴리즈를 만들기 전에 CLI 가 배포 가능한지 먼저 확인한다
