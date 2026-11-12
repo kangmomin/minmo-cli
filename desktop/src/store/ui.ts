@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
+import { DEFAULT_AGENT_COMMANDS, LAUNCH_KINDS } from '../features/agents/launch'
+import type { LaunchKind } from '../features/agents/launch'
 import { closePane, leaf, leafIds, splitPane } from '../features/terminal/panes'
 import type { PaneNode, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
@@ -49,6 +51,12 @@ export interface UiState {
   agentNotify: boolean
   /** 전체 현황의 필터·정렬·그루핑(persist) */
   agentsView: AgentsView
+  /** 에이전트별 실행 명령 틀(persist) — [에이전트 실행] 에서 고치면 저장된다 */
+  agentCommands: Record<LaunchKind, string>
+  /** 마지막으로 실행한 에이전트(persist) */
+  lastLaunchKind: LaunchKind
+  /** [에이전트 실행] 대화상자를 열 이슈(트리 메뉴에서 요청 — 그 이슈의 작업 폴더가 준비되면 열린다) */
+  launchRequest: string | null
   /** 트리에 에이전트가 있는 이슈만 보인다(저장하지 않는다 — 에이전트 현황은 실행 중에만 있다) */
   treeAgentsOnly: boolean
   panes: Record<string, IssuePanes>
@@ -66,6 +74,14 @@ export interface UiState {
   setAgentNotify(v: boolean): void
   setAgentsView(patch: Partial<AgentsView>): void
   setTreeAgentsOnly(v: boolean): void
+  setAgentCommand(kind: LaunchKind, command: string): void
+  setLastLaunchKind(kind: LaunchKind): void
+  setLaunchRequest(issueId: string | null): void
+  /**
+   * 에이전트를 실행할 터미널 패널을 마련하고 그 id 를 돌려준다. 아직 터미널을 띄운 적이 없으면 첫 패널을 쓰고,
+   * 이미 쓰는 패널이 있으면 오른쪽에 새 패널을 만든다(쓰던 터미널에 명령을 끼워 넣지 않는다).
+   */
+  launchPane(issueId: string): string
   /**
    * 저장소 식별이 바뀔 때(로컬 저장소를 GitHub 에 올림) 이슈 id 와 트리 노드 id 를 옮긴다.
    * 패널 id 에는 이슈 id 가 들어 있어 옮길 수 없다 — 그 이슈의 터미널 패널은 닫고 다시 열 때 새로 만든다.
@@ -81,7 +97,7 @@ export interface UiState {
 
 export const useUiStore = create<UiState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       expanded: {},
       selectedIssueId: null,
       tab: 'terminal',
@@ -92,6 +108,9 @@ export const useUiStore = create<UiState>()(
       agentNotify: true,
       agentsView: DEFAULT_AGENTS_VIEW,
       treeAgentsOnly: false,
+      agentCommands: DEFAULT_AGENT_COMMANDS,
+      lastLaunchKind: 'claude',
+      launchRequest: null,
       panes: {},
       focusRequest: null,
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
@@ -115,6 +134,30 @@ export const useUiStore = create<UiState>()(
       setAgentNotify: (agentNotify) => set({ agentNotify }),
       setAgentsView: (patch) => set((s) => ({ agentsView: { ...s.agentsView, ...patch } })),
       setTreeAgentsOnly: (treeAgentsOnly) => set({ treeAgentsOnly }),
+      setAgentCommand: (kind, command) => set((s) => ({ agentCommands: { ...s.agentCommands, [kind]: command } })),
+      setLastLaunchKind: (lastLaunchKind) => set({ lastLaunchKind }),
+      setLaunchRequest: (launchRequest) => set({ launchRequest }),
+      launchPane: (issueId) => {
+        const s = get()
+        const cur = s.panes[issueId]
+        const leaves = leafIds(cur?.tree ?? null)
+        // 패널이 없거나(모두 닫음·아직 안 만듦) 하나도 터미널을 띄우지 않았으면 그 자리를 쓴다
+        if (!cur || leaves.length === 0) {
+          const seq = (cur?.seq ?? 0) + 1
+          const id = paneIdOf(issueId, seq)
+          set({ panes: { ...s.panes, [issueId]: { tree: leaf(id), focused: id, seq } }, focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 } })
+          return id
+        }
+        if (!leaves.some((p) => p in s.terminalIds)) {
+          set({ panes: { ...s.panes, [issueId]: { ...cur, focused: leaves[0] } }, focusRequest: { paneId: leaves[0], token: (s.focusRequest?.token ?? 0) + 1 } })
+          return leaves[0]
+        }
+        const from = cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[leaves.length - 1]
+        const seq = cur.seq + 1
+        const id = paneIdOf(issueId, seq)
+        set({ panes: { ...s.panes, [issueId]: { tree: splitPane(cur.tree!, from, 'row', id), focused: id, seq } }, focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 } })
+        return id
+      },
       rekey: (issues, nodes) =>
         set((s) => {
           const worktreePathMap = { ...s.worktreePathMap }
@@ -196,6 +239,8 @@ export const useUiStore = create<UiState>()(
         fontSize: s.fontSize,
         agentNotify: s.agentNotify,
         agentsView: s.agentsView,
+        agentCommands: s.agentCommands,
+        lastLaunchKind: s.lastLaunchKind,
       }),
       // v1: Ghostty 가 새 기본 테마다. 예전에는 고른 적이 없어도 기본값 'black' 이 저장돼 있었으므로, 저장된 'black' 을
       // 한 번만 Ghostty 로 옮긴다(직접 고른 'light' 는 그대로 둔다). 그 뒤에 고른 블랙은 유지된다
@@ -210,6 +255,8 @@ export const useUiStore = create<UiState>()(
         return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme, fontSize: state.fontSize === undefined ? current.fontSize : clampFontSize(state.fontSize),
           // 예전 버전의 저장 값에는 없거나 모양이 다를 수 있다 — 기본값 위에 얹는다
           agentsView: { ...current.agentsView, ...(typeof state.agentsView === 'object' && state.agentsView !== null ? state.agentsView : {}) },
+          agentCommands: { ...current.agentCommands, ...(typeof state.agentCommands === 'object' && state.agentCommands !== null ? state.agentCommands : {}) },
+          lastLaunchKind: LAUNCH_KINDS.includes(state.lastLaunchKind as LaunchKind) ? (state.lastLaunchKind as LaunchKind) : current.lastLaunchKind,
         }
       },
     },

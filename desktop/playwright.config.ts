@@ -15,7 +15,10 @@ export default defineConfig({
     baseURL: 'http://localhost:1420',
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'warmup', testMatch: /warmup\.setup\.ts/ },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, dependencies: ['warmup'] },
+  ],
   webServer: {
     command: 'npm run dev',
     url: 'http://localhost:1420',

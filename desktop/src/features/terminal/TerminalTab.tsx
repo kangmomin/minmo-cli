@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/button'
 import { remotePty } from '../../lib/sshHost'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
+import { LAUNCH_DELAY_MS, takeLaunch } from '../agents/launchQueue'
 import { noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
@@ -246,11 +247,25 @@ function TerminalSession({
       // spawn 응답(id 확정) 전에 온 출력은 첫 프롬프트일 수 있어 id 별로 보관했다가 확정 후 flush 한다(CR-07)
       const pending = new Map<string, string>()
       let settled = false
+      // [에이전트 실행] 으로 맡겨 둔 명령은 셸이 첫 출력을 낸 뒤에 한 번 넣는다
+      let launched = false
+      const launchWhenReady = () => {
+        if (launched || !state.ptyId) return
+        launched = true
+        const cmd = takeLaunch(paneId)
+        const id = state.ptyId
+        if (cmd === undefined) return
+        const timer = setTimeout(() => {
+          if (!disposed && !state.ended) tauri.ptyWrite(id, `${cmd}\r`).catch(state.end)
+        }, LAUNCH_DELAY_MS)
+        cleanups.push(() => clearTimeout(timer))
+      }
       try {
         const unlisten = await tauri.onPtyData((e) => {
           if (disposed) return
           if (e.id === state.ptyId) {
             t.write(e.data)
+            launchWhenReady()
             return
           }
           // 확정 후(또는 spawn 실패 후)의 다른 id 는 다른 세션 출력 — 버린다
@@ -280,7 +295,10 @@ function TerminalSession({
         state.ptyId = id
         const early = pending.get(id)
         pending.clear()
-        if (early) t.write(early)
+        if (early) {
+          t.write(early)
+          launchWhenReady()
+        }
         useUiStore.setState((s) => ({ terminalIds: { ...s.terminalIds, [paneId]: id } }))
         const sub = t.onData((d) => {
           if (state.ended) return
