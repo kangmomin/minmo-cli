@@ -138,6 +138,7 @@ function renderRow(issue: TreeIssue, o: { hasWorktree?: boolean; pathChanged?: b
       <IssueRow
         owner="my-org"
         repo="widgets"
+        issueId={worktreeId('my-org', 'widgets', issue.key)}
         issue={issue}
         hasWorktree={o.hasWorktree ?? false}
         pathChanged={o.pathChanged ?? false}

@@ -23,6 +23,7 @@ pub fn run() {
 
     let app = builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(pty::PtyState::default())
@@ -59,6 +60,7 @@ pub fn run() {
             pty::pty_resize,
             pty::pty_kill,
             pty::pty_kill_by_cwd,
+            pty::pty_processes,
             script::script_run,
             script::script_cancel,
             ssh::ssh_hosts,

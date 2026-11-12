@@ -29,6 +29,12 @@ export interface MinmoMockHandle {
   gitCalls: string[][]
   /** 터미널(PTY)로 보낸 입력 */
   ptyWrites: string[]
+  /** n 번째(1부터)로 만든 터미널에 출력이 나온 것처럼 보낸다 */
+  emitPty(n: number, data: string): void
+  /** n 번째 터미널에서 도는 프로세스 이름(에이전트 감지용) */
+  setPtyProcesses(n: number, names: string[]): void
+  /** notify 로 띄운 알림 */
+  notifications: { title: string; body: string }[]
 }
 
 /** mock 서버 포트 — VITE_MINMO_SERVER(Playwright) 주소를 따른다 */
@@ -116,6 +122,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   const ptyListeners = new Set<(e: PtyDataEvent) => void>()
   const scriptListeners = new Set<(e: ScriptLogEvent) => void>()
   const ptyCwd = new Map<string, string>()
+  const ptyProcs = new Map<string, string[]>()
   let ptySeq = 0
   const cancelled = new Set<string>()
   const closeListeners = new Set<() => void>()
@@ -154,6 +161,9 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     pickedFolder: null,
     gitCalls: [],
     ptyWrites: [],
+    emitPty: (n, data) => emitPty(`mock-pty-${n}`, data),
+    setPtyProcesses: (n, names) => void ptyProcs.set(`mock-pty-${n}`, names),
+    notifications: [],
   }
   if (typeof window !== 'undefined') window.__MINMO_MOCK__ = handle
 
@@ -277,6 +287,10 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       emitPty(id, data === '\r' ? '\r\n$ ' : data)
     },
     ptyResize: async () => {},
+    ptyProcesses: async (id) => ptyProcs.get(id) ?? [],
+    notify: async (title, body) => {
+      handle.notifications.push({ title, body })
+    },
     ptyKill: async (id) => {
       ptyCwd.delete(id)
     },

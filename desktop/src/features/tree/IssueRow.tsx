@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/too
 import type { DeleteCheck, IssueTarget } from '@minmo/core'
 import { cn } from '../../lib/utils'
 import { isLocalOwner, useRepoLabel, useReposStore } from '../../store/repos'
+import { IssueAgentDot } from '../agents/AgentBadge'
 import { describeOpenError, useIssueActions } from '../issue/useWorktree'
 import type { TreeIssue } from './useTree'
 
@@ -16,6 +17,8 @@ export interface IssueRowProps {
   owner: string
   repo: string
   issue: TreeIssue
+  /** 이 호스트에서의 이슈 id(worktree·터미널·에이전트 현황의 키) */
+  issueId: string
   hasWorktree: boolean
   pathChanged: boolean
   selected: boolean
@@ -37,7 +40,7 @@ function countText(label: string, n: number | null) {
 }
 
 /** 이슈 행: 클릭 = 열기, ● = 로컬 worktree 있음, 닫힘·경로 변경 배지, 컨텍스트 메뉴 "worktree 삭제" */
-export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selected }: IssueRowProps) {
+export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged, selected }: IssueRowProps) {
   const actions = useIssueActions()
   const isEtc = issue.key === 'etc'
   const repoLabel = useRepoLabel(owner, repo)
@@ -103,6 +106,7 @@ export function IssueRow({ owner, repo, issue, hasWorktree, pathChanged, selecte
                 <span className="min-w-0 flex-1 truncate">{issue.title}</span>
               </>
             )}
+            <IssueAgentDot issueId={issueId} />
             {issue.state === 'closed' && <Badge variant="secondary">닫힘</Badge>}
             {pathChanged && (
               <Tooltip>

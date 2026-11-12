@@ -6,6 +6,8 @@ import type { SettingsScope } from '@minmo/api-client'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
+import { AgentsButton, AgentsOverview } from '../features/agents/AgentsOverview'
+import { useAgentTracker } from '../features/agents/useAgentTracker'
 import { useAuth } from '../features/auth/useAuth'
 import { CliAccessDialog } from '../features/cli/CliAccessDialog'
 import { IssueHeader } from '../features/issue/IssueHeader'
@@ -34,7 +36,10 @@ export function Workspace() {
   const openState = useSetupStore((s) => (selectedId ? s.open[selectedId] : undefined))
   const [settings, setSettings] = useState<SettingsTarget | null>(null)
   const [cliOpen, setCliOpen] = useState(false)
+  const [agentsOpen, setAgentsOpen] = useState(false)
   useFontSizeShortcuts()
+  // 열어 둔 모든 터미널의 에이전트 상태를 추적한다(이슈 행·패널·현황·알림)
+  useAgentTracker()
   const connection = useHostConnection()
 
   const selectedPreview: PreviewIssue | null = target ?? null
@@ -49,6 +54,7 @@ export function Workspace() {
         <AppVersion />
         <span className="flex-1" />
         {auth.me && <span className="text-sm text-muted-foreground">{auth.me.githubLogin}</span>}
+        <AgentsButton onClick={() => setAgentsOpen(true)} />
         <ThemeToggle />
         <Tooltip>
           <TooltipTrigger asChild>
@@ -120,6 +126,7 @@ export function Workspace() {
       </div>
 
       <CliAccessDialog open={cliOpen} onOpenChange={setCliOpen} />
+      <AgentsOverview open={agentsOpen} onOpenChange={setAgentsOpen} />
 
       {settings && (
         <SettingsDialog

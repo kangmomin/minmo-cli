@@ -139,6 +139,9 @@ fn take_utf8(pending: &mut Vec<u8>) -> String {
     }
 }
 
+/// tmux 가 바깥 터미널에 내보낼 제목 형식 — desktop/src/features/agents/detect.ts 의 TMUX_TITLE_PREFIX 와 짝이다
+const TMUX_TITLE_FORMAT: &str = "minmo:#{pane_current_command}:#{pane_title}";
+
 /// 원격 셸에서 실행할 한 줄. tmux 서버는 처음 실행한 cwd 를 가진 채 남으므로(그 worktree 를 지울 때 걸린다)
 /// 홈에서 시작하고 세션의 시작 폴더만 worktree 로 준다 — 원격 CLI(packages/cli/src/host/tmux.ts)와 같은 규칙
 pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, String> {
@@ -163,8 +166,12 @@ pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, 
             } else {
                 ""
             };
+            // 창 제목으로 "지금 도는 프로그램 이름:그 프로그램이 정한 제목" 을 내보내게 한다 — 앱이 이것으로 에이전트의
+            // 종류와 상태를 안다(tmux 는 기본으로 안쪽 프로그램의 제목을 바깥 터미널에 전달하지 않는다). 이 세션에만 켠다 —
+            // 전용 서버 전체(-g)에 켜면 같은 서버에 붙은 원격 CLI(minmo open)의 터미널 제목까지 바뀐다
+            let titles = ssh::quote(TMUX_TITLE_FORMAT);
             Ok(format!(
-                "cd && exec tmux -u -L minmo new-session -A -s {name} -c {dir} \\; set-option @minmo_worktree {tag}{ephemeral}"
+                "cd && exec tmux -u -L minmo new-session -A -s {name} -c {dir} \\; set-option @minmo_worktree {tag}{ephemeral} \\; set-option set-titles on \\; set-option set-titles-string {titles}"
             ))
         }
     }
@@ -329,6 +336,28 @@ async fn kill_sessions(sessions: Vec<PtySession>) -> Result<(), String> {
         .map_err(err)
 }
 
+/// 이 터미널의 셸 아래에서 도는 프로세스 이름들 — 어떤 에이전트(claude·codex 등)가 떠 있는지 감지할 때 쓴다.
+/// 원격(ssh) 세션은 이 PC 에서 ssh 만 보이므로 빈 목록이다(원격은 터미널 제목으로 감지한다).
+#[tauri::command]
+pub async fn pty_processes(state: State<'_, PtyState>, id: String) -> Result<Vec<String>, String> {
+    let pid = {
+        let sessions = state.sessions.lock().map_err(err)?;
+        match sessions.get(&id) {
+            Some(s) if s.host.is_none() => s.child.process_id(),
+            _ => None,
+        }
+    };
+    match pid {
+        // 프로세스 목록 조회는 잠깐 블로킹된다 — 메인(UI) 스레드에서 하지 않는다
+        Some(pid) => {
+            tauri::async_runtime::spawn_blocking(move || super::procs::descendant_names(pid))
+                .await
+                .map_err(err)
+        }
+        None => Ok(Vec::new()),
+    }
+}
+
 #[tauri::command]
 pub async fn pty_kill(state: State<'_, PtyState>, id: String) -> Result<(), String> {
     let removed = state.sessions.lock().map_err(err)?.remove(&id);
@@ -398,12 +427,12 @@ mod tests {
         );
         assert_eq!(
             remote_shell_command(&remote(Some("minmo-0a1b2c3d4e"), false), "/w/t/").unwrap(),
-            "cd && exec tmux -u -L minmo new-session -A -s minmo-0a1b2c3d4e -c '/w/t/' \\; set-option @minmo_worktree '/w/t'"
+            "cd && exec tmux -u -L minmo new-session -A -s minmo-0a1b2c3d4e -c '/w/t/' \\; set-option @minmo_worktree '/w/t' \\; set-option set-titles on \\; set-option set-titles-string 'minmo:#{pane_current_command}:#{pane_title}'"
         );
         assert!(
             remote_shell_command(&remote(Some("minmo-0a1b2c3d4e-p2"), true), "/w/t")
                 .unwrap()
-                .ends_with("\\; set-option destroy-unattached on")
+                .contains("\\; set-option destroy-unattached on \\; set-option set-titles on")
         );
     }
 

@@ -119,6 +119,10 @@ export interface TauriApi extends WorktreeHost, GhHost {
   renamePath(root: string, from: string, to: string): Promise<void>
   removePath(root: string, rel: string): Promise<void>
 
+  /** 이 터미널의 셸 아래에서 도는 프로세스 이름들(원격 세션은 빈 목록) — 에이전트 감지용 */
+  ptyProcesses(id: string): Promise<string[]>
+  /** OS 알림을 띄운다(권한이 없으면 조용히 넘어간다) */
+  notify(title: string, body: string): Promise<void>
   /** opener: 외부 브라우저로 URL 열기 */
   openUrl(url: string): Promise<void>
   /** 이 PC 의 폴더 선택 창. 취소하면 null (원격 호스트의 폴더는 고를 수 없다) */
@@ -157,6 +161,7 @@ export const TAURI_COMMANDS = {
   ptyResize: 'pty_resize',
   ptyKill: 'pty_kill',
   ptyKillByCwd: 'pty_kill_by_cwd',
+  ptyProcesses: 'pty_processes',
   scriptRun: 'script_run',
   scriptCancel: 'script_cancel',
   sshHosts: 'ssh_hosts',
@@ -248,6 +253,13 @@ export function createTauriApi(): TauriApi {
     renamePath: (root, from, to) => call(C.renamePath, { root, from, to }),
     removePath: (root, rel) => call(C.removePath, { root, rel }),
 
+    ptyProcesses: (id) => call(C.ptyProcesses, { id }),
+    notify: async (title, body) => {
+      const n = await import('@tauri-apps/plugin-notification')
+      let granted = await n.isPermissionGranted()
+      if (!granted) granted = (await n.requestPermission()) === 'granted'
+      if (granted) n.sendNotification({ title, body })
+    },
     openUrl: async (url) => (await import('@tauri-apps/plugin-opener')).openUrl(url),
     pickFolder: async (defaultPath) => {
       const picked = await (await import('@tauri-apps/plugin-dialog')).open({ directory: true, multiple: false, ...(defaultPath ? { defaultPath } : {}) })

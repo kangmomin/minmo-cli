@@ -46,6 +46,8 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
   const [closeAction, setCloseAction] = useState<CloseAction>('ask')
   const fontSize = useUiStore((s) => s.fontSize)
   const setFontSize = useUiStore((s) => s.setFontSize)
+  const agentNotify = useUiStore((s) => s.agentNotify)
+  const setAgentNotify = useUiStore((s) => s.setAgentNotify)
   // 입력 중인 글자 — 범위 안의 숫자가 됐을 때만 적용한다("1" 을 치는 순간 9 로 바뀌지 않게)
   const [fontDraft, setFontDraft] = useState(String(fontSize))
   useEffect(() => setFontDraft(String(fontSize)), [fontSize])
@@ -193,6 +195,17 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
         <p className="text-xs text-muted-foreground">
           바꾸면 바로 적용되고 이 PC 에 저장됩니다({FONT_SIZE.min}~{FONT_SIZE.max}px). 단축키: Ctrl + 키우기 · Ctrl - 줄이기 · Ctrl 0 기본값.
         </p>
+      </section>
+
+      <section className="grid gap-2" aria-labelledby={fid('agents')}>
+        <h3 id={fid('agents')} className="text-sm font-semibold">
+          에이전트 알림
+        </h3>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={agentNotify} onChange={(e) => setAgentNotify(e.target.checked)} />
+          에이전트가 작업을 끝내거나 입력을 기다리면 알림 띄우기
+        </label>
+        <p className="text-xs text-muted-foreground">그 터미널을 보고 있지 않을 때만 알립니다. 바꾸면 바로 적용되고 이 PC 에 저장됩니다.</p>
       </section>
 
       {error && (

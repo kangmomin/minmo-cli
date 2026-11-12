@@ -3,6 +3,7 @@ pub mod git;
 #[cfg(windows)]
 pub mod job;
 pub mod keychain;
+pub mod procs;
 pub mod pty;
 pub mod script;
 pub mod ssh;
