@@ -2,6 +2,7 @@
 // 이벤트 이름은 TAURI_EVENTS("pty-data", "script-log", "server-status", "close-requested", "update-progress") 와 일치해야 한다.
 mod commands;
 mod profile;
+mod remote;
 mod server;
 mod shell;
 mod update;
@@ -39,6 +40,8 @@ pub fn run() {
                 ssh::init(&dirs.config);
             }
             app.manage(server::ServerManager::load(&handle));
+            // 원격 접속(꺼져 있으면 아무 포트도 열지 않는다)
+            remote::init(&handle);
             shell::setup_tray(&handle)?;
             // 서버 준비를 기다리는 동안 창이 멈추지 않게 백그라운드에서 띄운다(웹뷰는 server-status 로 기다린다)
             std::thread::spawn(move || handle.state::<server::ServerManager>().start(&handle));
@@ -49,6 +52,10 @@ pub fn run() {
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 pty::kill_all(&webview.state::<pty::PtyState>());
+                // 붙은 기기의 호출 중 이 화면에 맡겨 둔 것은 답이 오지 않는다 — 기다리게 두지 않는다
+                if let Some(remote) = webview.try_state::<remote::RemoteManager>() {
+                    remote.fail_pending();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -56,6 +63,8 @@ pub fn run() {
             git::gh_run,
             git::gh_available,
             pty::pty_spawn,
+            pty::pty_find,
+            pty::pty_list,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
@@ -97,6 +106,14 @@ pub fn run() {
             shell::app_close,
             update::app_update_check,
             update::app_update_install,
+            remote::remote_status,
+            remote::remote_configure,
+            remote::remote_pair_start,
+            remote::remote_pair_cancel,
+            remote::remote_device_remove,
+            remote::remote_rpc_reply,
+            remote::shared_get,
+            remote::shared_set,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

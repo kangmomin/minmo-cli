@@ -2,12 +2,12 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::ssh;
 
@@ -29,6 +29,12 @@ pub struct PtySession {
     cwd: String,
     /// 원격(ssh) 세션이면 호스트 별칭 — 이때 cwd 는 원격 경로다
     host: Option<String>,
+    /// 화면의 패널 id — 같은 패널을 여는 다른 기기(원격 접속)가 이 터미널에 함께 붙는다
+    key: Option<String>,
+    /// 최근 출력 — 나중에 붙은 화면이 지금까지의 내용을 그릴 수 있게 보관한다
+    scrollback: Arc<Mutex<Scrollback>>,
+    cols: u16,
+    rows: u16,
     /// ConPTY 시작 커서 위치 질의(ESC[6n)의 응답(CPR)이 입력으로 지나갔는지
     cpr_answered: bool,
     /// 셸과 그 자손이 속한 Job Object — 만들지 못하면 None(트리 종료만으로 정리)
@@ -81,6 +87,30 @@ impl PtySession {
     }
 }
 
+/// 보관하는 최근 출력의 상한(바이트)
+const SCROLLBACK_LIMIT: usize = 256 * 1024;
+
+#[derive(Default)]
+/// (보관한 글, 지금까지 나온 전체 길이) — 길이는 붙는 화면이 "어디까지 받았는지" 맞추는 데 쓴다
+pub(crate) struct Scrollback(String, u64);
+
+impl Scrollback {
+    fn push(&mut self, text: &str) -> u64 {
+        self.1 += text.len() as u64;
+        self.0.push_str(text);
+        if self.0.len() > SCROLLBACK_LIMIT {
+            // 넘친 만큼 앞을 버리되 줄 경계에서 자른다 — 제어 문자열 중간부터 다시 그리면 화면이 깨진다
+            let mut cut = self.0.len() - SCROLLBACK_LIMIT;
+            while !self.0.is_char_boundary(cut) {
+                cut += 1;
+            }
+            let cut = self.0[cut..].find('\n').map_or(cut, |i| cut + i + 1);
+            self.0.drain(..cut);
+        }
+        self.1
+    }
+}
+
 /// 입력에 커서 위치 보고(CPR, `ESC[<행>;<열>R`)가 있는지 — xterm.js 가 ESC[6n 에 자동 응답한 것
 fn contains_cpr(data: &[u8]) -> bool {
     (0..data.len()).any(|i| {
@@ -100,6 +130,8 @@ fn contains_cpr(data: &[u8]) -> bool {
 #[derive(Default)]
 pub struct PtyState {
     sessions: Mutex<HashMap<String, PtySession>>,
+    /// key 로 여는 동안 잡는다 — 두 화면이 같은 패널을 동시에 열어도 셸은 하나만 뜬다
+    opening: Mutex<()>,
     seq: AtomicU64,
 }
 
@@ -107,6 +139,8 @@ pub struct PtyState {
 struct PtyData {
     id: String,
     data: String,
+    /// 이 조각까지의 전체 출력 길이 — 붙는 화면이 지난 출력(scrollback)과 겹치는 조각을 가려낸다
+    end: u64,
 }
 
 fn default_shell() -> String {
@@ -193,10 +227,108 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// key(화면의 패널 id)가 있고 그 패널의 터미널이 이미 떠 있으면 새로 만들지 않고 그 id 를 돌려준다 —
+/// 이 PC 의 창과 원격 접속한 기기가 같은 터미널을 함께 쓴다.
 #[tauri::command]
 pub fn pty_spawn(
     app: AppHandle,
     state: State<'_, PtyState>,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    remote: Option<RemotePty>,
+    key: Option<String>,
+) -> Result<String, String> {
+    let Some(k) = &key else {
+        return spawn(&app, &state, None, cwd, cols, rows, remote);
+    };
+    // 찾기와 만들기를 한 묶음으로 — 그 사이에 다른 화면이 같은 패널을 열면 셸이 두 개 뜬다
+    let _opening = state.opening.lock().map_err(err)?;
+    if let Some(found) = find_alive(&state, k)? {
+        return Ok(found.id);
+    }
+    spawn(&app, &state, key, cwd, cols, rows, remote)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyFound {
+    id: String,
+    /// 지금까지의 출력 — 붙는 화면이 먼저 그린다
+    scrollback: String,
+    /// scrollback 이 담은 마지막 위치(전체 출력 길이) — 이보다 뒤의 pty-data 만 이어서 그린다
+    offset: u64,
+    cols: u16,
+    rows: u16,
+}
+
+/// key 의 터미널이 살아 있으면 돌려준다. 셸이 끝난 터미널은 치운다(그 패널은 새 터미널을 만들 수 있다)
+fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
+    let ended = {
+        let mut sessions = state.sessions.lock().map_err(err)?;
+        let Some(id) = sessions
+            .iter()
+            .find(|(_, s)| s.key.as_deref() == Some(key))
+            .map(|(id, _)| id.clone())
+        else {
+            return Ok(None);
+        };
+        let s = sessions.get_mut(&id).ok_or("pty 없음")?;
+        if matches!(s.child.try_wait(), Ok(None)) {
+            let (scrollback, offset) = {
+                let sb = s.scrollback.lock().map_err(err)?;
+                (sb.0.clone(), sb.1)
+            };
+            return Ok(Some(PtyFound {
+                id,
+                scrollback,
+                offset,
+                cols: s.cols,
+                rows: s.rows,
+            }));
+        }
+        sessions.remove(&id)
+    };
+    if let Some(s) = ended {
+        std::thread::spawn(move || kill_and_close(vec![s]));
+    }
+    Ok(None)
+}
+
+/// 패널(key)의 터미널이 이미 떠 있으면 그 id 와 지금까지의 출력을 돌려준다(없으면 null)
+#[tauri::command]
+pub fn pty_find(state: State<'_, PtyState>, key: String) -> Result<Option<PtyFound>, String> {
+    find_alive(&state, &key)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyInfo {
+    id: String,
+    key: Option<String>,
+    cwd: String,
+    host: Option<String>,
+}
+
+/// 떠 있는 터미널 목록 — 원격 화면이 열어 보지 않은 이슈의 에이전트 상태도 알 수 있게 한다
+#[tauri::command]
+pub fn pty_list(state: State<'_, PtyState>) -> Result<Vec<PtyInfo>, String> {
+    let sessions = state.sessions.lock().map_err(err)?;
+    Ok(sessions
+        .iter()
+        .map(|(id, s)| PtyInfo {
+            id: id.clone(),
+            key: s.key.clone(),
+            cwd: s.cwd.clone(),
+            host: s.host.clone(),
+        })
+        .collect())
+}
+
+fn spawn(
+    app: &AppHandle,
+    state: &PtyState,
+    key: Option<String>,
     cwd: String,
     cols: u16,
     rows: u16,
@@ -230,6 +362,9 @@ pub fn pty_spawn(
     let id = format!("pty-{}", state.seq.fetch_add(1, Ordering::SeqCst) + 1);
 
     let emit_id = id.clone();
+    let scrollback = Arc::new(Mutex::new(Scrollback::default()));
+    let kept = scrollback.clone();
+    let app = app.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         let mut pending: Vec<u8> = Vec::new();
@@ -240,16 +375,29 @@ pub fn pty_spawn(
                     pending.extend_from_slice(&buf[..n]);
                     let text = take_utf8(&mut pending);
                     if !text.is_empty() {
+                        let end = kept.lock().map(|mut k| k.push(&text)).unwrap_or(0);
                         let _ = app.emit(
                             "pty-data",
                             PtyData {
                                 id: emit_id.clone(),
                                 data: text,
+                                end,
                             },
                         );
                     }
                 }
             }
+        }
+        // 출력이 끝났다(셸 종료) — 붙어 있는 화면에 알리고 목록에서 뺀다
+        let _ = app.emit("pty-exit", emit_id.clone());
+        let ended = app
+            .state::<PtyState>()
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|mut s| s.remove(&emit_id));
+        if let Some(s) = ended {
+            kill_and_close(vec![s]);
         }
     });
 
@@ -261,6 +409,10 @@ pub fn pty_spawn(
             child,
             cwd,
             host: remote.map(|r| r.host),
+            key,
+            scrollback,
+            cols,
+            rows,
             cpr_answered: false,
             #[cfg(windows)]
             job,
@@ -278,23 +430,43 @@ pub fn pty_write(state: State<'_, PtyState>, id: String, data: String) -> Result
     s.write_input(data.as_bytes()).map_err(err)
 }
 
+#[derive(Clone, Serialize)]
+struct PtyResized {
+    id: String,
+    cols: u16,
+    rows: u16,
+}
+
 #[tauri::command]
 pub fn pty_resize(
+    app: AppHandle,
     state: State<'_, PtyState>,
     id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    let sessions = state.sessions.lock().map_err(err)?;
-    let s = sessions.get(&id).ok_or_else(|| format!("pty {id} 없음"))?;
-    s.master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(err)
+    {
+        let mut sessions = state.sessions.lock().map_err(err)?;
+        let s = sessions
+            .get_mut(&id)
+            .ok_or_else(|| format!("pty {id} 없음"))?;
+        if s.cols == cols && s.rows == rows {
+            return Ok(());
+        }
+        s.master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(err)?;
+        s.cols = cols;
+        s.rows = rows;
+    }
+    // 같은 터미널을 보는 다른 화면이 같은 크기로 그리게 알린다
+    let _ = app.emit("pty-resized", PtyResized { id, cols, rows });
+    Ok(())
 }
 
 /// ConPTY 닫기 대기 상한. 정상 닫기는 수십 ms 이고, 이 시간이 지나도 닫히지 않는 세션은 포기한다
@@ -444,6 +616,28 @@ mod tests {
     }
 
     #[test]
+    fn scrollback_keeps_recent_output_and_cuts_at_a_line_boundary() {
+        let mut sb = Scrollback::default();
+        sb.push("first\n");
+        assert_eq!(sb.0, "first\n");
+        // 상한을 넘기면 앞에서 버리고, 남은 것은 줄의 처음부터 시작한다(한글이 잘리지 않는다)
+        let line = "가나다라마바사아자차카타파하\n";
+        for _ in 0..(SCROLLBACK_LIMIT / line.len() + 50) {
+            sb.push(line);
+        }
+        assert!(sb.0.len() <= SCROLLBACK_LIMIT);
+        assert!(sb.0.len() > SCROLLBACK_LIMIT - 2 * line.len());
+        assert!(sb.0.starts_with(line));
+        assert!(!sb.0.contains("first"));
+        // 줄바꿈이 없는 긴 출력도 상한을 지킨다
+        let mut sb = Scrollback::default();
+        let end = sb.push(&"x".repeat(SCROLLBACK_LIMIT + 10));
+        assert_eq!(sb.0.len(), SCROLLBACK_LIMIT);
+        // 버린 것까지 센 전체 길이를 돌려준다
+        assert_eq!(end, SCROLLBACK_LIMIT as u64 + 10);
+    }
+
+    #[test]
     fn contains_cpr_detects_only_cursor_reports() {
         assert!(contains_cpr(b"\x1b[1;1R"));
         assert!(contains_cpr(b"ab\x1b[24;80Rcd"));
@@ -524,6 +718,10 @@ mod tests {
                 child,
                 cwd: String::new(),
                 host: None,
+                key: None,
+                scrollback: Arc::default(),
+                cols: 80,
+                rows: 24,
                 cpr_answered: false,
                 job,
             };

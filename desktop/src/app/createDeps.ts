@@ -51,6 +51,8 @@ export async function createAppDeps(queryClient: QueryClient, baseUrl?: string):
   const github = createGitHubClient({
     tauri,
     fetch: (input, init) => globalThis.fetch(input, init),
+    // 원격 화면: GitHub API 는 호스트가 /gh 로 받아 대신 요청한다. VITE_GITHUB_API: 개발·격리 E2E 의 가짜 GitHub(VITE_MINMO_SERVER 와 같은 용도)
+    apiBase: tauri.runtime === 'remote' ? `${window.location.origin}/gh` : import.meta.env.VITE_GITHUB_API || undefined,
     getToken: githubToken,
     // EC-02: 서버가 준 GitHub 토큰도 거부 → 세션 폐기 후 로그인 화면
     onUnauthorized: () => {

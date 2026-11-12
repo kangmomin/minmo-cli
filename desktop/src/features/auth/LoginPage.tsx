@@ -5,12 +5,14 @@ import { ThemeToggle } from '../../components/ThemeToggle'
 import { Button } from '../../components/ui/button'
 import { openServerSettings } from '../../store/server'
 import { useSessionStore } from '../../store/session'
+import { runtimeKind } from '../../lib/tauri'
 import { AppVersion } from '../update/AppVersion'
 import { useAuth } from './useAuth'
 
 /** GitHub 기기 코드 로그인: [GitHub 로 로그인] → 코드 표시 + 브라우저 열기 → 승인하면 자동으로 로그인된다 */
 export function LoginPage() {
   const auth = useAuth()
+  const remote = runtimeKind() === 'remote'
   const pending = useSessionStore((s) => s.pendingLogin)
   const setNotice = useSessionStore((s) => s.setNotice)
   const [copied, setCopied] = useState('')
@@ -89,14 +91,26 @@ export function LoginPage() {
               브라우저가 열리지 않으면 직접 여세요: <span className="font-mono">{pending.verificationUri}</span>
             </p>
           </div>
+        ) : remote ? (
+          // 원격 화면: 로그인은 호스트 PC 에서 한다(세션·GitHub 토큰은 호스트에만 둔다)
+          <div className="grid gap-2 text-center">
+            <p role="status" className="text-sm">
+              호스트 PC 의 minmo 에서 먼저 GitHub 로 로그인하세요.
+            </p>
+            <Button variant="outline" onClick={() => window.location.reload()}>
+              다시 확인
+            </Button>
+          </div>
         ) : (
           <Button onClick={() => void auth.startLogin()} disabled={auth.phase === 'restoring' || auth.phase === 'busy'}>
             {auth.phase === 'busy' ? <Loader2Icon className="animate-spin" /> : <LogInIcon />} GitHub로 로그인
           </Button>
         )}
-        <Button variant="ghost" size="sm" onClick={openServerSettings}>
-          <ServerIcon /> 서버 설정
-        </Button>
+        {!remote && (
+          <Button variant="ghost" size="sm" onClick={openServerSettings}>
+            <ServerIcon /> 서버 설정
+          </Button>
+        )}
       </div>
     </div>
   )

@@ -36,7 +36,7 @@ export interface SidebarProps {
 }
 
 /** 좌측 트리: 개인 계정(첫 노드) → 조직 → 저장소 → ★기타 + 이슈 (AC-03) */
-export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings }: SidebarProps) {
+export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: SidebarProps & { className?: string }) {
   const aliases = useHostsStore((s) => s.aliases)
   const [hostsOpen, setHostsOpen] = useState(false)
   const { selected } = connection
@@ -81,7 +81,7 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings }: SidebarProp
     : []
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r" aria-label="이슈 트리">
+    <aside className={`flex h-full w-72 shrink-0 flex-col border-r ${className ?? ''}`} aria-label="이슈 트리">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <select
           aria-label="작업 호스트"

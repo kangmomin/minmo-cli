@@ -32,8 +32,28 @@ export type SshError = { kind: SshErrorKind; message: string }
 /** 원격 터미널 — session 이 있으면 전용 tmux 세션에 붙고(ephemeral 은 떼면 사라짐), null 이면 로그인 셸 */
 export type RemotePty = { host: string; session: string | null; ephemeral: boolean }
 
-export type PtySpawnRequest = { cwd: string; cols: number; rows: number; remote?: RemotePty }
-export type PtyDataEvent = { id: string; data: string }
+/** key(화면의 패널 id)가 있으면 그 패널의 터미널이 이미 떠 있을 때 새로 만들지 않고 그 id 를 돌려준다(다른 기기와 함께 쓴다) */
+export type PtySpawnRequest = { cwd: string; cols: number; rows: number; remote?: RemotePty; key?: string }
+/** end: 이 조각까지의 전체 출력 길이 — 붙는 화면이 지난 출력(PtyFound.scrollback)과 겹치는 조각을 가려낸다 */
+export type PtyDataEvent = { id: string; data: string; end?: number }
+/** 이미 떠 있는 터미널 — scrollback(지금까지의 출력)을 먼저 그리고 붙는다 */
+/** offset: scrollback 이 담은 마지막 위치(전체 출력 길이) */
+export type PtyFound = { id: string; scrollback: string; offset: number; cols: number; rows: number }
+export type PtyInfo = { id: string; key: string | null; cwd: string; host: string | null }
+export type PtyResizedEvent = { id: string; cols: number; rows: number }
+
+/** 원격 접속(src-tauri/src/remote.rs) — 다른 PC·휴대폰의 브라우저가 이 앱에 붙는다 */
+export type RemoteAddress = { kind: 'local' | 'tailscale' | 'lan'; url: string }
+export type RemoteDevice = { id: string; name: string; createdMs: number; lastSeenMs: number; connected: boolean }
+export type RemoteStatus = { enabled: boolean; lan: boolean; port: number; addresses: RemoteAddress[]; devices: RemoteDevice[]; error: string | null }
+export type RemoteConfigInput = Partial<Pick<RemoteStatus, 'enabled' | 'lan' | 'port'>>
+/** 붙은 기기가 보낸 호출 — 이 PC 의 화면이 대신 실행해 remoteRpcReply 로 답한다 */
+export type RemoteRpcRequest = { id: number; method: string; args: unknown[] }
+export type SharedChangedEvent = { key: string; origin: string; rev?: number }
+/** rev: 판 번호 — 저장할 때마다 오른다 */
+export type SharedValue = { value: string | null; rev: number }
+/** native = Tauri 창, remote = 다른 기기의 브라우저(호스트에 붙음), mock = 개발·테스트 */
+export type RuntimeKind = 'native' | 'remote' | 'mock'
 
 /** 내장 서버 상태(src-tauri/src/server.rs Status) — external 은 debug 실행에서 외부 서버를 쓸 때 */
 export type ServerState = 'starting' | 'running' | 'failed' | 'stopped' | 'external'
@@ -64,6 +84,8 @@ export const KEYCHAIN_KEYS = {
 
 /** 데스크탑 전용 기능(PTY·키체인 등)을 더한 Tauri 호스트 — worktree·GitHub 공용 인터페이스를 모두 만족한다 */
 export interface TauriApi extends WorktreeHost, GhHost {
+  /** 이 구현이 어디서 도는가 */
+  readonly runtime: RuntimeKind
   /** git <args> — non-zero 종료도 reject 하지 않고 code 로 돌려준다 */
   gitRun(args: string[], opts?: RunOptions): Promise<CmdResult>
   ghRun(args: string[], opts?: RunOptions & { stdin?: string }): Promise<CmdResult>
@@ -77,6 +99,32 @@ export interface TauriApi extends WorktreeHost, GhHost {
   /** cwd 가 path(또는 하위)인 PTY 를 모두 종료하고 종료 개수를 돌려준다 (worktree 삭제 전) */
   ptyKillByCwd(path: string, host?: string): Promise<number>
   onPtyData(cb: (e: PtyDataEvent) => void): Promise<Unlisten>
+  /** 패널(key)의 터미널이 이미 떠 있으면 그 터미널(없으면 null) */
+  ptyFind(key: string): Promise<PtyFound | null>
+  /** 떠 있는 터미널 목록 — 이 화면이 열지 않은 패널의 것도 포함한다 */
+  ptyList(): Promise<PtyInfo[]>
+  /** 셸이 끝났다 */
+  onPtyExit(cb: (id: string) => void): Promise<Unlisten>
+  /** 터미널 크기가 바뀌었다(같은 터미널을 보는 다른 화면이 바꾼 경우 포함) */
+  onPtyResized(cb: (e: PtyResizedEvent) => void): Promise<Unlisten>
+
+  /** 여러 화면(이 PC 의 창·붙은 기기)이 함께 쓰는 상태 — 이 PC 의 파일에 저장된다. origin 은 바꾼 화면 */
+  sharedGet(key: string): Promise<SharedValue>
+  /** base 는 마지막으로 본 판 번호 — 그 사이 다른 화면이 저장했으면 shared_conflict 로 reject 한다. 새 판 번호를 돌려준다 */
+  sharedSet(key: string, value: string, origin: string, base: number): Promise<number>
+  onSharedChanged(cb: (e: SharedChangedEvent) => void): Promise<Unlisten>
+
+  /** 원격 접속 설정·기기 등록 — 이 PC 의 창에서만 쓴다 */
+  remoteStatus(): Promise<RemoteStatus>
+  remoteConfigure(input: RemoteConfigInput): Promise<RemoteStatus>
+  /** 기기 등록 코드(6자리, 1회용)를 만든다 */
+  remotePairStart(): Promise<{ code: string; expiresInSec: number }>
+  remotePairCancel(): Promise<void>
+  remoteDeviceRemove(id: string): Promise<RemoteStatus>
+  /** 기기가 등록·접속·끊김 */
+  onRemoteChanged(cb: () => void): Promise<Unlisten>
+  onRemoteRpc(cb: (req: RemoteRpcRequest) => void): Promise<Unlisten>
+  remoteRpcReply(id: number, ok: boolean, value: unknown): Promise<void>
 
   scriptRun(req: ScriptRunRequest): Promise<ScriptRunResult>
   scriptCancel(runId: string): Promise<void>
@@ -206,9 +254,30 @@ export const TAURI_COMMANDS = {
   appClose: 'app_close',
   appUpdateCheck: 'app_update_check',
   appUpdateInstall: 'app_update_install',
+  ptyFind: 'pty_find',
+  ptyList: 'pty_list',
+  sharedGet: 'shared_get',
+  sharedSet: 'shared_set',
+  remoteStatus: 'remote_status',
+  remoteConfigure: 'remote_configure',
+  remotePairStart: 'remote_pair_start',
+  remotePairCancel: 'remote_pair_cancel',
+  remoteDeviceRemove: 'remote_device_remove',
+  remoteRpcReply: 'remote_rpc_reply',
 } as const
 
-export const TAURI_EVENTS = { ptyData: 'pty-data', scriptLog: 'script-log', serverStatus: 'server-status', closeRequested: 'close-requested', updateProgress: 'update-progress' } as const
+export const TAURI_EVENTS = {
+  ptyData: 'pty-data',
+  ptyExit: 'pty-exit',
+  ptyResized: 'pty-resized',
+  scriptLog: 'script-log',
+  serverStatus: 'server-status',
+  closeRequested: 'close-requested',
+  updateProgress: 'update-progress',
+  sharedChanged: 'shared-changed',
+  remoteChanged: 'remote-changed',
+  remoteRpc: 'remote-rpc',
+} as const
 
 /** @tauri-apps/api invoke 기반 실제 구현 */
 export function createTauriApi(): TauriApi {
@@ -219,11 +288,27 @@ export function createTauriApi(): TauriApi {
   const C = TAURI_COMMANDS
 
   return {
+    runtime: 'native',
     gitRun: (args, opts) => call(C.gitRun, { args, cwd: opts?.cwd ?? null, env: opts?.env ?? null }),
     ghRun: (args, opts) => call(C.ghRun, { args, cwd: opts?.cwd ?? null, env: opts?.env ?? null, stdin: opts?.stdin ?? null }),
     ghAvailable: () => call(C.ghAvailable),
 
-    ptySpawn: (req) => call(C.ptySpawn, { cwd: req.cwd, cols: req.cols, rows: req.rows, remote: req.remote ?? null }),
+    ptySpawn: (req) => call(C.ptySpawn, { cwd: req.cwd, cols: req.cols, rows: req.rows, remote: req.remote ?? null, key: req.key ?? null }),
+    ptyFind: (key) => call(C.ptyFind, { key }),
+    ptyList: () => call(C.ptyList),
+    onPtyExit: async (cb) => (await event()).listen<string>(TAURI_EVENTS.ptyExit, (e) => cb(e.payload)),
+    onPtyResized: async (cb) => (await event()).listen<PtyResizedEvent>(TAURI_EVENTS.ptyResized, (e) => cb(e.payload)),
+    sharedGet: (key) => call(C.sharedGet, { key }),
+    sharedSet: (key, value, origin, base) => call(C.sharedSet, { key, value, origin, base }),
+    onSharedChanged: async (cb) => (await event()).listen<SharedChangedEvent>(TAURI_EVENTS.sharedChanged, (e) => cb(e.payload)),
+    remoteStatus: () => call(C.remoteStatus),
+    remoteConfigure: (input) => call(C.remoteConfigure, { input }),
+    remotePairStart: () => call(C.remotePairStart),
+    remotePairCancel: () => call(C.remotePairCancel),
+    remoteDeviceRemove: (id) => call(C.remoteDeviceRemove, { id }),
+    onRemoteChanged: async (cb) => (await event()).listen(TAURI_EVENTS.remoteChanged, () => cb()),
+    onRemoteRpc: async (cb) => (await event()).listen<RemoteRpcRequest>(TAURI_EVENTS.remoteRpc, (e) => cb(e.payload)),
+    remoteRpcReply: (id, ok, value) => call(C.remoteRpcReply, { id, ok, value: value ?? null }),
     ptyWrite: (id, data) => call(C.ptyWrite, { id, data }),
     ptyResize: (id, cols, rows) => call(C.ptyResize, { id, cols, rows }),
     ptyKill: (id) => call(C.ptyKill, { id }),
@@ -297,9 +382,24 @@ function hasTauriRuntime(): boolean {
 
 let instance: TauriApi | null = null
 
-/** `__TAURI_INTERNALS__` 가 없으면(또는 VITE_TAURI_MOCK=1) tauri.mock.ts 의 인메모리 가짜를 돌려준다 */
+/**
+ * 어디서 도는가: Tauri 창이면 native. 아니면 개발 서버·테스트(vite dev, vitest)는 mock,
+ * 빌드한 화면을 일반 브라우저로 연 것(호스트가 내준 웹 화면)은 remote.
+ */
+export function runtimeKind(): RuntimeKind {
+  if (import.meta.env.VITE_TAURI_MOCK === '1') return 'mock'
+  if (hasTauriRuntime()) return 'native'
+  return import.meta.env.PROD ? 'remote' : 'mock'
+}
+
+/** 원격 화면은 호스트에 붙은 뒤(features/remote/RemoteGate) 그 연결로 만든 구현을 여기에 꽂는다 */
+export function setTauri(api: TauriApi) {
+  instance = api
+}
+
+/** Tauri 창이 아니면 tauri.mock.ts 의 인메모리 가짜(또는 setTauri 로 꽂은 원격 구현)를 돌려준다 */
 export function getTauri(): TauriApi {
   if (instance) return instance
-  instance = hasTauriRuntime() && import.meta.env.VITE_TAURI_MOCK !== '1' ? createTauriApi() : createTauriMock()
+  instance = runtimeKind() === 'native' ? createTauriApi() : createTauriMock()
   return instance
 }

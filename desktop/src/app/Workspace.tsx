@@ -1,5 +1,5 @@
-import { LogOutIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
-import { useState } from 'react'
+import { ListTreeIcon, LogOutIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import type { SettingsScope } from '@minmo/api-client'
 
@@ -8,6 +8,9 @@ import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { AgentsButton, AgentsOverview } from '../features/agents/AgentsOverview'
 import { useAgentTracker } from '../features/agents/useAgentTracker'
+import { RemoteAccessDialog } from '../features/remote/RemoteAccessDialog'
+import { useSharedTerminals } from '../features/remote/useRemoteHost'
+import { useBaseDeps } from './deps'
 import { useAuth } from '../features/auth/useAuth'
 import { CliAccessDialog } from '../features/cli/CliAccessDialog'
 import { IssueHeader } from '../features/issue/IssueHeader'
@@ -37,7 +40,17 @@ export function Workspace() {
   const [settings, setSettings] = useState<SettingsTarget | null>(null)
   const [cliOpen, setCliOpen] = useState(false)
   const [agentsOpen, setAgentsOpen] = useState(false)
+  const [remoteOpen, setRemoteOpen] = useState(false)
+  // 좁은 화면(휴대폰)에서는 트리와 작업 화면을 한 번에 하나만 보인다 — 이슈를 고르면 작업 화면으로 넘어간다
+  const [showTree, setShowTree] = useState(true)
+  useEffect(() => {
+    if (selectedId) setShowTree(false)
+  }, [selectedId])
   useFontSizeShortcuts()
+  const baseTauri = useBaseDeps().tauri
+  useSharedTerminals(baseTauri)
+  // 원격으로 붙은 화면에서는 이 PC 전용 설정(원격 접속·서버·원격 CLI)을 보이지 않는다
+  const isHost = baseTauri.runtime !== 'remote'
   // 열어 둔 모든 터미널의 에이전트 상태를 추적한다(이슈 행·패널·현황·알림)
   useAgentTracker()
   const connection = useHostConnection()
@@ -49,29 +62,46 @@ export function Workspace() {
   return (
     <HostScope alias={connection.ready ? connection.selected : null}>
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-3 border-b px-4 py-2">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2 max-md:px-2">
+        <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label={showTree ? '작업 화면 보기' : '이슈 목록 보기'} aria-pressed={showTree} onClick={() => setShowTree((v) => !v)}>
+          <ListTreeIcon />
+        </Button>
         <span className="font-semibold">minmo</span>
         <AppVersion />
         <span className="flex-1" />
         {auth.me && <span className="text-sm text-muted-foreground">{auth.me.githubLogin}</span>}
         <AgentsButton onClick={() => setAgentsOpen(true)} />
         <ThemeToggle />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="원격 CLI 접속" onClick={() => setCliOpen(true)}>
-              <TerminalSquareIcon />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>원격 CLI 접속</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="서버 설정" onClick={openServerSettings}>
-              <ServerIcon />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>서버 설정</TooltipContent>
-        </Tooltip>
+        {isHost && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="원격 접속" onClick={() => setRemoteOpen(true)}>
+                <MonitorSmartphoneIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>원격 접속(다른 PC·휴대폰)</TooltipContent>
+          </Tooltip>
+        )}
+        {isHost && (
+          <>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="원격 CLI 접속" onClick={() => setCliOpen(true)}>
+                  <TerminalSquareIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>원격 CLI 접속</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="서버 설정" onClick={openServerSettings}>
+                  <ServerIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>서버 설정</TooltipContent>
+            </Tooltip>
+          </>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -85,9 +115,12 @@ export function Workspace() {
           </TooltipTrigger>
           <TooltipContent>전역 설정</TooltipContent>
         </Tooltip>
-        <Button variant="ghost" size="sm" onClick={() => void auth.logout()}>
-          <LogOutIcon /> 로그아웃
-        </Button>
+        {/* 로그인·로그아웃은 호스트 PC 에서 한다 */}
+        {isHost && (
+          <Button variant="ghost" size="sm" onClick={() => void auth.logout()}>
+            <LogOutIcon /> 로그아웃
+          </Button>
+        )}
       </header>
 
       {notice && (
@@ -101,6 +134,7 @@ export function Workspace() {
 
       <div className="flex min-h-0 flex-1">
         <Sidebar
+          className={showTree ? 'max-md:w-full' : 'max-md:hidden'}
           connection={connection}
           onOpenSettings={(scope, preview) => {
             // 선택된 이슈가 같은 저장소면 미리보기 기준으로 쓴다
@@ -109,7 +143,7 @@ export function Workspace() {
             setSettings({ scope, preview: sameRepo ? selectedPreview : (preview ?? selectedPreview) })
           }}
         />
-        <main className="flex min-w-0 flex-1 flex-col">
+        <main className={`flex min-w-0 flex-1 flex-col ${showTree ? 'max-md:hidden' : ''}`}>
           {target && selectedId ? (
             <HostScope alias={aliasOfIssue(selectedId)}>
               <IssueHeader target={target} state={openState} />
@@ -126,6 +160,7 @@ export function Workspace() {
       </div>
 
       <CliAccessDialog open={cliOpen} onOpenChange={setCliOpen} />
+      <RemoteAccessDialog open={remoteOpen} onOpenChange={setRemoteOpen} />
       <AgentsOverview open={agentsOpen} onOpenChange={setAgentsOpen} />
 
       {settings && (

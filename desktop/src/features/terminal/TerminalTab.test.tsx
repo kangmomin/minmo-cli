@@ -17,6 +17,8 @@ const xterm = vi.hoisted(() => ({
     focus: ReturnType<typeof vi.fn>
     options: Record<string, unknown>
     keyHandler: ((e: KeyboardEvent) => boolean) | null
+    cols: number
+    rows: number
     written: string[]
     dataHandler: ((d: string) => void) | null
     host: HTMLElement | null
@@ -51,8 +53,16 @@ vi.mock('@xterm/xterm', () => ({
       this.textarea.setAttribute('aria-label', xterm.strings.promptLabel)
       el.appendChild(this.textarea)
     }
-    write(d: string) {
+    write(d: string, done?: () => void) {
       this.written.push(d)
+      done?.()
+    }
+    resize(cols: number, rows: number) {
+      this.cols = cols
+      this.rows = rows
+    }
+    input(d: string) {
+      this.dataHandler?.(d)
     }
     onData(cb: (d: string) => void) {
       this.dataHandler = cb
@@ -330,7 +340,7 @@ describe('CR-08 PTY write reject → 세션 종료 안내 + [다시 시작]', ()
     expect(screen.getByRole('alert')).toHaveTextContent(ENDED)
   })
 
-  it('ptyKill 의 reject 는 무시한다(언마운트 경로) — unhandled rejection 없음', async () => {
+  it('ptyKill 의 reject 는 무시한다(패널 닫기 경로) — unhandled rejection 없음', async () => {
     const t = setup({
       ptyKill: async () => {
         throw new Error('already dead')
@@ -338,9 +348,19 @@ describe('CR-08 PTY write reject → 세션 종료 안내 + [다시 시작]', ()
     })
     await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
     await flush()
-    t.unmount()
+    const issueId = Object.keys(useUiStore.getState().panes)[0]
+    act(() => useUiStore.getState().closePane(issueId, `${issueId}::1`))
     await flush()
     expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1')
+  })
+
+  it('터미널 탭 전체가 내려가면(호스트 전환 등) 터미널을 끝내지 않는다 — 다른 기기가 보고 있을 수 있고, 돌아오면 다시 붙는다', async () => {
+    const t = setup()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    await flush()
+    t.unmount()
+    await flush()
+    expect(t.tauri.ptyKill).not.toHaveBeenCalled()
   })
 })
 
@@ -793,5 +813,94 @@ describe('글자 크기 (Ctrl + / Ctrl - / Ctrl 0)', () => {
     } finally {
       useUiStore.setState({ fontSize: 13 })
     }
+  })
+})
+
+describe('함께 쓰는 터미널 — 이미 떠 있는 터미널에 붙기(원격 접속)', () => {
+  const FOUND = { id: 'pty-9', scrollback: 'PS C:\\w> echo hi\r\nhi\r\n', offset: 100, cols: 120, rows: 40 }
+
+  /** 이벤트를 테스트에서 직접 넣을 수 있는 구독 */
+  function emitter<T>() {
+    const cbs = new Set<(e: T) => void>()
+    return {
+      on: async (cb: (e: T) => void) => {
+        cbs.add(cb)
+        return () => void cbs.delete(cb)
+      },
+      emit: (e: T) => cbs.forEach((cb) => cb(e)),
+    }
+  }
+
+  it('패널의 터미널이 이미 있으면 새로 만들지 않고, 그 크기로 지금까지의 출력을 그린 뒤 붙는다', async () => {
+    const t = setup({ ptyFind: async () => FOUND })
+    await vi.waitFor(() => expect(xterm.instances[0].written).toEqual([FOUND.scrollback]))
+    expect(t.tauri.ptyFind).toHaveBeenCalledWith(`${A.issueId}::1`)
+    expect(t.tauri.ptySpawn).not.toHaveBeenCalled()
+    expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([120, 40])
+    expect(useUiStore.getState().terminalIds[`${A.issueId}::1`]).toBe('pty-9')
+    // 입력은 그 터미널로 간다
+    act(() => xterm.instances[0].dataHandler?.('ls\r'))
+    expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-9', 'ls\r')
+  })
+
+  it('붙는 사이에 온 출력은 지난 출력(scrollback)과 겹치는 것은 버리고 그 뒤의 것만 이어 그린다', async () => {
+    const data = emitter<{ id: string; data: string; end?: number }>()
+    const find = deferred<typeof FOUND>()
+    setup({ onPtyData: data.on, ptyFind: () => find.promise })
+    await flush()
+    // ptyFind 의 답을 기다리는 동안 도착한 조각들: 앞의 둘은 scrollback(위치 100까지)에 이미 들어 있다
+    act(() => {
+      data.emit({ id: 'pty-9', data: 'old-1', end: 90 })
+      data.emit({ id: 'pty-9', data: 'old-2', end: 100 })
+      data.emit({ id: 'pty-9', data: 'new-1', end: 105 })
+      data.emit({ id: 'pty-9', data: 'new-2', end: 110 })
+      data.emit({ id: 'other', data: 'x', end: 999 })
+    })
+    await act(async () => {
+      find.resolve(FOUND)
+      await flush()
+    })
+    await vi.waitFor(() => expect(xterm.instances[0].written).toEqual([FOUND.scrollback, 'new-1new-2']))
+  })
+
+  it('새로 만들 때는 패널 id 를 key 로 넘긴다(다른 기기가 같은 터미널에 붙을 수 있게)', async () => {
+    const t = setup()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    expect(t.tauri.ptySpawn.mock.calls[0][0].key).toBe(`${A.issueId}::1`)
+  })
+
+  it('붙은 터미널은 다른 화면의 크기로 본다 — 화면 크기가 바뀌어도 터미널 크기를 바꾸지 않고, 터미널을 누르면(포커스) 이 화면의 크기로 가져온다', async () => {
+    const t = setup({ ptyFind: async () => FOUND })
+    await vi.waitFor(() => expect(xterm.instances[0].written).toHaveLength(1))
+    await flush()
+    expect(t.tauri.ptyResize).not.toHaveBeenCalled()
+    act(() => xterm.instances[0].textarea?.dispatchEvent(new FocusEvent('focus')))
+    expect(t.tauri.ptyResize).toHaveBeenCalledTimes(1)
+    expect(t.tauri.ptyResize.mock.calls[0][0]).toBe('pty-9')
+    // 이미 가져온 뒤에는 다시 누르기만 해서는 바꾸지 않는다
+    act(() => xterm.instances[0].textarea?.dispatchEvent(new FocusEvent('focus')))
+    expect(t.tauri.ptyResize).toHaveBeenCalledTimes(1)
+  })
+
+  it('다른 화면이 크기를 바꾸면 같은 크기로 그린다', async () => {
+    const resized = emitter<{ id: string; cols: number; rows: number }>()
+    const t = setup({ onPtyResized: resized.on })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    await flush()
+    act(() => resized.emit({ id: 'other', cols: 10, rows: 5 }))
+    expect(xterm.instances[0].cols).toBe(80)
+    act(() => resized.emit({ id: 'pty-1', cols: 44, rows: 20 }))
+    expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([44, 20])
+  })
+
+  it('셸이 끝났다는 알림을 받으면 종료 안내를 띄운다(입력하지 않고 보기만 하던 화면도)', async () => {
+    const exits = emitter<string>()
+    const t = setup({ onPtyExit: exits.on })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    await flush()
+    act(() => exits.emit('other'))
+    expect(screen.queryByText('터미널 세션이 종료되었습니다')).toBeNull()
+    act(() => exits.emit('pty-1'))
+    expect(await screen.findByText('터미널 세션이 종료되었습니다')).toBeInTheDocument()
   })
 })

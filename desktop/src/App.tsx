@@ -14,6 +14,7 @@ import { CloseDialog } from './features/app/CloseDialog'
 import { ServerSettingsDialog } from './features/server/ServerSettingsDialog'
 import { ServerStartScreen } from './features/server/ServerStartScreen'
 import { isServerReady, useServerStatusSubscription } from './features/server/useServerStatus'
+import { useRemoteBridge, useSharedStores } from './features/remote/useRemoteHost'
 import { UpdateNotice } from './features/update/UpdateNotice'
 import { serverBaseUrl } from './lib/api'
 import { getTauri } from './lib/tauri'
@@ -66,6 +67,9 @@ export function App() {
   const baseUrl = useServerStore((s) => s.baseUrl)
   const setBaseUrl = useServerStore((s) => s.setBaseUrl)
   useApplyTheme()
+  // 원격 접속: 붙은 기기의 호출을 대신 실행하고(이 PC 의 창만), 함께 쓰는 상태를 호스트의 파일과 맞춘다
+  useRemoteBridge(tauri)
+  useSharedStores(tauri)
 
   // 서버가 준비되면 그 주소로 붙는다. 같은 포트로 재시작하면 그대로 쓰고, 다른 포트로 실행되면 새 주소로 다시 붙는다
   const readyUrl = status && isServerReady(status) ? serverBaseUrl(status.port) : null
