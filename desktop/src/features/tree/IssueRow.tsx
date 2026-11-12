@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/too
 import type { DeleteCheck, IssueTarget } from '@minmo/core'
 import { cn } from '../../lib/utils'
 import { isLocalOwner, useRepoLabel, useReposStore } from '../../store/repos'
+import { useUiStore } from '../../store/ui'
 import { IssueAgentDot } from '../agents/AgentBadge'
 import { describeOpenError, useIssueActions } from '../issue/useWorktree'
 import type { TreeIssue } from './useTree'
@@ -122,6 +123,15 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onSelect={() => void actions.open(target)}>열기</ContextMenuItem>
+          <ContextMenuItem
+            onSelect={() => {
+              // 이슈를 열고(작업 폴더 준비) 준비되면 이슈 머리줄이 실행 대화상자를 띄운다
+              useUiStore.getState().setLaunchRequest(issueId)
+              void actions.open(target)
+            }}
+          >
+            에이전트 실행…
+          </ContextMenuItem>
           {isTask && (
             <ContextMenuItem onSelect={() => useReposStore.getState().setTaskState(repo, issue.number!, issue.state === 'open' ? 'closed' : 'open')}>
               {issue.state === 'open' ? '작업 닫기' : '작업 다시 열기'}

@@ -147,3 +147,43 @@ test('Claude Code 의 하위 에이전트: 패널 머리줄에 실행 중인 수
   await dialog.getByRole('button', { name: '필터 지우기' }).click()
   await expect(dialog.getByTestId('agent-row')).toHaveCount(1)
 })
+
+test('[에이전트 실행]: 지시문과 에이전트를 정하면 새 터미널 패널에서 명령을 실행한다 — 쓰던 터미널은 건드리지 않는다', async ({ page }) => {
+  await page.getByTestId('issue-row-42').click()
+  await expect(page.getByTestId('terminal-pane')).toContainText('minmo mock terminal')
+  await page.getByRole('button', { name: '에이전트 실행' }).click()
+  const dialog = page.getByRole('dialog', { name: '에이전트 실행' })
+  // 이슈 번호·제목이 미리 채워진다
+  await expect(dialog.getByLabel('지시문')).toHaveValue('#42 Add login (https://github.com/my-org/widgets/issues/42)')
+  await dialog.getByLabel('지시문').fill("it's 로그인 화면 고치기\n테스트도 추가")
+  await dialog.getByRole('radio', { name: 'Codex' }).click()
+  // mock 은 Linux 라 POSIX 따옴표를 쓴다: ' → '\''
+  const command = "codex 'it'\\''s 로그인 화면 고치기 테스트도 추가'"
+  await expect(dialog.getByTestId('launch-preview')).toHaveText(command)
+  await dialog.getByRole('button', { name: '실행' }).click()
+  await expect(dialog).toBeHidden()
+
+  // 오른쪽에 새 패널이 생기고, 그 패널(두 번째 터미널)에만 명령이 들어간다
+  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(2)
+  await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__!.ptyWrites)).toEqual([`${command}\r`])
+  await expect(page.locator('[data-testid="terminal-pane"]:visible').nth(1)).toContainText("codex 'it'")
+  await expect(page.locator('[data-testid="terminal-pane"]:visible').nth(0)).not.toContainText('codex')
+
+  // 고른 에이전트는 다음에도 선택돼 있다
+  await page.getByRole('button', { name: '에이전트 실행' }).click()
+  await expect(dialog.getByRole('radio', { name: 'Codex' })).toBeChecked()
+  await dialog.getByRole('button', { name: '취소' }).click()
+})
+
+test('트리 메뉴의 [에이전트 실행…]: 이슈를 열고 작업 폴더가 준비되면 실행 대화상자가 뜬다', async ({ page }) => {
+  await page.getByTestId('issue-row-42').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '에이전트 실행…' }).click()
+  const dialog = page.getByRole('dialog', { name: '에이전트 실행' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel('지시문').fill('')
+  await expect(dialog.getByTestId('launch-preview')).toHaveText('claude')
+  await dialog.getByRole('button', { name: '실행' }).click()
+  // 이슈를 열면서 뜬 첫 터미널은 그대로 두고 새 패널에서 실행한다
+  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(2)
+  await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__!.ptyWrites)).toEqual(['claude\r'])
+})
