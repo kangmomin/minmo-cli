@@ -9,7 +9,7 @@ import { DEFAULT_AGENTS_VIEW, useUiStore } from '../../store/ui'
 import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderHookWithDeps, renderWithDeps } from '../../test/render'
 import { TooltipProvider } from '../../components/ui/tooltip'
-import { IssueAgentDot, PaneAgentChip } from './AgentBadge'
+import { IssueAgentDot, PaneAgentStrip } from './AgentBadge'
 import { AgentsButton, AgentsOverview } from './AgentsOverview'
 import { QUIET_MS, derive, issueStatus, statusOf, useAgentStore } from './agentStore'
 import type { PaneAgent, PaneSignals } from './agentStore'
@@ -17,7 +17,7 @@ import { guessProgram, parseTitle, titleSignal } from './detect'
 import { ago, filterRows, groupRows, sortRows, toRows } from './overview'
 import type { AgentRow } from './overview'
 import { PtyStreamParser } from './ptyStream'
-import { ECHO_MS, noteTerminalInput, useAgentTracker } from './useAgentTracker'
+import { DONE_BELL_MS, ECHO_MS, noteTerminalInput, useAgentTracker } from './useAgentTracker'
 
 const osc = (title: string, end = '\x07') => `\x1b]0;${title}${end}`
 
@@ -58,11 +58,25 @@ describe('PtyStreamParser', () => {
     expect(new PtyStreamParser().feed('\x1bPq#0;2;0;0;0\x1b\\').visible).toBe(false)
   })
 
-  it('끝나지 않는 제어 문자열은 4KB 까지만 들고 있다가 버린다', () => {
+  it('아주 긴 제어 문자열(클립보드·이미지 데이터)은 끝날 때까지 건너뛴다 — 그 안의 글자·종결 BEL 을 출력·벨로 세지 않는다', () => {
     const p = new PtyStreamParser()
-    p.feed(`\x1b]0;${'x'.repeat(5000)}`)
-    // 버린 뒤에는 새 제목을 정상으로 읽는다
-    expect(p.feed(osc('new')).titles).toEqual(['new'])
+    expect(p.feed(`\x1b]52;c;${'A'.repeat(5000)}`)).toEqual({ titles: [], bells: 0, visible: false })
+    expect(p.feed('B'.repeat(3000))).toEqual({ titles: [], bells: 0, visible: false })
+    // 종결자(BEL) 뒤부터 다시 정상으로 읽는다
+    expect(p.feed(`CCC\x07${osc('new')}ok`)).toEqual({ titles: ['new'], bells: 0, visible: true })
+    // ESC \\ 로 끝나는 경우 — 종결자가 조각 사이에서 끊겨도 된다
+    const q = new PtyStreamParser()
+    q.feed(`\x1bP${'x'.repeat(5000)}`)
+    expect(q.feed('yyy\x1b')).toEqual({ titles: [], bells: 0, visible: false })
+    expect(q.feed('\\after')).toEqual({ titles: [], bells: 0, visible: true })
+  })
+
+  it('깨진 제어열: 끝나지 않은 OSC 는 제목으로 쓰지 않고, CSI 는 깨진 자리에서 끊으며, ESC ( B 의 B 는 글자가 아니다', () => {
+    expect(new PtyStreamParser().feed('\x1b]0;half\x1b[0m').titles).toEqual([])
+    expect(new PtyStreamParser().feed('\x1b[12\nhello').visible).toBe(true)
+    expect(new PtyStreamParser().feed('\x1b(B\x1b)0').visible).toBe(false)
+    // DEL·C1 제어 문자는 보이는 글자가 아니다
+    expect(new PtyStreamParser().feed('\x7f\x85\x9b').visible).toBe(false)
   })
 })
 
@@ -93,6 +107,8 @@ describe('종류·상태 판별', () => {
     expect(guessProgram(['claude.exe', 'node.exe'])).toEqual({ agent: 'claude', program: 'claude' })
     expect(guessProgram(['codex-x86_64-pc-windows-msvc.exe'])).toEqual({ agent: 'codex', program: 'codex' })
     expect(guessProgram(['bash', 'node'])).toEqual({ agent: 'other', program: 'node' })
+    // 순서가 달라도 같은 이름을 고른다
+    expect(guessProgram(['vite.exe', 'esbuild.exe'])).toEqual(guessProgram(['esbuild.exe', 'vite.exe']))
     // 로그인 셸은 이름 앞에 - 가 붙는다
     expect(guessProgram(['-zsh'])).toBeNull()
   })
@@ -149,6 +165,15 @@ describe('derive: 신호 → 현황', () => {
     expect(statusOf(step(sig({ title: titleSignal('✳ x'), bell: true }), bell.next, 3000, true).next!)).toBe('idle')
     expect(statusOf(step(sig({ title: titleSignal('◐ x'), bell: true }), bell.next, 3000).next!)).toBe('working')
     expect(step(sig({ title: titleSignal('✋  Action Required') }), null, 1000)).toMatchObject({ next: { agent: 'gemini', activity: 'attention' }, event: 'attention' })
+    // 보고 있는 터미널에서 일어난 일은 알리지 않는다
+    expect(step(sig({ title: titleSignal('✋  Action Required') }), null, 1000, true)).toMatchObject({ next: { activity: 'attention' }, event: null })
+  })
+
+  it('이 PC: 셸만 남았으면 끝난 프로그램이 남긴 제목으로 에이전트를 살려 두지 않는다(프로세스를 아직 모르면 제목을 믿는다)', () => {
+    expect(step(sig({ title: titleSignal('✳ x'), processes: ['conhost.exe'] }), null, 1000).next).toBeNull()
+    expect(step(sig({ title: titleSignal('✳ x'), processes: [] }), null, 1000).next).toBeNull()
+    expect(step(sig({ title: titleSignal('✳ x'), processes: null }), null, 1000).next).toMatchObject({ agent: 'claude' })
+    expect(step(sig({ title: titleSignal('✳ x'), processes: ['node.exe'] }), null, 1000).next).toMatchObject({ agent: 'claude' })
   })
 
   it('원격 tmux: 앞에서 도는 것이 셸이면 남아 있는 제목은 무시한다 · 프로그램 이름으로 종류를 안다', () => {
@@ -267,7 +292,7 @@ describe('추적기(useAgentTracker)', () => {
   })
 
   it('제목으로 Claude Code 의 작업 중 → 끝남을 따라가고, 끝나면 알림을 띄운다(이슈 이름 포함)', async () => {
-    const t = setup()
+    const t = setup({ processes: ['claude.exe'] })
     await t.tick(0)
     t.out(osc('◐ 로그인 수정'))
     expect(t.pane()).toMatchObject({ agent: 'claude', activity: 'working', label: '로그인 수정', issueId: ISSUE })
@@ -284,7 +309,7 @@ describe('추적기(useAgentTracker)', () => {
   })
 
   it('알림을 꺼 두면 띄우지 않는다 · 다른 터미널의 출력은 섞이지 않는다', async () => {
-    const t = setup({ notify: false })
+    const t = setup({ notify: false, processes: ['claude.exe'] })
     await t.tick(0)
     t.out(osc('◐ x'))
     t.out(osc('✳ x'))
@@ -312,6 +337,62 @@ describe('추적기(useAgentTracker)', () => {
     await t.tick(QUIET_MS + 1000)
     expect(statusOf(t.pane())).toBe('done')
     expect(t.tauri.notify).toHaveBeenCalledWith('Codex — 끝남', 'app #1 로그인')
+  })
+
+  it('에이전트가 끝나 셸만 남으면 제목이 남아 있어도 현황에서 뺀다', async () => {
+    let procs = ['claude.exe']
+    const t = setup()
+    t.tauri.ptyProcesses.mockImplementation(async () => procs)
+    await t.tick(1000)
+    t.out(osc('✳ 세션'))
+    expect(t.pane()).toMatchObject({ agent: 'claude' })
+    procs = ['conhost.exe']
+    await t.tick(3000)
+    expect(t.pane()).toBeUndefined()
+    // 그 뒤에 다른 프로그램을 띄워도 옛 제목 때문에 Claude 로 보이지 않는다
+    procs = ['node.exe']
+    await t.tick(3000)
+    expect(t.pane()).toMatchObject({ agent: 'other', program: 'node' })
+  })
+
+  it('벨: 대기 중에 울리면 입력 대기 + 알림, 작업 중·끝난 직후의 벨은 입력 대기가 아니다, 보고 있으면 알리지 않는다', async () => {
+    const t = setup({ processes: ['claude.exe'] })
+    await t.tick(1000)
+    t.out(osc('◐ x'))
+    t.out('\x07')
+    expect(t.pane().activity).toBe('working')
+    t.out(osc('✳ x'))
+    t.out('\x07') // 끝났다는 알림음
+    expect(statusOf(t.pane())).toBe('done')
+    expect(t.tauri.notify).toHaveBeenCalledTimes(1)
+    await t.tick(DONE_BELL_MS + 500)
+    t.out('\x07') // 한참 뒤의 벨 = 확인 요청
+    expect(statusOf(t.pane())).toBe('attention')
+    expect(t.tauri.notify).toHaveBeenLastCalledWith('Claude Code — 입력 대기', 'app #1 로그인')
+    // 다시 작업을 시작하면 벨은 지난 일 — 끝나면 "끝남"
+    t.out(osc('◐ x'))
+    t.out(osc('✳ x'))
+    expect(statusOf(t.pane())).toBe('done')
+
+    // 보고 있는 터미널: 상태는 바뀌어도 알림은 없다
+    useUiStore.setState({ selectedIssueId: ISSUE, tab: 'terminal' })
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    const before = t.tauri.notify.mock.calls.length
+    t.out(osc('◐ x'))
+    t.out(osc('✳ x'))
+    expect(statusOf(t.pane())).toBe('idle')
+    expect(t.tauri.notify).toHaveBeenCalledTimes(before)
+    vi.restoreAllMocks()
+  })
+
+  it('같은 패널에 터미널이 새로 만들어지면(다시 시작) 이전 터미널의 제목·벨을 이어받지 않는다', async () => {
+    const t = setup({ processes: ['claude.exe'] })
+    await t.tick(1000)
+    t.out(osc('◐ 이전'))
+    expect(t.pane().activity).toBe('working')
+    useUiStore.setState({ terminalIds: { [PANE]: 'pty-2' } })
+    await t.tick(1000)
+    expect(t.pane()).toMatchObject({ agent: 'claude', label: '', activity: 'idle' })
   })
 
   it('기타 프로그램은 현황에는 나오지만 알림은 띄우지 않는다 · 셸만 남으면 사라진다', async () => {
@@ -387,17 +468,18 @@ describe('표시', () => {
     expect(container.querySelectorAll('[data-testid="issue-agent"]')).toHaveLength(2)
   })
 
-  it('패널 머리: 에이전트 이름과 상태(기타 프로그램은 실행 파일 이름)', () => {
+  it('패널 머리줄: 에이전트 이름·상태·세션 이름(기타 프로그램은 실행 파일 이름) — 에이전트가 없어도 줄은 있다(터미널 크기가 바뀌지 않게)', () => {
     renderWithDeps(
       <>
-        <PaneAgentChip paneId="acme/app#1::1" />
-        <PaneAgentChip paneId="acme/app#1::2" />
-        <PaneAgentChip paneId="none::1" />
+        <PaneAgentStrip paneId="acme/app#1::1" />
+        <PaneAgentStrip paneId="acme/app#1::2" />
+        <PaneAgentStrip paneId="none::1" />
       </>,
       makeDeps(),
     )
+    expect(screen.getAllByTestId('pane-strip')).toHaveLength(3)
     const chips = screen.getAllByTestId('pane-agent')
-    expect(chips.map((c) => c.textContent)).toEqual(['Claude Code · 작업 중', 'npm · 대기 중'])
+    expect(chips.map((c) => c.textContent)).toEqual(['Claude Code · 작업 중 — 로그인 수정', 'npm · 대기 중'])
   })
 
   it('상단 버튼: 작업 중·확인 필요 수를 알린다(기타 프로그램 제외)', () => {

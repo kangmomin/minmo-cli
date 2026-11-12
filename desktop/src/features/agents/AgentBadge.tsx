@@ -26,23 +26,25 @@ export function IssueAgentDot({ issueId }: { issueId: string }) {
   )
 }
 
-/** 터미널 패널 오른쪽 위의 표시 — 그 패널에서 도는 에이전트와 상태 */
-export function PaneAgentChip({ paneId }: { paneId: string }) {
+/**
+ * 터미널 패널 위의 한 줄 — 그 패널에서 도는 에이전트(프로그램)와 상태. 에이전트가 없어도 자리는 차지한다:
+ * 생겼다 없어졌다 하면 터미널 크기가 바뀌어 화면을 다시 그리게 되고, 터미널 위에 겹쳐 두면 TUI 의 첫 줄을 가린다.
+ */
+export function PaneAgentStrip({ paneId }: { paneId: string }) {
   const agent = useAgentStore((s) => s.panes[paneId])
-  if (!agent) return null
-  const status = statusOf(agent)
-  const name = agent.agent === 'other' ? agent.program : AGENT_LABEL[agent.agent]
+  const status = agent ? statusOf(agent) : null
+  const name = !agent ? '' : agent.agent === 'other' ? agent.program : AGENT_LABEL[agent.agent]
   return (
-    <div
-      data-testid="pane-agent"
-      data-status={status}
-      title={agent.label ? `${name} — ${agent.label}` : name}
-      className="pointer-events-none absolute top-1 right-3 z-10 flex max-w-[60%] items-center gap-1.5 rounded border bg-popover/90 px-2 py-0.5 text-xs text-popover-foreground shadow-sm"
-    >
-      <StatusDot status={status} />
-      <span className="truncate">
-        {name} · {STATUS_LABEL[status]}
-      </span>
+    <div className="flex h-5 shrink-0 items-center gap-1.5 px-3 text-xs text-neutral-400" data-testid="pane-strip">
+      {agent && status && (
+        <span data-testid="pane-agent" data-status={status} title={agent.label ? `${name} — ${agent.label}` : name} className="flex min-w-0 items-center gap-1.5">
+          <StatusDot status={status} />
+          <span className="truncate">
+            {name} · {STATUS_LABEL[status]}
+            {agent.label && <span className="opacity-70"> — {agent.label}</span>}
+          </span>
+        </span>
+      )}
     </div>
   )
 }

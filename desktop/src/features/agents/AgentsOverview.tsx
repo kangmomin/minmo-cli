@@ -1,6 +1,6 @@
 // 전체 현황 — 모든 이슈의 터미널에서 도는 에이전트를 한 목록으로 보고, 필터·정렬·그루핑한다. 줄을 누르면 그 터미널로 간다.
 import { BotIcon } from 'lucide-react'
-import { useId, useMemo } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 
 import { aliasOfIssue } from '../../app/host'
 import { Badge } from '../../components/ui/badge'
@@ -95,7 +95,12 @@ function OverviewBody({ onDone }: { onDone(): void }) {
   const groups = useMemo(() => groupRows(sortRows(filterRows(rows, view), view.sort), view.group), [rows, view])
   const shown = groups.reduce((n, g) => n + g.rows.length, 0)
   const filtering = view.statuses.length > 0 || view.agents.length > 0 || view.query.trim() !== ''
-  const now = Date.now()
+  // 열려 있는 동안 "지난 시간"이 흐르게 한다
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
 
   function go(row: AgentRow) {
     const ui = useUiStore.getState()

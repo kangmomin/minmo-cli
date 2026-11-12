@@ -11,7 +11,7 @@ import { remotePty } from '../../lib/sshHost'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
 import { noteTerminalInput } from '../agents/useAgentTracker'
-import { PaneAgentChip } from '../agents/AgentBadge'
+import { PaneAgentStrip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 import { layoutPanes, leafIds } from './panes'
 
@@ -105,12 +105,14 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
       {rects.map((r) => (
         <div
           key={r.id}
-          className={`absolute ${multiple && panes.focused === r.id ? 'outline outline-1 -outline-offset-1 outline-ring' : ''}`}
+          className={`absolute flex flex-col ${multiple && panes.focused === r.id ? 'outline outline-1 -outline-offset-1 outline-ring' : ''}`}
           style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
           data-testid="terminal-pane"
         >
-          <TerminalSession spec={spec} paneId={r.id} active={active} hintId={hintId} onExit={onExit} />
-          <PaneAgentChip paneId={r.id} />
+          <PaneAgentStrip paneId={r.id} />
+          <div className="relative min-h-0 flex-1">
+            <TerminalSession spec={spec} paneId={r.id} active={active} hintId={hintId} onExit={onExit} />
+          </div>
         </div>
       ))}
       {!panes.tree && active && (
@@ -215,6 +217,11 @@ function TerminalSession({
     // 클릭·Tab 으로 들어온 패널을 "현재 패널" 로 표시한다(분할·닫기 대상)
     const onFocus = () => useUiStore.getState().focusPane(spec.issueId, paneId)
     t.textarea?.addEventListener('focus', onFocus)
+    // 사용자가 직접 넣은 입력(키·붙여넣기)의 에코를 에이전트의 출력으로 세지 않게 알린다.
+    // xterm 이 프로그램의 질의에 자동으로 답하는 것(포커스·마우스·커서 위치 보고)은 입력으로 치지 않는다
+    const onUserInput = () => noteTerminalInput(paneId)
+    t.textarea?.addEventListener('keydown', onUserInput)
+    t.textarea?.addEventListener('paste', onUserInput)
     // [다시 시작] 버튼이 사라지며 포커스를 잃으므로, 사용자가 시작한 재시작에 한해 새 터미널로 포커스를 옮긴다(자동 포커스 금지 AX-02 의 예외)
     if (focusAfterRestart.current) {
       focusAfterRestart.current = false
@@ -277,8 +284,6 @@ function TerminalSession({
         useUiStore.setState((s) => ({ terminalIds: { ...s.terminalIds, [paneId]: id } }))
         const sub = t.onData((d) => {
           if (state.ended) return
-          // 사용자가 친 글자의 에코를 에이전트의 출력으로 세지 않게 알린다
-          noteTerminalInput(paneId)
           tauri.ptyWrite(id, d).catch(state.end)
         })
         cleanups.push(() => sub.dispose())
@@ -292,6 +297,8 @@ function TerminalSession({
     return () => {
       disposed = true
       t.textarea?.removeEventListener('focus', onFocus)
+      t.textarea?.removeEventListener('keydown', onUserInput)
+      t.textarea?.removeEventListener('paste', onUserInput)
       for (const c of cleanups) c()
       // kill 의 reject(이미 종료된 PTY 등)는 무시한다
       if (state.ptyId) tauri.ptyKill(state.ptyId).catch(() => undefined)

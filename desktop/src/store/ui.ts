@@ -47,7 +47,7 @@ export interface UiState {
   agentNotify: boolean
   /** 전체 현황의 필터·정렬·그루핑(persist) */
   agentsView: AgentsView
-  /** 트리에 에이전트가 있는 이슈만 보인다(persist) */
+  /** 트리에 에이전트가 있는 이슈만 보인다(저장하지 않는다 — 에이전트 현황은 실행 중에만 있다) */
   treeAgentsOnly: boolean
   panes: Record<string, IssuePanes>
   /** 사용자가 분할·닫기를 했을 때만 포커스를 옮긴다 — token 이 바뀐 요청만 처리(자동 포커스 금지 AX-02) */
@@ -194,7 +194,6 @@ export const useUiStore = create<UiState>()(
         fontSize: s.fontSize,
         agentNotify: s.agentNotify,
         agentsView: s.agentsView,
-        treeAgentsOnly: s.treeAgentsOnly,
       }),
       // v1: Ghostty 가 새 기본 테마다. 예전에는 고른 적이 없어도 기본값 'black' 이 저장돼 있었으므로, 저장된 'black' 을
       // 한 번만 Ghostty 로 옮긴다(직접 고른 'light' 는 그대로 둔다). 그 뒤에 고른 블랙은 유지된다

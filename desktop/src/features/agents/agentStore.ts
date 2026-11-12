@@ -59,6 +59,8 @@ export type Derived = { next: PaneAgent | null; /** 알릴 만한 변화 */ even
 export function derive(paneId: string, sig: PaneSignals, prev: PaneAgent | null, now: number, viewed: boolean): Derived {
   const guess = sig.title ? { agent: sig.title.agent, program: sig.title.agent as string } : guessProgram(sig.tmuxProgram !== undefined ? [sig.tmuxProgram] : (sig.processes ?? []))
   if (!guess) return { next: null, event: null }
+  // 이 PC: 셸 아래에 다른 프로세스가 없으면 에이전트는 없다 — 끝난 프로그램이 남긴 제목만으로 살려 두지 않는다
+  if (sig.processes !== null && sig.tmuxProgram === undefined && guessProgram(sig.processes) === null) return { next: null, event: null }
   // tmux 는 프로그램이 끝나도 그 프로그램이 정한 제목을 남겨 둔다 — 앞에서 도는 것이 셸이면 에이전트는 없는 것이다
   if (sig.tmuxProgram !== undefined && guessProgram([sig.tmuxProgram]) === null) return { next: null, event: null }
 
@@ -83,7 +85,8 @@ export function derive(paneId: string, sig: PaneSignals, prev: PaneAgent | null,
   }
   const before = was ? statusOf(was) : null
   const after = statusOf(next)
-  const event = after !== before && (after === 'done' || after === 'attention') ? after : null
+  // 보고 있는 터미널의 변화는 알릴 필요가 없다
+  const event = !viewed && after !== before && (after === 'done' || after === 'attention') ? after : null
   return { next, event }
 }
 

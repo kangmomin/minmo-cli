@@ -71,5 +71,6 @@ export function guessProgram(names: readonly string[]): ProgramGuess | null {
   for (const kind of ['claude', 'codex', 'gemini'] as const) {
     if (progs.some((n) => n === kind || n.startsWith(`${kind}-`))) return { agent: kind, program: kind }
   }
-  return { agent: 'other', program: progs[0] }
+  // 여러 개면 이름순으로 첫 번째 — 프로세스 목록의 순서가 바뀌어도 같은 이름을 고르게
+  return { agent: 'other', program: [...progs].sort()[0] }
 }

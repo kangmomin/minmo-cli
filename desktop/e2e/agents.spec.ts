@@ -23,8 +23,9 @@ test('Claude Code 의 작업 중 → 끝남을 이슈 행·패널·상단 버튼
   await expect(page.getByTestId('pane-agent')).toHaveCount(0)
   await expect(page.getByTestId('issue-row-42').getByTestId('issue-agent')).toHaveCount(0)
 
+  await page.evaluate(() => window.__MINMO_MOCK__!.setPtyProcesses(1, ['claude.exe']))
   await emit(page, 1, title('◐ 로그인 수정'))
-  await expect(page.getByTestId('pane-agent')).toHaveText('Claude Code · 작업 중')
+  await expect(page.getByTestId('pane-agent')).toHaveText('Claude Code · 작업 중 — 로그인 수정')
   await expect(page.getByTestId('issue-row-42').getByRole('img', { name: '에이전트 작업 중' })).toBeVisible()
   await expect(page.getByTestId('agents-button')).toHaveAccessibleName('에이전트 현황 — 작업 중 1 · 확인 필요 0')
 
@@ -39,13 +40,14 @@ test('Claude Code 의 작업 중 → 끝남을 이슈 행·패널·상단 버튼
   // 그 터미널을 다시 보면 "대기 중"으로 바뀐다
   await page.getByTestId('issue-row-42').click()
   await expect(page.getByTestId('issue-row-42').getByRole('img', { name: '에이전트 대기 중' })).toBeVisible()
-  await expect(page.getByTestId('pane-agent').first()).toHaveText('Claude Code · 대기 중')
+  await expect(page.getByTestId('pane-agent').first()).toHaveText('Claude Code · 대기 중 — 로그인 수정')
 })
 
 test('전체 현황: 여러 이슈의 에이전트를 모아 보고 필터·정렬·묶기, 줄을 누르면 그 터미널로 이동한다', async ({ page }) => {
   // #42: Claude Code 작업 중, 기타: Codex(프로세스 이름으로 감지, 출력이 나오는 동안 작업 중)
   await page.getByTestId('issue-row-42').click()
   await expect(page.getByTestId('terminal-pane')).toContainText('minmo mock terminal')
+  await page.evaluate(() => window.__MINMO_MOCK__!.setPtyProcesses(1, ['claude.exe']))
   await emit(page, 1, title('◐ 로그인 수정'))
   await page.getByTestId('issue-row-etc').click()
   await expect(page.locator('[data-testid="terminal-pane"]:visible')).toContainText('minmo mock terminal')
@@ -81,7 +83,7 @@ test('전체 현황: 여러 이슈의 에이전트를 모아 보고 필터·정�
   await rows.first().click()
   await expect(dialog).toBeHidden()
   await expect(page.getByTestId('issue-header')).toContainText('#42 Add login')
-  await expect(page.locator('[data-testid="pane-agent"]:visible')).toHaveText('Claude Code · 작업 중')
+  await expect(page.locator('[data-testid="pane-agent"]:visible')).toHaveText('Claude Code · 작업 중 — 로그인 수정')
 
   // 고른 보기 옵션은 다시 열어도 그대로다
   await page.getByTestId('agents-button').click()
@@ -96,4 +98,8 @@ test('전체 현황: 여러 이슈의 에이전트를 모아 보고 필터·정�
   await page.evaluate(() => window.__MINMO_MOCK__!.setPtyProcesses(2, ['conhost.exe']))
   await expect(page.getByTestId('issue-row-etc')).toHaveCount(0, { timeout: 10_000 })
   await expect(page.getByTestId('issue-row-42')).toBeVisible()
+  // 필터는 저장하지 않는다 — 새로고침하면 꺼져 있다(에이전트 현황이 비어 트리가 비지 않게)
+  await page.reload()
+  await expect(page.getByRole('button', { name: '에이전트가 있는 이슈만' })).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByTestId('issue-row-etc')).toBeVisible()
 })

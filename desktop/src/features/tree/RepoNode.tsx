@@ -66,7 +66,13 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
   // "에이전트가 있는 이슈만" 필터 — 켜면 터미널에서 에이전트가 도는 이슈만 남긴다
   const agentsOnly = useUiStore((s) => s.treeAgentsOnly)
   const agentPanes = useAgentStore((s) => (agentsOnly ? s.panes : null))
-  const shownEntries = agentPanes ? entries.filter(([i]) => issueStatus(agentPanes, worktreeId(repo.owner, repo.name, i.key)) !== null) : entries
+  // 지금 보고 있는 이슈는 에이전트가 없어도 남긴다(누른 줄이 사라지지 않게)
+  const shownEntries = agentPanes
+    ? entries.filter(([i]) => {
+        const id = worktreeId(repo.owner, repo.name, i.key)
+        return id === selectedId || issueStatus(agentPanes, id) !== null
+      })
+    : entries
 
   // F-08/EC-24: 펼칠 때 effective 로 현재 경로를 계산해 생성 당시 경로와 비교. 오프라인·캐시 없음이면 배지 생략
   const effective = useQuery({
