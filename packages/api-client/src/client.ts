@@ -18,8 +18,7 @@ import type {
   Sessions,
   TokenOverride,
   VisibleRepos,
-  VisibleReposInput,
-} from './types'
+  VisibleReposInput, SyncDoc, SyncResult } from './types'
 
 export type ApiClientOptions = {
   baseUrl: string
@@ -48,6 +47,10 @@ export interface ApiClient {
   putVisibleRepos(input: VisibleReposInput): Promise<VisibleRepos>
   /** 데스크탑: 원격 CLI 로그인 코드 발급 */
   issueCliCode(): Promise<CliCode>
+  /** PC 사이 동기화: 이 서버의 설정·메모를 통째로 내보낸다 */
+  syncExport(): Promise<SyncDoc>
+  /** 받은 것 중 이 서버의 것보다 더 새로운 것만 넣는다 */
+  syncImport(doc: SyncDoc): Promise<SyncResult>
   /** CLI: 코드 → 새 CLI 세션(무인증). label 은 보통 호스트명 */
   exchangeCliCode(code: string, label: string): Promise<CliExchange>
   listSessions(): Promise<Sessions>
@@ -195,6 +198,8 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
       if (input.baseUpdatedAt !== undefined) body.baseUpdatedAt = input.baseUpdatedAt
       return request<Notes>(notesPath(owner, repo, key), { method: 'PUT', body })
     },
+    syncExport: () => request<SyncDoc>('/me/sync'),
+    syncImport: (doc) => request<SyncResult>('/me/sync', { method: 'PUT', body: doc }),
     getVisibleRepos: () => request<VisibleRepos>('/me/visible-repos'),
     putVisibleRepos: (input) => {
       const body: VisibleReposInput = { repos: input.repos }

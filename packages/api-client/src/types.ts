@@ -69,3 +69,10 @@ export type GithubToken = { accessToken: string }
 export type Health = { status: 'ok' }
 /** me/getGithubToken/logout 전용: 로그인 확정 전 후보 세션 검증(CT-35) */
 export type TokenOverride = { token?: string }
+
+/** PC 사이 동기화(GET·PUT /me/sync) — 서버의 설정·메모 전체. updatedAtMs 로 어느 쪽이 더 새로운지 가린다 */
+export type SyncSetting = { scope: SettingsSource; owner: string; repo: string; updatedAtMs: number } & { [K in keyof SettingsValues]: SettingsValues[K] | null }
+export type SyncNote = { owner: string; repo: string; key: string; body: string; updatedAtMs: number }
+export type SyncDoc = { settings: SyncSetting[]; notes: SyncNote[] }
+/** 넣은 수와 넣지 않은 수(더 새롭지 않거나 규칙에 맞지 않는 것) */
+export type SyncResult = { settings: number; notes: number; skipped: number }

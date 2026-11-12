@@ -82,6 +82,8 @@ const ALLOWED: &[&str] = &[
     "sharedGet",
     "sharedSet",
     "agentsSnapshot",
+    "syncExport",
+    "syncImport",
 ];
 /// 붙은 기기에 전달하는 앱 이벤트
 const FORWARDED_EVENTS: &[&str] = &[
@@ -91,6 +93,7 @@ const FORWARDED_EVENTS: &[&str] = &[
     "script-log",
     "shared-changed",
     "agents-changed",
+    "sync-applied",
 ];
 
 pub fn allowed(method: &str, args: &Value) -> bool {
@@ -970,6 +973,14 @@ async fn call(ctx: &Ctx, method: &str, args: Value) -> Result<Value, String> {
             )
             .map(Value::from),
         "appVersion" => Ok(Value::String(app.package_info().version.to_string())),
+        // PC 사이 동기화: 이 PC 서버의 설정·메모를 통째로 내주고, 받은 것 중 더 새로운 것만 넣는다(서버가 가린다)
+        "syncExport" => sync_server(ctx, Method::GET, None).await,
+        "syncImport" => {
+            let out = sync_server(ctx, Method::PUT, Some(arg::<Value>(&args, 0)?)).await?;
+            // 이 PC 의 화면들(본창·붙은 기기)이 설정·메모를 다시 읽게 한다
+            let _ = app.emit("sync-applied", ());
+            Ok(out)
+        }
         "agentsSnapshot" => {
             let raw = ctx.mgr().agents.lock().map_err(|e| e.to_string())?.clone();
             serde_json::from_str(&raw).map_err(|e| e.to_string())
@@ -1006,6 +1017,28 @@ async fn substitute_token(ctx: &Ctx, args: Value) -> Value {
         return args;
     }
     serde_json::from_str(&raw.replace(TOKEN_SENTINEL, &token)).unwrap_or(args)
+}
+
+/// 이 PC 의 minmo 서버의 동기화 경로(/me/sync)를 이 PC 의 세션으로 부른다
+async fn sync_server(ctx: &Ctx, method: Method, body: Option<Value>) -> Result<Value, String> {
+    let session = session_token().ok_or("호스트 PC 의 minmo 에서 먼저 로그인하세요")?;
+    let mut req = ctx
+        .mgr()
+        .http
+        .request(method, format!("{}/me/sync", api_base(ctx)))
+        .bearer_auth(session);
+    if let Some(b) = body {
+        req = req.json(&b);
+    }
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let status = res.status();
+    if !status.is_success() {
+        // 옛 버전의 서버에는 이 경로가 없다
+        return Err(format!(
+            "그 PC 의 서버가 동기화를 처리하지 못했습니다({status})"
+        ));
+    }
+    res.json().await.map_err(|e| e.to_string())
 }
 
 fn api_base(ctx: &Ctx) -> String {
@@ -1446,6 +1479,12 @@ fn this_device_name() -> String {
     } else {
         format!("{} (minmo)", host.trim())
     }
+}
+
+/// 이 PC 의 이름 — 다른 PC 에 기기로 등록될 때의 이름이자, 동기화의 충돌 사본에 적는 이름
+#[tauri::command]
+pub fn device_name() -> String {
+    this_device_name()
 }
 
 #[tauri::command]

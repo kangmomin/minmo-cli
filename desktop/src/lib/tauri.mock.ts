@@ -320,6 +320,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     onRemoteRpc: async () => () => {},
     remoteRpcReply: async () => {},
     peersList: async () => peers,
+    deviceName: async () => 'mock-pc (minmo)',
     peerAdd: async (input) => {
       if (input.code !== '123456') throw new Error('코드가 맞지 않습니다(남은 시도 4번)')
       peers = [...peers.filter((p) => p.url !== input.url), { id: `peer-${peers.length + 1}`, name: input.name || input.url, url: input.url, token: 'mock-peer-token' }]
@@ -330,6 +331,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       return peers
     },
     agentsPublish: async () => {},
+    onSyncApplied: async () => () => {},
     peerOpen: async (id, open) => {
       handle.openedPeers.push({ id, open: open ?? null })
     },

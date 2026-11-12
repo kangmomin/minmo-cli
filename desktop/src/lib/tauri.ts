@@ -131,12 +131,16 @@ export interface TauriApi extends WorktreeHost, GhHost {
   onRemoteRpc(cb: (req: RemoteRpcRequest) => void): Promise<Unlisten>
   /** 다른 PC 등록·삭제 — 그 PC 의 화면에 뜬 6자리 코드로 이 PC 를 기기로 등록한다. 전체 목록을 돌려준다 */
   peersList(): Promise<Peer[]>
+  /** 이 PC 의 이름(다른 PC 에 등록되는 이름·충돌 사본에 적는 이름) */
+  deviceName(): Promise<string>
   peerAdd(input: PeerInput): Promise<Peer[]>
   peerRemove(id: string): Promise<Peer[]>
   /** 그 PC 의 화면을 별도 창으로 연다(이미 열려 있으면 앞으로). open 이 있으면 그 이슈의 터미널로 간다 */
   peerOpen(id: string, open?: PeerOpen): Promise<void>
   /** 이 PC 의 에이전트 현황(줄 목록)을 올려 둔다 — 이 PC 를 등록한 다른 PC 가 받아 간다 */
   agentsPublish(rows: unknown[]): Promise<void>
+  /** 다른 PC 와의 동기화로 이 PC 서버의 설정·메모가 바뀌었다 — 화면이 다시 읽는다 */
+  onSyncApplied(cb: () => void): Promise<Unlisten>
   remoteRpcReply(id: number, ok: boolean, value: unknown): Promise<void>
 
   scriptRun(req: ScriptRunRequest): Promise<ScriptRunResult>
@@ -278,6 +282,7 @@ export const TAURI_COMMANDS = {
   remoteDeviceRemove: 'remote_device_remove',
   remoteRpcReply: 'remote_rpc_reply',
   peersList: 'peers_list',
+  deviceName: 'device_name',
   peerAdd: 'peer_add',
   peerRemove: 'peer_remove',
   peerOpen: 'peer_open',
@@ -296,6 +301,7 @@ export const TAURI_EVENTS = {
   remoteChanged: 'remote-changed',
   remoteRpc: 'remote-rpc',
   agentsChanged: 'agents-changed',
+  syncApplied: 'sync-applied',
 } as const
 
 /** @tauri-apps/api invoke 기반 실제 구현 */
@@ -329,10 +335,12 @@ export function createTauriApi(): TauriApi {
     onRemoteRpc: async (cb) => (await event()).listen<RemoteRpcRequest>(TAURI_EVENTS.remoteRpc, (e) => cb(e.payload)),
     remoteRpcReply: (id, ok, value) => call(C.remoteRpcReply, { id, ok, value: value ?? null }),
     peersList: () => call(C.peersList),
+    deviceName: () => call(C.deviceName),
     peerAdd: (input) => call(C.peerAdd, { input }),
     peerRemove: (id) => call(C.peerRemove, { id }),
     peerOpen: (id, open) => call(C.peerOpen, { id, open: open ?? null }),
     agentsPublish: (rows) => call(C.agentsPublish, { rows }),
+    onSyncApplied: async (cb) => (await event()).listen(TAURI_EVENTS.syncApplied, () => cb()),
     ptyWrite: (id, data) => call(C.ptyWrite, { id, data }),
     ptyResize: (id, cols, rows) => call(C.ptyResize, { id, cols, rows }),
     ptyKill: (id) => call(C.ptyKill, { id }),

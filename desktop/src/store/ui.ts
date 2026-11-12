@@ -55,6 +55,8 @@ export interface UiState {
   agentCommands: Record<LaunchKind, string>
   /** 마지막으로 실행한 에이전트(persist) */
   lastLaunchKind: LaunchKind
+  /** 등록한 다른 PC 와 저장소 목록·설정·메모·에이전트 명령을 맞춘다(persist) */
+  peerSync: boolean
   /** [에이전트 실행] 대화상자를 열 이슈(트리 메뉴에서 요청 — 그 이슈의 작업 폴더가 준비되면 열린다) */
   launchRequest: string | null
   /** 트리에 에이전트가 있는 이슈만 보인다(저장하지 않는다 — 에이전트 현황은 실행 중에만 있다) */
@@ -76,6 +78,7 @@ export interface UiState {
   setTreeAgentsOnly(v: boolean): void
   setAgentCommand(kind: LaunchKind, command: string): void
   setLastLaunchKind(kind: LaunchKind): void
+  setPeerSync(v: boolean): void
   setLaunchRequest(issueId: string | null): void
   /**
    * 에이전트를 실행할 터미널 패널을 마련하고 그 id 를 돌려준다. 아직 터미널을 띄운 적이 없으면 첫 패널을 쓰고,
@@ -112,6 +115,7 @@ export const useUiStore = create<UiState>()(
       treeAgentsOnly: false,
       agentCommands: DEFAULT_AGENT_COMMANDS,
       lastLaunchKind: 'claude',
+      peerSync: true,
       launchRequest: null,
       panes: {},
       focusRequest: null,
@@ -138,6 +142,7 @@ export const useUiStore = create<UiState>()(
       setTreeAgentsOnly: (treeAgentsOnly) => set({ treeAgentsOnly }),
       setAgentCommand: (kind, command) => set((s) => ({ agentCommands: { ...s.agentCommands, [kind]: command } })),
       setLastLaunchKind: (lastLaunchKind) => set({ lastLaunchKind }),
+      setPeerSync: (peerSync) => set({ peerSync }),
       setLaunchRequest: (launchRequest) => set({ launchRequest }),
       launchPane: (issueId, keepFirst = false) => {
         const s = get()
@@ -246,6 +251,7 @@ export const useUiStore = create<UiState>()(
         agentsView: s.agentsView,
         agentCommands: s.agentCommands,
         lastLaunchKind: s.lastLaunchKind,
+        peerSync: s.peerSync,
       }),
       // v1: Ghostty 가 새 기본 테마다. 예전에는 고른 적이 없어도 기본값 'black' 이 저장돼 있었으므로, 저장된 'black' 을
       // 한 번만 Ghostty 로 옮긴다(직접 고른 'light' 는 그대로 둔다). 그 뒤에 고른 블랙은 유지된다
