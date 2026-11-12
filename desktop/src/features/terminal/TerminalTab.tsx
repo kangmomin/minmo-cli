@@ -151,6 +151,7 @@ function TerminalSession({
   const remoteHost = spec.remote?.host
   const remoteTmux = spec.remote?.tmux ?? false
   const theme = useUiStore((s) => s.theme)
+  const fontSize = useUiStore((s) => s.fontSize)
   const focusRequest = useUiStore((s) => s.focusRequest)
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<TermState | null>(null)
@@ -177,7 +178,7 @@ function TerminalSession({
     const t = new Terminal({
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      fontSize: 13,
+      fontSize: useUiStore.getState().fontSize,
       theme: terminalTheme(useUiStore.getState().theme),
       // 출력을 스크린 리더가 읽을 수 있는 접근성 트리로도 내보낸다
       screenReaderMode: true,
@@ -193,6 +194,7 @@ function TerminalSession({
           close: () => ui().closePane(spec.issueId, paneId),
         },
         {
+          hasSelection: () => t.hasSelection(),
           selection: () => t.getSelection(),
           // 클립보드를 쓸 수 없는 환경이어도 터미널은 계속 쓸 수 있게 실패는 무시한다
           copy: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
@@ -318,6 +320,12 @@ function TerminalSession({
     if (cur) cur.t.options.theme = terminalTheme(theme)
   }, [theme])
 
+  // 글자 크기 변경을 열린 터미널에도 반영 — 칸 수가 달라지므로 아래의 크기 맞춤(effect)이 이어서 다시 돈다
+  useEffect(() => {
+    const cur = term.current
+    if (cur) cur.t.options.fontSize = fontSize
+  }, [fontSize, gen])
+
   // 사용자가 이 터미널을 쓰던 중 세션이 끝났을 때만 포커스를 옮긴다 — 다른 탭·이슈에 포커스가 있으면 자동 포커스 금지(AX-02) 유지
   useEffect(() => {
     if (!ended || !focusRestartButton.current) return
@@ -344,7 +352,7 @@ function TerminalSession({
     const ro = new ResizeObserver(resize)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [active, tauri, gen])
+  }, [active, tauri, gen, fontSize])
 
   const restart = () => {
     focusAfterRestart.current = true

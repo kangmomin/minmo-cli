@@ -65,6 +65,9 @@ vi.mock('@xterm/xterm', () => ({
     getSelection() {
       return this.selection
     }
+    hasSelection() {
+      return this.selection !== ''
+    }
     clearSelection() {
       this.selection = ''
     }
@@ -613,6 +616,7 @@ describe('복사·붙여넣기 (Ctrl+C / Ctrl+V — Windows Terminal 방식)', (
   function handler(selected = '') {
     const clip = { text: selected, copied: [] as string[] }
     const h = createTerminalKeyHandler(vi.fn(), undefined, {
+      hasSelection: () => clip.text !== '',
       selection: () => clip.text,
       copy: (t) => void clip.copied.push(t),
       clearSelection: () => {
@@ -633,11 +637,24 @@ describe('복사·붙여넣기 (Ctrl+C / Ctrl+V — Windows Terminal 방식)', (
     expect(clip.copied).toEqual(['hello'])
   })
 
-  it('Ctrl+C: 누르고 있는 동안의 keyup 은 선택 여부를 다시 보아 한 번만 복사한다', () => {
+  it('Ctrl+C: 복사한 키를 누르고 있어도(키 반복) 셸로 중단 신호를 보내지 않는다 — 뗀 뒤 다시 누르면 보낸다', () => {
     const { h, clip } = handler('abc')
-    h(key({ key: 'c', code: 'KeyC' }))
-    h(key({ key: 'c', code: 'KeyC' }, 'keyup'))
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(false)
+    // 복사로 선택이 풀린 뒤의 키 반복
+    expect(h(key({ key: 'c', code: 'KeyC', repeat: true }))).toBe(false)
+    expect(h(key({ key: 'c', code: 'KeyC', repeat: true }))).toBe(false)
+    expect(h(key({ key: 'c', code: 'KeyC' }, 'keyup'))).toBe(false)
     expect(clip.copied).toEqual(['abc'])
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(true)
+    // 선택 없이 누르고 있는 Ctrl+C 는 계속 셸로 간다
+    expect(h(key({ key: 'c', code: 'KeyC', repeat: true }))).toBe(true)
+  })
+
+  it('Ctrl+C: 빈칸만 선택해도(글자는 비어 있음) 복사로 처리하고 셸로 보내지 않는다', () => {
+    const copied: string[] = []
+    const h = createTerminalKeyHandler(vi.fn(), undefined, { hasSelection: () => true, selection: () => '', copy: (t) => void copied.push(t), clearSelection: () => {} })
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(false)
+    expect(copied).toEqual([''])
   })
 
   it('Ctrl+Shift+C: 복사 전용 — 선택이 없어도 셸로 보내지 않는다', () => {
@@ -687,5 +704,37 @@ describe('복사·붙여넣기 (Ctrl+C / Ctrl+V — Windows Terminal 방식)', (
     const term = xterm.instances[0]
     expect(term.selection).toBe('')
     expect(screen.getByText(/Ctrl\+C: 복사\(선택했을 때\) · Ctrl\+V: 붙여넣기/)).toBeInTheDocument()
+  })
+})
+
+describe('글자 크기 (Ctrl + / Ctrl - / Ctrl 0)', () => {
+  const key = (init: KeyboardEventInit) => new KeyboardEvent('keydown', { ctrlKey: true, cancelable: true, ...init })
+
+  it('세 조합은 셸로 보내지 않는다(앱이 처리) · 다른 조합은 그대로', () => {
+    const h = createTerminalKeyHandler(vi.fn())
+    for (const init of [{ key: '=' }, { key: '+', shiftKey: true }, { key: '-' }, { key: '0' }, { key: '+', code: 'NumpadAdd' }, { key: '-', code: 'NumpadSubtract' }]) {
+      expect(h(key(init))).toBe(false)
+    }
+    expect(h(key({ key: '_', shiftKey: true }))).toBe(true)
+    expect(h(key({ key: '1' }))).toBe(true)
+    expect(h(key({ key: '-', altKey: true }))).toBe(true)
+  })
+
+  it('저장된 크기로 터미널을 만들고, 바꾸면 열린 터미널에 반영한 뒤 PTY 에 새 크기를 알린다(새로 띄우지 않는다)', async () => {
+    useUiStore.setState({ fontSize: 16 })
+    try {
+      const t = setup()
+      await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+      const term = xterm.instances[0]
+      expect(term.options.fontSize).toBe(16)
+      const before = t.tauri.ptyResize.mock.calls.length
+      act(() => useUiStore.getState().setFontSize(20))
+      expect(term.options.fontSize).toBe(20)
+      await vi.waitFor(() => expect(t.tauri.ptyResize.mock.calls.length).toBeGreaterThan(before))
+      expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1)
+      expect(xterm.instances).toHaveLength(1)
+    } finally {
+      useUiStore.setState({ fontSize: 13 })
+    }
   })
 })

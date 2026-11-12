@@ -14,6 +14,7 @@ import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
 import type { PreviewIssue } from '../features/settings/SettingsDialog'
 import { Sidebar } from '../features/tree/Sidebar'
+import { useFontSizeShortcuts } from '../lib/fontSize'
 import { openServerSettings } from '../store/server'
 import { HostScope, aliasOfIssue, useHostConnection } from './host'
 import { useSessionStore } from '../store/session'
@@ -32,6 +33,7 @@ export function Workspace() {
   const openState = useSetupStore((s) => (selectedId ? s.open[selectedId] : undefined))
   const [settings, setSettings] = useState<SettingsTarget | null>(null)
   const [cliOpen, setCliOpen] = useState(false)
+  useFontSizeShortcuts()
   const connection = useHostConnection()
 
   const selectedPreview: PreviewIssue | null = target ?? null

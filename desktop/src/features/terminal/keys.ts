@@ -1,4 +1,5 @@
 // 터미널 키보드 탈출(AX-02) — 컴포넌트 파일과 분리(react-refresh 규칙)
+import { fontSizeAction } from '../../lib/fontSize'
 
 /** 터미널은 Tab 키를 셸로 보내므로 키보드 사용자가 빠져나갈 단축키가 필요하다 (WCAG 2.1.2) */
 export const TERMINAL_EXIT_HINT = 'Ctrl+Shift+M'
@@ -10,7 +11,9 @@ export const PANE_KEYS = { splitRight: 'Ctrl+D', splitDown: 'Ctrl+Shift+D', clos
 export const CLIPBOARD_KEYS = { copy: 'Ctrl+C', paste: 'Ctrl+V' } as const
 
 export interface TerminalClipboard {
-  /** 터미널에서 선택한 글자(없으면 빈 문자열) */
+  /** 선택한 영역이 있는가 — 빈칸만 고르면 글자는 비어 있어도 선택은 있다 */
+  hasSelection(): boolean
+  /** 터미널에서 선택한 글자 */
   selection(): string
   copy(text: string): void
   clearSelection(): void
@@ -34,17 +37,32 @@ function isKey(e: KeyboardEvent, letter: string): boolean {
  * 앱 단축키는 keydown 에서 1회 실행하고, keypress/keyup 도 셸로 새지 않게 막는다.
  */
 export function createTerminalKeyHandler(onExit: () => void, panes?: PaneKeyActions, clipboard?: TerminalClipboard): (e: KeyboardEvent) => boolean {
+  // 복사한 Ctrl+C 를 누르고 있는 동안에는 셸로 보내지 않는다 — 복사로 선택이 풀리면, 키 반복이 "선택 없음 = 중단"으로
+  // 읽혀 실행 중인 명령을 끊게 된다
+  let copying = false
   return (e) => {
     if (!e.ctrlKey || e.altKey || e.metaKey) return true
+    // 글자 크기 단축키(Ctrl + / - / 0)는 앱이 처리한다(lib/fontSize.ts 의 window 단축키) — 셸로 보내지 않는다
+    if (fontSizeAction(e)) return false
     if (clipboard && isKey(e, 'c')) {
-      const text = clipboard.selection()
+      if (e.type === 'keyup') {
+        const was = copying
+        copying = false
+        if (was) return false
+      } else if (copying && e.repeat) {
+        return false
+      } else if (e.type === 'keydown') {
+        copying = false
+      }
+      const selected = clipboard.hasSelection()
       // 선택이 없는 Ctrl+C 는 셸로 보낸다(실행 중인 명령 중단). Ctrl+Shift+C 는 복사 전용이라 보내지 않는다
-      if (text === '' && !e.shiftKey) return true
+      if (!selected && !e.shiftKey) return true
       if (e.type === 'keydown') {
         e.preventDefault()
-        if (text !== '') {
-          clipboard.copy(text)
+        if (selected) {
+          clipboard.copy(clipboard.selection())
           clipboard.clearSelection()
+          copying = true
         }
       }
       return false

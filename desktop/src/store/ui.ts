@@ -13,6 +13,11 @@ export type Theme = 'ghostty' | 'black' | 'light'
 export type IssuePanes = { tree: PaneNode | null; focused: string | null; seq: number }
 
 const THEME_VALUES: readonly Theme[] = ['ghostty', 'black', 'light']
+
+/** 터미널·파일 편집기의 글자 크기(px) */
+export const FONT_SIZE = { default: 13, min: 9, max: 28 } as const
+export const clampFontSize = (n: unknown): number =>
+  typeof n === 'number' && Number.isFinite(n) ? Math.min(FONT_SIZE.max, Math.max(FONT_SIZE.min, Math.round(n))) : FONT_SIZE.default
 const isTheme = (v: unknown): v is Theme => THEME_VALUES.includes(v as Theme)
 
 export interface UiState {
@@ -24,6 +29,8 @@ export interface UiState {
   /** paneId → PTY id (프로세스 수명과 같아 persist 하지 않음) */
   terminalIds: Record<string, string>
   theme: Theme
+  /** 터미널·파일 편집기의 글자 크기(px, persist) */
+  fontSize: number
   panes: Record<string, IssuePanes>
   /** 사용자가 분할·닫기를 했을 때만 포커스를 옮긴다 — token 이 바뀐 요청만 처리(자동 포커스 금지 AX-02) */
   focusRequest: { paneId: string; token: number } | null
@@ -34,6 +41,8 @@ export interface UiState {
   setWorktree(id: string, e: WorktreeEntry): void
   removeWorktree(id: string): void
   setTheme(t: Theme): void
+  /** 범위(FONT_SIZE)를 벗어나면 가까운 값으로 맞춘다 */
+  setFontSize(n: number): void
   /**
    * 저장소 식별이 바뀔 때(로컬 저장소를 GitHub 에 올림) 이슈 id 와 트리 노드 id 를 옮긴다.
    * 패널 id 에는 이슈 id 가 들어 있어 옮길 수 없다 — 그 이슈의 터미널 패널은 닫고 다시 열 때 새로 만든다.
@@ -56,6 +65,7 @@ export const useUiStore = create<UiState>()(
       worktreePathMap: {},
       terminalIds: {},
       theme: 'ghostty',
+      fontSize: FONT_SIZE.default,
       panes: {},
       focusRequest: null,
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
@@ -75,6 +85,7 @@ export const useUiStore = create<UiState>()(
           return { worktreePathMap, terminalIds, panes, focusRequest }
         }),
       setTheme: (theme) => set({ theme }),
+      setFontSize: (n) => set({ fontSize: clampFontSize(n) }),
       rekey: (issues, nodes) =>
         set((s) => {
           const worktreePathMap = { ...s.worktreePathMap }
@@ -153,6 +164,7 @@ export const useUiStore = create<UiState>()(
         tab: s.tab,
         worktreePathMap: s.worktreePathMap,
         theme: s.theme,
+        fontSize: s.fontSize,
       }),
       // v1: Ghostty 가 새 기본 테마다. 예전에는 고른 적이 없어도 기본값 'black' 이 저장돼 있었으므로, 저장된 'black' 을
       // 한 번만 Ghostty 로 옮긴다(직접 고른 'light' 는 그대로 둔다). 그 뒤에 고른 블랙은 유지된다
@@ -164,7 +176,7 @@ export const useUiStore = create<UiState>()(
       // 알 수 없는 테마 값(손으로 고친 값·다른 버전이 남긴 값)은 기본 테마로 본다
       merge: (persisted, current) => {
         const state = (persisted ?? {}) as Partial<UiState>
-        return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme }
+        return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme, fontSize: state.fontSize === undefined ? current.fontSize : clampFontSize(state.fontSize) }
       },
     },
   ),

@@ -207,6 +207,8 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 
 터미널의 복사·붙여넣기는 Windows Terminal 과 같다: 글자를 선택하고 **Ctrl+C** 는 복사(선택이 없으면 셸로 보내 실행 중인 명령을 중단), **Ctrl+V** 는 붙여넣기. Ctrl+Shift+C / Ctrl+Shift+V 도 된다. 패널 단축키는 Ctrl+D(오른쪽 분할)·Ctrl+Shift+D(아래 분할)·Ctrl+W(닫기)다(`desktop/src/features/terminal/keys.ts`).
 
+터미널과 파일 편집기의 글자 크기는 **Ctrl +**(키우기) · **Ctrl -**(줄이기) · **Ctrl 0**(기본 13px)으로 바꾼다(9~28px, 이 PC 에 저장). 서버 설정 대화상자의 "글자 크기" 에서도 바꿀 수 있다(`desktop/src/lib/fontSize.ts`).
+
 ## 새 프로젝트 · 저장소 열기
 
 사이드바의 **+**(저장소 추가) 메뉴에서 트리에 저장소를 더한다. 목록은 이 PC 의 앱에 저장한다(`desktop/src/store/repos.ts`).

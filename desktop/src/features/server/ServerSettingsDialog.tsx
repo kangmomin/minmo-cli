@@ -10,6 +10,7 @@ import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { getTauri } from '../../lib/tauri'
 import type { CloseAction, ServerSettings, ServerSettingsInput, TauriApi } from '../../lib/tauri'
 import { useServerStore } from '../../store/server'
+import { FONT_SIZE, useUiStore } from '../../store/ui'
 import { AppUpdateSection } from '../update/AppUpdateSection'
 import { CLOSE_OPTIONS, OAUTH_APP_NEW_URL, parsePort, statusText } from './serverSettings'
 
@@ -46,6 +47,11 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
   const [clientId, setClientId] = useState('')
   const [secret, setSecret] = useState('')
   const [closeAction, setCloseAction] = useState<CloseAction>('ask')
+  const fontSize = useUiStore((s) => s.fontSize)
+  const setFontSize = useUiStore((s) => s.setFontSize)
+  // 입력 중인 글자 — 범위 안의 숫자가 됐을 때만 적용한다("1" 을 치는 순간 9 로 바뀌지 않게)
+  const [fontDraft, setFontDraft] = useState(String(fontSize))
+  useEffect(() => setFontDraft(String(fontSize)), [fontSize])
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
@@ -207,6 +213,37 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
           ))}
         </RadioGroup>
         <p className="text-xs text-muted-foreground">트레이로 최소화하면 창을 닫아도 서버가 계속 실행되어 원격 CLI 를 쓸 수 있습니다. 트레이 메뉴의 [종료]로 끝냅니다.</p>
+      </section>
+
+      <section className="grid gap-2" aria-labelledby={fid('font')}>
+        <h3 id={fid('font')} className="text-sm font-semibold">
+          글자 크기(터미널·파일 편집기)
+        </h3>
+        <div className="flex items-center gap-2">
+          <Input
+            id={fid('font-size')}
+            aria-labelledby={fid('font')}
+            type="number"
+            min={FONT_SIZE.min}
+            max={FONT_SIZE.max}
+            step={1}
+            value={fontDraft}
+            onChange={(e) => {
+              setFontDraft(e.target.value)
+              const n = Number(e.target.value)
+              if (Number.isInteger(n) && n >= FONT_SIZE.min && n <= FONT_SIZE.max) setFontSize(n)
+            }}
+            onBlur={() => setFontDraft(String(fontSize))}
+            className="w-24"
+          />
+          <span className="text-sm text-muted-foreground">px</span>
+          <Button type="button" variant="outline" size="sm" disabled={fontSize === FONT_SIZE.default} onClick={() => setFontSize(FONT_SIZE.default)}>
+            기본값
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          바꾸면 바로 적용되고 이 PC 에 저장됩니다({FONT_SIZE.min}~{FONT_SIZE.max}px). 단축키: Ctrl + 키우기 · Ctrl - 줄이기 · Ctrl 0 기본값.
+        </p>
       </section>
 
       {error && (
