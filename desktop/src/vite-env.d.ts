@@ -3,4 +3,5 @@
 interface ImportMetaEnv {
   readonly VITE_MINMO_SERVER?: string
   readonly VITE_TAURI_MOCK?: string
+  readonly VITE_GITHUB_API?: string
 }

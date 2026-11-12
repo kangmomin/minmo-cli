@@ -9,7 +9,8 @@ import { useUiStore } from '../../store/ui'
 const NEVER = /^(on[A-Z]|remote|keychain|server|app|openDir$|openUrl$|pickFolder$|notify$|sshHostSave$|sshHostRemove$|runtime$)/
 
 export async function runRemoteCall(tauri: TauriApi, method: string, args: unknown[]): Promise<unknown> {
-  const fn = (tauri as unknown as Record<string, unknown>)[method]
+  // 객체가 직접 가진 메서드만 — constructor·toString 같은 상속된 이름은 부르지 않는다
+  const fn = Object.prototype.hasOwnProperty.call(tauri, method) ? (tauri as unknown as Record<string, unknown>)[method] : undefined
   if (NEVER.test(method) || typeof fn !== 'function') throw new Error(`원격에서 쓸 수 없는 기능입니다: ${method}`)
   // JSON 으로 오면서 생략한 인자(undefined)는 null 이 된다 — 선택 인자는 undefined 로 되돌린다
   return (fn as (...a: unknown[]) => unknown).apply(tauri, args.map((a) => (a === null ? undefined : a)))

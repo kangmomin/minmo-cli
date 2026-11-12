@@ -26,6 +26,9 @@ function paneRole(issueId: string, paneId: string) {
   return { primary: first === undefined || first === paneId, seq: Number(paneId.slice(paneId.lastIndexOf('::') + 2)) || 1 }
 }
 
+/** 터미널 크기를 가져온 뒤 입력을 넣기까지 두는 틈 — 크기 변경과 입력이 겹치면 셸이 그 입력을 잃는다 */
+const TAKE_OVER_SETTLE_MS = 250
+
 /** 패널이 아직 화면 구성에 있는가 — 없어진 패널의 터미널만 끝낸다 */
 function paneExists(issueId: string, paneId: string): boolean {
   return leafIds(useUiStore.getState().panes[issueId]?.tree ?? null).includes(paneId)
@@ -307,23 +310,30 @@ function TerminalSession({
     }
     term.current = state
     // 클릭·Tab 으로 들어온 패널을 "현재 패널" 로 표시한다(분할·닫기 대상)
-    const onFocus = () => useUiStore.getState().focusPane(spec.issueId, paneId)
+    /**
+     * 다른 화면의 크기에 맞춰 보던 터미널을 이 화면의 크기로 가져온다. 바꿨으면 true.
+     * 글자를 치는 순간이 아니라 터미널을 누를(포커스할) 때 한다 — 크기 변경과 입력이 겹치면 셸(PSReadLine)이 그 글자를 잃는다
+     * (실제로 확인: 붙은 터미널에서 첫 글자가 사라졌다).
+     */
+    const takeOver = (): boolean => {
+      if (state.owner || !state.ptyId || state.ended) return false
+      state.owner = true
+      try {
+        fit.fit()
+      } catch {
+        return false
+      }
+      tauri.ptyResize(state.ptyId, t.cols, t.rows).catch(() => undefined)
+      return true
+    }
+    const onFocus = () => {
+      useUiStore.getState().focusPane(spec.issueId, paneId)
+      takeOver()
+    }
     t.textarea?.addEventListener('focus', onFocus)
     // 사용자가 직접 넣은 입력(키·붙여넣기)의 에코를 에이전트의 출력으로 세지 않게 알린다.
     // xterm 이 프로그램의 질의에 자동으로 답하는 것(포커스·마우스·커서 위치 보고)은 입력으로 치지 않는다
-    const onUserInput = () => {
-      noteTerminalInput(paneId)
-      // 다른 화면의 크기에 맞춰 보던 중이면, 입력하는 이 화면의 크기로 되돌린다
-      if (!state.owner && state.ptyId && !state.ended) {
-        state.owner = true
-        try {
-          fit.fit()
-        } catch {
-          return
-        }
-        tauri.ptyResize(state.ptyId, t.cols, t.rows).catch(() => undefined)
-      }
-    }
+    const onUserInput = () => noteTerminalInput(paneId)
     t.textarea?.addEventListener('keydown', onUserInput)
     // xterm 의 compositionend 처리(위 open 때 등록) 뒤에 실행되므로, 이 타이머는 xterm 이 조합 글자를 보내는 타이머 다음에 돈다
     const onCompositionEnd = () => {
@@ -335,7 +345,11 @@ function TerminalSession({
     // 화면의 키 줄(휴대폰)이 이 터미널에 키를 넣을 수 있게 등록한다
     const unregisterInput = registerTerminalInput(paneId, (data) => {
       onUserInput()
-      t.input(data)
+      // 포커스 없이 누른 경우 크기를 먼저 가져오고, 그 변경이 끝날 틈을 둔 뒤 넣는다
+      if (!takeOver()) return t.input(data)
+      setTimeout(() => {
+        if (!disposed) t.input(data)
+      }, TAKE_OVER_SETTLE_MS)
     })
     // [다시 시작] 버튼이 사라지며 포커스를 잃으므로, 사용자가 시작한 재시작에 한해 새 터미널로 포커스를 옮긴다(자동 포커스 금지 AX-02 의 예외)
     if (focusAfterRestart.current) {
@@ -348,6 +362,7 @@ function TerminalSession({
       // spawn 응답(id 확정) 전에 온 출력은 첫 프롬프트일 수 있어 id 별로 보관했다가 확정 후 flush 한다(CR-07)
       const pending = new Map<string, string>()
       let settled = false
+      let replaying = false
       // [에이전트 실행] 으로 맡겨 둔 명령은 셸이 출력을 내고 잠잠해진 뒤에 한 번 넣는다.
       // null = 아직 꺼내지 않음, undefined = 없음(또는 이미 넣음)
       let launchCmd: string | undefined | null = null
@@ -412,7 +427,12 @@ function TerminalSession({
           // 지금까지의 출력을 그 터미널의 크기로 그린다(크기가 다르면 줄바꿈 위치가 어긋난다). 크기는 이 화면에서 입력할 때 가져온다
           state.owner = false
           if (found.cols > 0 && found.rows > 0) t.resize(found.cols, found.rows)
-          t.write(found.scrollback)
+          // 다시 그리는 동안에는 터미널이 내는 입력을 보내지 않는다 — 지난 출력 속의 질의(커서 위치·장치 속성 등)에
+          // xterm 이 또 답하면 그 답이 셸에 글자로 들어간다(이미 그때의 화면이 답한 질의다)
+          replaying = true
+          t.write(found.scrollback, () => {
+            replaying = false
+          })
           // 붙기 전에 받은 조각은 scrollback 에 이미 들어 있다
           pending.clear()
           launchWhenReady()
@@ -440,7 +460,7 @@ function TerminalSession({
         cleanups.push(unExit, unResized)
         useUiStore.setState((s) => ({ terminalIds: { ...s.terminalIds, [paneId]: id } }))
         const sub = t.onData((d) => {
-          if (state.ended) return
+          if (state.ended || replaying) return
           tauri.ptyWrite(id, d).catch(state.end)
         })
         cleanups.push(() => sub.dispose())
