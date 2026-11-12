@@ -13,7 +13,7 @@ import { GitHubError } from '@minmo/core'
 import { WorktreeError, createWorktreeService } from '@minmo/core'
 import type { DeleteResult, IssueTarget, WorktreeService } from '@minmo/core'
 import { baseRepoOf, useHostsStore } from '../../store/hosts'
-import { isLocalOwner } from '../../store/repos'
+import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { fileDrafts } from '../files/fileDrafts'
 import { uiWorktreePathStore, useUiStore } from '../../store/ui'
@@ -46,7 +46,10 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
         // 기준 저장소(가져온 기존 폴더)가 있으면 설정의 메인 clone 대신 그 저장소에서 worktree 를 만든다
         getEffective: async (o, r) => {
           const eff = await fetchEffective(queryClient, deps.api, o, r)
-          const base = baseRepoOf(useHostsStore.getState(), host.id, o, r)
+          // 로컬 저장소(GitHub 아님)는 clone 할 곳이 없다 — 목록의 폴더가 곧 저장소다
+          const local = isLocalOwner(o) ? useReposStore.getState().local[r] : undefined
+          if (isLocalOwner(o) && (!local || local.hostId !== host.id)) throw new Error('목록에 없는 로컬 저장소입니다 — [폴더 열기] 로 다시 여세요')
+          const base = local?.path ?? baseRepoOf(useHostsStore.getState(), host.id, o, r)
           if (!base) return eff
           // 폴더가 없어졌으면 그 자리에 새로 clone 하지 않고 알린다(사용자 폴더 자리에 빈 저장소를 만들지 않게)
           if (!(await deps.tauri.pathExists(base))) throw new Error(`기준 저장소 폴더가 없습니다: ${base} — 저장소의 [기준 저장소 폴더] 에서 다시 지정하거나 해제하세요`)

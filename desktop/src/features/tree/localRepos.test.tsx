@@ -20,9 +20,9 @@ import { makeDeps, makeWrapper, renderWithDeps } from '../../test/render'
 import { WorktreeProvider, useIssueActions } from '../issue/useWorktree'
 import { AddGitHubRepoDialog, NewProjectDialog, OpenFolderDialog } from './AddRepoDialogs'
 import { registerLocalRepo, unregisterLocalRepo } from './localRepos'
-import { PublishError, githubNameOf, publishRepo } from './publishRepo'
+import { PublishError, githubNameOf, publishRepo, resetPublish } from './publishRepo'
 import { Sidebar } from './Sidebar'
-import { githubRepoOfRemote, parseGitHubRepo } from './verifyRepoFolder'
+import { githubRepoOfRemote, parseGitHubRepo, resolveInputPath } from './verifyRepoFolder'
 
 type Git = (args: string[]) => Promise<ReturnType<typeof ok>>
 
@@ -98,6 +98,25 @@ describe('repos store · ui.rekey', () => {
     expect(localIds()).toEqual([])
     expect(baseRepoOf(useHostsStore.getState(), 'local', LOCAL_OWNER, id)).toBeUndefined()
     expect(Object.keys(useUiStore.getState().worktreePathMap)).toEqual(['acme/app#1'])
+  })
+
+  it('목록에서 제거: 열려 있던 그 저장소의 작업은 닫는다(터미널 종료·선택 해제)', () => {
+    const id = registerLocalRepo('local', '/src/app')
+    const issueId = `${LOCAL_OWNER}/${id}#1`
+    useUiStore.setState({ worktreePathMap: { [issueId]: { path: '/w/1', branch: 'b' } }, selectedIssueId: issueId, terminalIds: { [`${issueId}::1`]: 'pty-3', 'acme/app#1::1': 'pty-9' } })
+    useSetupStore.getState().setOpen(issueId, { phase: 'ready', path: '/w/1', branch: 'b', pathChanged: false })
+    const ptyKill = vi.fn(async () => {})
+    unregisterLocalRepo(id, ptyKill)
+    expect(ptyKill.mock.calls).toEqual([['pty-3']])
+    expect(useUiStore.getState().selectedIssueId).toBeNull()
+    expect(useSetupStore.getState().open).toEqual({})
+  })
+
+  it('resolveInputPath: 루트(/, C:\\)도 상위 폴더로 쓸 수 있다', () => {
+    expect(resolveInputPath('/', { home: '/home/u', platform: 'linux' })).toEqual({ path: '/' })
+    expect(resolveInputPath('C:\\', { home: 'C:\\Users\\u', platform: 'win32' })).toEqual({ path: 'C:\\' })
+    expect(resolveInputPath('~/src/', { home: '/home/u', platform: 'linux' })).toEqual({ path: '/home/u/src' })
+    expect(resolveInputPath('src', { home: '/home/u', platform: 'linux' })).toHaveProperty('error')
   })
 
   it('rekey: 작업 폴더 기록·펼침을 옮기고, 그 이슈의 패널과 선택은 비운다', () => {
@@ -386,7 +405,7 @@ describe('로컬 저장소에서 작업 열기(worktree)', () => {
 
 describe('GitHub 에 올리기', () => {
   const host = hostOf(null)
-  function setup(o: { pushFails?: boolean; issueNumbers?: number[] } = {}) {
+  function setup(o: { pushFails?: boolean; issueNumbers?: number[]; existing?: { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string }[]; onCreateIssue?: () => void } = {}) {
     const id = registerLocalRepo('local', '/src/app')
     useReposStore.getState().addTask(id, '첫 작업')
     useReposStore.getState().addTask(id, '닫은 작업')
@@ -405,12 +424,17 @@ describe('GitHub 에 올리기', () => {
           origin = args.at(-1)!
           return ok()
         }
+        if (args.includes('remote') && args.includes('remove')) {
+          origin = null
+          return ok()
+        }
+        if (args.includes('symbolic-ref')) return ok('trunk\n')
         if (args.includes('push')) return state.pushFails ? fail('fatal: Authentication failed', 128) : ok()
         return ok()
       },
     })
     const numbers = [...(o.issueNumbers ?? [1, 2])]
-    const created: { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string }[] = []
+    const created: { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string }[] = [...(o.existing ?? [])]
     const github = createFakeGitHub({
       getRepo: async () => {
         throw new GitHubError('not_found', { status: 404 })
@@ -420,6 +444,7 @@ describe('GitHub 에 올리기', () => {
       createIssue: async (_o, _r, title) => {
         const issue = { number: numbers.shift()!, title, state: 'open' as const, htmlUrl: '' }
         created.push(issue)
+        o.onCreateIssue?.()
         return issue
       },
     })
@@ -445,7 +470,11 @@ describe('GitHub 에 올리기', () => {
     expect(t.github.createRepo).toHaveBeenCalledWith({ org: null, name: 'app', private: true })
     const git = t.tauri.gitRun.mock.calls.map(([a]) => a)
     expect(git).toContainEqual(['-C', '/src/app', 'remote', 'add', 'origin', 'https://github.com/me/app.git'])
-    expect(git).toContainEqual(['-C', '/src/app', 'push', '-u', 'origin', '--all'])
+    // 저장소의 현재 브랜치를 먼저 보내 GitHub 의 기본 브랜치가 되게 한다
+    expect(git.filter((a) => a.includes('push'))).toEqual([
+      ['-C', '/src/app', 'push', '-u', 'origin', 'trunk'],
+      ['-C', '/src/app', 'push', '-u', 'origin', '--all'],
+    ])
     expect(t.github.createIssue.mock.calls.map((c) => c[2])).toEqual(['첫 작업', '닫은 작업'])
     expect(t.github.closeIssue).toHaveBeenCalledWith('me', 'app', 2)
     expect(t.notes['me/app/1']).toBe('메모 1')
@@ -476,6 +505,62 @@ describe('GitHub 에 올리기', () => {
     expect(t.github.createRepo).toHaveBeenCalledTimes(1)
     expect(t.tauri.gitRun.mock.calls.filter(([a]) => a.includes('remote') && a.includes('add'))).toHaveLength(1)
     expect(localIds()).toEqual([])
+  })
+
+  it('이어서 올릴 때 이전에 만든 이슈(번호·제목 같음)는 다시 만들지 않고, 닫은 작업만 닫는다', async () => {
+    const t = setup({ existing: [{ number: 1, title: '첫 작업', state: 'open', htmlUrl: '' }], issueNumbers: [2] })
+    await expect(publishRepo(t, host, t.input)).resolves.toEqual({ owner: 'me', name: 'app' })
+    expect(t.github.createIssue.mock.calls.map((c) => c[2])).toEqual(['닫은 작업'])
+    expect(t.github.closeIssue).toHaveBeenCalledWith('me', 'app', 2)
+  })
+
+  it('작업과 맞지 않는 이슈가 이미 있으면 이슈를 더 만들지 않고 멈춘다(다시 눌러도 늘지 않는다)', async () => {
+    const t = setup({ existing: [{ number: 1, title: '남이 만든 이슈', state: 'open', htmlUrl: '' }] })
+    for (let i = 0; i < 2; i++) {
+      const err = (await publishRepo(t, host, t.input).catch((e: unknown) => e)) as PublishError
+      expect(err.step).toBe('issues')
+      expect(err.message).toContain('맞지 않는 이슈 #1')
+    }
+    expect(t.github.createIssue).not.toHaveBeenCalled()
+    expect(localIds()).toEqual([t.id])
+  })
+
+  it('번호가 어긋나 멈춘 뒤에는 다시 눌러도 이슈를 더 만들지 않는다 · [처음부터 다시] 는 붙인 origin 을 떼고 기록을 지운다', async () => {
+    const t = setup({ issueNumbers: [1, 5] })
+    await publishRepo(t, host, t.input).catch(() => undefined)
+    await publishRepo(t, host, t.input).catch(() => undefined)
+    expect(t.github.createIssue).toHaveBeenCalledTimes(2)
+    await resetPublish(t.tauri, t.id)
+    expect(useReposStore.getState().local[t.id].publish).toBeUndefined()
+    expect(t.tauri.gitRun).toHaveBeenCalledWith(['-C', '/src/app', 'remote', 'remove', 'origin'])
+  })
+
+  it('동시에 두 번 실행되지 않는다 · 다른 호스트의 저장소는 올리지 않는다', async () => {
+    const t = setup()
+    const first = publishRepo(t, host, t.input)
+    await expect(publishRepo(t, host, t.input)).rejects.toThrow('이미 올리는 중입니다')
+    await first
+    expect(t.github.createRepo).toHaveBeenCalledTimes(1)
+
+    const other = setup()
+    await expect(publishRepo(other, hostOf('srv'), other.input)).rejects.toThrow('다른 호스트')
+    expect(other.github.createRepo).not.toHaveBeenCalled()
+  })
+
+  it('올리는 동안 작업이 바뀌면 전환하지 않고, 이어서 올리면 바뀐 작업까지 반영한다', async () => {
+    let added = false
+    const t = setup({
+      issueNumbers: [1, 2, 3],
+      onCreateIssue: () => {
+        if (!added) useReposStore.getState().addTask(localIds()[0], '도중에 추가')
+        added = true
+      },
+    })
+    const err = (await publishRepo(t, host, t.input).catch((e: unknown) => e)) as PublishError
+    expect(err.step).toBe('switch')
+    expect(localIds()).toEqual([t.id])
+    await expect(publishRepo(t, host, t.input)).resolves.toEqual({ owner: 'me', name: 'app' })
+    expect(t.github.createIssue.mock.calls.map((c) => c[2])).toEqual(['첫 작업', '닫은 작업', '도중에 추가'])
   })
 
   it('이슈 번호가 작업 번호와 다르면 전환하지 않고 멈춘다', async () => {

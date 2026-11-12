@@ -24,6 +24,7 @@ import { BaseRepoDialog } from './BaseRepoDialog'
 import { IssueRow } from './IssueRow'
 import { NewTaskDialog } from './LocalRepoDialogs'
 import { useOpenPublish } from './publishContext'
+import { isPublishing } from './publishRepo'
 import { unregisterLocalRepo } from './localRepos'
 import { githubErrorMessage, useIssues } from './useTree'
 
@@ -93,9 +94,9 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
 
   // origin 이 없는 로컬 저장소만 GitHub 에 올릴 수 있다
   const noOrigin = useQuery({
-    queryKey: queryKeys.gitOrigin(localRepo?.path ?? ''),
+    queryKey: queryKeys.gitOrigin(host.id, localRepo?.path ?? ''),
     queryFn: () => lacksOrigin(tauri.gitRun, localRepo!.path),
-    enabled: expanded && localRepo !== undefined,
+    enabled: localRepo !== undefined,
   })
   const canPublish = localRepo !== undefined && (noOrigin.data === true || localRepo.publish !== undefined)
   const remove = () => (local ? setDialog('remove') : useReposStore.getState().removeGitHub(repo.owner, repo.name))
@@ -217,9 +218,10 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
                 </Button>
                 <Button
                   variant="destructive"
+                  disabled={isPublishing(repo.name)}
                   onClick={() => {
                     setDialog(null)
-                    unregisterLocalRepo(repo.name)
+                    unregisterLocalRepo(repo.name, tauri.ptyKill)
                   }}
                 >
                   제거

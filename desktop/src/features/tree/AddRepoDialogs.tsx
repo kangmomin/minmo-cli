@@ -1,6 +1,6 @@
 // 저장소를 트리에 더하는 대화상자 셋 — 새 프로젝트(로컬 폴더), 폴더 열기, GitHub 저장소 추가.
 import { FolderOpenIcon } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 
 import { GitHubError } from '@minmo/core'
@@ -22,6 +22,18 @@ export interface AddRepoDialogProps {
 }
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
+/** 대화상자를 닫은 뒤(취소) 끝난 확인 요청이 저장소를 등록하지 않게 한다 */
+function useAlive() {
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+  return alive
+}
 
 function Shell({ open, onOpenChange, title, description, children }: AddRepoDialogProps & { title: string; description: string; children: ReactNode }) {
   return (
@@ -114,7 +126,7 @@ function NewProjectBody({ onDone }: { onDone(): void }) {
       setError(`상위 폴더: ${base.error}`)
       return
     }
-    const path = `${base.path}${platform === 'win32' ? '\\' : '/'}${folder}`
+    const path = `${base.path.replace(/[\\/]+$/, '')}${platform === 'win32' ? '\\' : '/'}${folder}`
     if (await tauri.pathExists(path)) {
       setError(`이미 있는 폴더입니다: ${path} — 기존 폴더는 [폴더 열기] 로 여세요`)
       return
@@ -204,9 +216,11 @@ function OpenFolderBody({ onDone }: { onDone(): void }) {
   const [error, setError] = useState<string | null>(null)
   const [follow, setFollow] = useState<FollowUp | null>(null)
   const [busy, setBusy] = useState(false)
+  const alive = useAlive()
 
   async function openFolder(opts: { commit?: boolean; asLocal?: boolean }) {
     const res = await verifyRepoFolder(tauri, { home, platform }, path)
+    if (!alive.current) return
     if (!res.ok) {
       setError(res.error)
       return
@@ -222,6 +236,7 @@ function OpenFolderBody({ onDone }: { onDone(): void }) {
       try {
         // GitHub 표기(대소문자)로 맞추고, 볼 수 있는 저장소인지 확인한다
         const repo = await github.getRepo(gh.owner, gh.name)
+        if (!alive.current) return
         registerGitHubRepo(repo.owner, repo.name, { hostId: host.id, path: res.top })
         onDone()
       } catch (e) {
@@ -326,6 +341,7 @@ function AddGitHubBody({ onDone }: { onDone(): void }) {
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const alive = useAlive()
 
   async function add() {
     const parsed = parseGitHubRepo(text)
@@ -335,6 +351,7 @@ function AddGitHubBody({ onDone }: { onDone(): void }) {
     }
     try {
       const repo = await github.getRepo(parsed.owner, parsed.name)
+      if (!alive.current) return
       registerGitHubRepo(repo.owner, repo.name)
       onDone()
     } catch (e) {

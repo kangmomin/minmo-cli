@@ -27,7 +27,9 @@ export function isAbsolutePath(path: string, platform: Platform): boolean {
 /** 입력한 경로를 실제 경로로(~ 풀기, 끝 구분자 제거). 쓸 수 없으면 사유 */
 export function resolveInputPath(raw: string, env: { home: string; platform: Platform }): { path: string } | { error: string } {
   const trimmed = raw.trim()
-  const full = expandHome(trimmed, env.home, env.platform).replace(/[\\/]+$/, '')
+  const stripped = expandHome(trimmed, env.home, env.platform).replace(/[\\/]+$/, '')
+  // 끝 구분자를 떼면 루트가 사라진다(/ → '', C:\\ → C:) → 되돌린다
+  const full = stripped === '' && trimmed !== '' ? '/' : /^[A-Za-z]:$/.test(stripped) ? `${stripped}\\` : stripped
   if (trimmed === '' || !isAbsolutePath(full, env.platform)) return { error: '절대 경로(또는 ~ 로 시작하는 경로)를 입력하세요' }
   // 경로는 설정의 경로 템플릿 자리에 들어가므로 템플릿 기호는 쓸 수 없다
   if (/[{}]/.test(full)) return { error: '경로에 { } 를 쓸 수 없습니다' }

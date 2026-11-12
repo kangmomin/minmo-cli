@@ -3,6 +3,7 @@ import { ExternalLinkIcon, GitCommitIcon, GitPullRequestIcon, RefreshCwIcon, Upl
 import { useEffect, useId, useState } from 'react'
 
 import { useDeps } from '../../app/deps'
+import { useHost } from '../../app/host'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog'
@@ -59,8 +60,9 @@ export function ChangesTab({ target }: ChangesTabProps) {
   const msgId = useId()
   // 로컬 저장소(GitHub 아님)에는 PR 이 없고, origin 이 없으면 push 할 곳도 없다
   const local = isLocalOwner(target.owner)
+  const host = useHost()
   const noOrigin =
-    useQuery({ queryKey: queryKeys.gitOrigin(target.cwd), queryFn: () => lacksOrigin(tauri.gitRun, target.cwd), enabled: local }).data === true
+    useQuery({ queryKey: queryKeys.gitOrigin(host.id, target.cwd), queryFn: () => lacksOrigin(tauri.gitRun, target.cwd), enabled: local }).data === true
 
   // 사라진 파일은 선택에서 뺀다
   const paths = git.changes.map((c) => c.path).join('\n')

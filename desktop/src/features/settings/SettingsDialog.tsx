@@ -13,6 +13,7 @@ import { Label } from '../../components/ui/label'
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { Textarea } from '../../components/ui/textarea'
 import { issueBranchContext } from '@minmo/core'
+import { isLocalOwner, repoLabelOf, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useSettings } from './useSettings'
 
@@ -48,8 +49,8 @@ const ERROR_TEXT: Record<string, string> = {
 
 function scopeTitle(scope: SettingsScope): string {
   if (scope.kind === 'global') return '전역 설정'
-  if (scope.kind === 'org') return `조직 설정 — ${scope.owner}`
-  return `프로젝트 설정 — ${scope.owner}/${scope.repo}`
+  if (scope.kind === 'org') return isLocalOwner(scope.owner) ? '로컬 저장소 공통 설정' : `조직 설정 — ${scope.owner}`
+  return `프로젝트 설정 — ${repoLabelOf(useReposStore.getState(), scope.owner, scope.repo)}`
 }
 
 export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: SettingsDialogProps) {

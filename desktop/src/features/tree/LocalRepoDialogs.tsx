@@ -13,7 +13,7 @@ import { Label } from '../../components/ui/label'
 import { queryKeys } from '../../lib/queryKeys'
 import { useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
-import { PUBLISH_STEPS, PUBLISH_STEP_LABEL, PublishError, githubNameOf, publishRepo } from './publishRepo'
+import { PUBLISH_STEPS, PUBLISH_STEP_LABEL, PublishError, githubNameOf, isPublishing, publishRepo, resetPublish } from './publishRepo'
 import type { PublishStep } from './publishRepo'
 import { useOwners } from './useTree'
 
@@ -69,8 +69,10 @@ function NewTaskBody({ id, onDone }: { id: string; onDone(): void }) {
 
 export function PublishDialog({ id, open, onOpenChange }: LocalRepoDialogProps) {
   const name = useReposStore((s) => s.local[id]?.displayName ?? id)
+  // 올리는 중에는 닫지 않는다 — 닫아도 작업은 계속되어, 다시 열면 같은 일을 겹쳐 실행하게 된다
+  const [busy, setBusy] = useState(() => isPublishing(id))
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(o) => (o || !busy) && onOpenChange(o)}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>GitHub 에 올리기 — {name}</DialogTitle>
@@ -78,13 +80,13 @@ export function PublishDialog({ id, open, onOpenChange }: LocalRepoDialogProps) 
             새 GitHub 저장소를 만들어 모든 브랜치를 push 하고, 이 항목을 GitHub 저장소로 바꿉니다. 앱 안의 작업은 같은 번호의 GitHub 이슈로 만들어지고 메모·프로젝트 설정도 옮겨집니다.
           </DialogDescription>
         </DialogHeader>
-        {open && <PublishBody id={id} onDone={() => onOpenChange(false)} />}
+        {open && <PublishBody id={id} busy={busy} setBusy={setBusy} onDone={() => onOpenChange(false)} />}
       </DialogContent>
     </Dialog>
   )
 }
 
-function PublishBody({ id, onDone }: { id: string; onDone(): void }) {
+function PublishBody({ id, busy, setBusy, onDone }: { id: string; busy: boolean; setBusy(b: boolean): void; onDone(): void }) {
   const uid = useId()
   const host = useHost()
   const { tauri, github, api } = useDeps()
@@ -93,12 +95,12 @@ function PublishBody({ id, onDone }: { id: string; onDone(): void }) {
   const owners = useOwners()
   // 올리는 도중 항목이 로컬 목록에서 빠지므로(전환) 처음 값을 잡아 둔다
   const [local] = useState(() => useReposStore.getState().local[id])
-  const resume = local?.publish
+  // 이전에 멈춘 올리기(만들어 둔 GitHub 저장소) — 화면에서 다시 시작하면 지워진다
+  const resume = useReposStore((s) => s.local[id]?.publish) ?? undefined
   const [owner, setOwner] = useState(resume?.owner ?? '')
   const [name, setName] = useState(resume?.name ?? githubNameOf(local?.displayName ?? ''))
   const [isPrivate, setPrivate] = useState(resume?.private ?? true)
   const [step, setStep] = useState<PublishStep | null>(null)
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
 
@@ -117,6 +119,15 @@ function PublishBody({ id, onDone }: { id: string; onDone(): void }) {
         await queryClient.invalidateQueries({ queryKey: queryKeys.githubAll })
       })
       .catch((err) => setError(err instanceof PublishError ? `${PUBLISH_STEP_LABEL[err.step]} 단계에서 멈췄습니다: ${err.message}` : String(err)))
+      .finally(() => setBusy(false))
+  }
+
+  function restart() {
+    setBusy(true)
+    setError(null)
+    void resetPublish(tauri, id)
+      .then(() => setStep(null))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setBusy(false))
   }
 
@@ -142,7 +153,7 @@ function PublishBody({ id, onDone }: { id: string; onDone(): void }) {
           id={`${uid}-owner`}
           className="h-9 rounded border bg-background px-2 text-sm"
           value={chosen}
-          disabled={busy || !!resume || started}
+          disabled={busy || !!resume}
           onChange={(e) => setOwner(e.target.value)}
         >
           {resume && !ownerList.some((o) => o.login === resume.owner) && <option value={resume.owner}>{resume.owner}</option>}
@@ -156,10 +167,10 @@ function PublishBody({ id, onDone }: { id: string; onDone(): void }) {
       </div>
       <div className="grid gap-1">
         <Label htmlFor={`${uid}-name`}>저장소 이름</Label>
-        <Input id={`${uid}-name`} value={name} onChange={(e) => setName(e.target.value)} disabled={busy || !!resume || started} spellCheck={false} className="font-mono" />
+        <Input id={`${uid}-name`} value={name} onChange={(e) => setName(e.target.value)} disabled={busy || !!resume} spellCheck={false} className="font-mono" />
       </div>
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={isPrivate} disabled={busy || !!resume || started} onChange={(e) => setPrivate(e.target.checked)} />
+        <input type="checkbox" checked={isPrivate} disabled={busy || !!resume} onChange={(e) => setPrivate(e.target.checked)} />
         비공개 저장소
       </label>
       <p className="text-xs text-muted-foreground">
@@ -187,7 +198,12 @@ function PublishBody({ id, onDone }: { id: string; onDone(): void }) {
         {error ?? (!online ? '서버에 연결되어 있어야 합니다(메모·설정을 옮깁니다).' : '')}
       </p>
       <DialogFooter>
-        <Button type="button" variant="ghost" onClick={onDone}>
+        {resume && (
+          <Button type="button" variant="ghost" className="mr-auto" disabled={busy} onClick={restart} title="진행 기록을 지우고 다른 소유자·이름으로 다시 올립니다. GitHub 에 만들어진 저장소는 지우지 않습니다">
+            처음부터 다시
+          </Button>
+        )}
+        <Button type="button" variant="ghost" disabled={busy} onClick={onDone}>
           {started ? '닫기' : '취소'}
         </Button>
         <Button type="submit" disabled={busy || !online || chosen === '' || name.trim() === ''}>
