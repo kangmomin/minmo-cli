@@ -2,13 +2,15 @@
 import { useEffect } from 'react'
 
 import { useBaseDeps } from '../../app/deps'
-import { aliasOfIssue } from '../../app/host'
+import { aliasOfIssue, hostOf, useHostDeps } from '../../app/host'
+import { useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { STATUS_LABEL, derive, issueOfPane, useAgentStore } from './agentStore'
 import type { PaneSignals } from './agentStore'
 import { AGENT_LABEL, guessProgram, parseTitle, titleSignal } from './detect'
 import { PtyStreamParser } from './ptyStream'
+import { parseSubagentFiles } from './subagents'
 
 /** 사용자가 친 글자가 되돌아 나오는 출력(에코)은 "작업 중"으로 치지 않는다 — 입력 뒤 이 시간 안의 출력은 무시 */
 export const ECHO_MS = 400
@@ -17,6 +19,8 @@ export const DONE_BELL_MS = 1500
 const TICK_MS = 1000
 /** 이 PC 의 터미널에서 도는 프로세스를 다시 묻는 간격 */
 const PROCESS_POLL_MS = 3000
+/** Claude Code 의 하위 에이전트 목록을 다시 읽는 간격 */
+const SUBAGENT_POLL_MS = 5000
 
 const inputAt = new Map<string, number>()
 
@@ -31,9 +35,13 @@ type Tracked = PaneSignals & {
   polledAt: number
   /** 프로세스 조회가 진행 중 — 겹쳐 묻지 않는다 */
   polling: boolean
+  subPolledAt: number
+  subPolling: boolean
+  /** 이 패널에서 Claude Code 를 처음 본 시각(없으면 0) — 그 전에 끝난 세션의 기록은 보지 않는다 */
+  claudeSince: number
 }
 
-const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false })
+const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false, claudeSince: 0 })
 
 /** 사용자가 지금 그 이슈의 터미널을 보고 있는가 — 대화상자가 덮고 있으면 보는 것이 아니다 */
 function isViewed(issueId: string): boolean {
@@ -44,6 +52,7 @@ function isViewed(issueId: string): boolean {
 
 export function useAgentTracker() {
   const { tauri } = useBaseDeps()
+  const hostDeps = useHostDeps()
 
   useEffect(() => {
     let disposed = false
@@ -133,6 +142,35 @@ export function useAgentTracker() {
             })
         }
         update(paneId, t, now)
+        // Claude Code 가 떠 있는 패널: 세션 기록에서 하위 에이전트를 읽는다(그 패널이 있는 호스트에서)
+        const agent = useAgentStore.getState().panes[paneId]
+        const alias = aliasOfIssue(issueOfPane(paneId))
+        // 같은 작업 폴더에서 Claude Code 가 여러 패널에 떠 있으면 어느 세션이 어느 패널 것인지 알 수 없다 —
+        // 번호가 가장 앞선 패널 하나에만 보여 같은 목록이 두 번 세어지지 않게 한다
+        const firstClaude = agent?.agent === 'claude' && !Object.values(useAgentStore.getState().panes).some((p) => p.agent === 'claude' && p.issueId === agent.issueId && p.paneId < paneId)
+        if (agent?.agent !== 'claude') t.claudeSince = 0
+        else if (t.claudeSince === 0) t.claudeSince = now
+        if (!agent || !firstClaude) {
+          useAgentStore.getState().setSubagents(paneId, [])
+        } else if (alias !== null && !useHostsStore.getState().probes[alias]) {
+          // 원격인데 연결 정보가 없다 — 이 PC 의 파일을 대신 읽지 않는다
+        } else if (!t.subPolling && now - t.subPolledAt >= SUBAGENT_POLL_MS) {
+          const cwd = useUiStore.getState().worktreePathMap[agent.issueId]?.path
+          if (cwd) {
+            t.subPolledAt = now
+            t.subPolling = true
+            // 세션 기록은 에이전트가 뜨기 조금 전에 만들어질 수 있어 여유를 둔다
+            void hostDeps(hostOf(alias))
+              .tauri.claudeSubagents(cwd, t.claudeSince - 60_000)
+              .then((files) => {
+                if (!disposed && tracked.get(paneId) === t && useAgentStore.getState().panes[paneId]?.agent === 'claude') useAgentStore.getState().setSubagents(paneId, parseSubagentFiles(files))
+              })
+              .catch(() => undefined)
+              .finally(() => {
+                t.subPolling = false
+              })
+          }
+        }
       }
     }, TICK_MS)
 
@@ -152,5 +190,5 @@ export function useAgentTracker() {
       inputAt.clear()
       useAgentStore.getState().clear()
     }
-  }, [tauri])
+  }, [tauri, hostDeps])
 }

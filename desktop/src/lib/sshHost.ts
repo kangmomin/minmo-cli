@@ -3,6 +3,7 @@
 import type { CmdResult, RunOptions } from '@minmo/core'
 
 import type { DirEntry, RemotePty, SshError, SshErrorKind, SshProbe, TauriApi } from './tauri'
+import { REMOTE_SUBAGENTS_SCRIPT, claudeProjectSlug, parseRemoteSubagents } from '../features/agents/subagents'
 
 /** 호스트에 따라 달라지는 작업만 원격 구현으로 바꾼 TauriApi 의 일부 */
 export type HostOps = Pick<
@@ -16,6 +17,7 @@ export type HostOps = Pick<
   | 'removeFileIn'
   | 'openDir'
   | 'listDir'
+  | 'claudeSubagents'
   | 'readTextFile'
   | 'writeTextFile'
   | 'createDir'
@@ -281,6 +283,11 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
     },
     openDir: async () => {
       throw new Error('원격 폴더는 이 PC 의 탐색기로 열 수 없습니다')
+    },
+    // 원격의 Claude Code 세션 기록에서 하위 에이전트를 읽는다. 읽지 못하면 빈 목록(상태 표시는 그대로 동작)
+    claudeSubagents: async (cwd, sinceMs) => {
+      const r = await script(REMOTE_SUBAGENTS_SCRIPT, [claudeProjectSlug(cwd), String(Math.max(0, Math.floor(sinceMs / 1000)))])
+      return r.code === 0 ? parseRemoteSubagents(r.stdout) : []
     },
     listDir: async (root, rel) => {
       assertRoot(root)

@@ -2,6 +2,7 @@ import { cn } from '../../lib/utils'
 import { STATUS_LABEL, statusOf, useAgentStore, useIssueAgentStatus } from './agentStore'
 import type { AgentStatus } from './agentStore'
 import { AGENT_LABEL } from './detect'
+import { runningCount } from './subagents'
 
 const DOT: Record<AgentStatus, string> = {
   working: 'bg-sky-500 animate-pulse',
@@ -32,6 +33,7 @@ export function IssueAgentDot({ issueId }: { issueId: string }) {
  */
 export function PaneAgentStrip({ paneId }: { paneId: string }) {
   const agent = useAgentStore((s) => s.panes[paneId])
+  const running = useAgentStore((s) => runningCount(s.subagents[paneId]))
   const status = agent ? statusOf(agent) : null
   const name = !agent ? '' : agent.agent === 'other' ? agent.program : AGENT_LABEL[agent.agent]
   return (
@@ -41,6 +43,7 @@ export function PaneAgentStrip({ paneId }: { paneId: string }) {
           <StatusDot status={status} />
           <span className="truncate">
             {name} · {STATUS_LABEL[status]}
+            {running > 0 && <span data-testid="pane-subagents"> · 하위 에이전트 {running}개 실행 중</span>}
             {agent.label && <span className="opacity-70"> — {agent.label}</span>}
           </span>
         </span>

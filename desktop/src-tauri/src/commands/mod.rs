@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod fs;
 pub mod git;
 #[cfg(windows)]

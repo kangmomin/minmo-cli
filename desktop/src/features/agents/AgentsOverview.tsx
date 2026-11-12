@@ -19,15 +19,17 @@ import { AGENT_LABEL } from './detect'
 import type { AgentKind } from './detect'
 import { GROUP_LABEL, SORT_LABEL, ago, filterRows, groupRows, sortRows, toRows } from './overview'
 import type { AgentRow } from './overview'
+import type { Subagent } from './subagents'
 
 const AGENTS: readonly AgentKind[] = ['claude', 'codex', 'gemini', 'other']
 const agentName = (a: AgentKind) => (a === 'other' ? '기타' : AGENT_LABEL[a])
 
 function useRows(): AgentRow[] {
   const panes = useAgentStore((s) => s.panes)
+  const subagents = useAgentStore((s) => s.subagents)
   const targets = useSetupStore((s) => s.targets)
   const local = useReposStore((s) => s.local)
-  return useMemo(() => toRows(panes, { targets, hostOf: aliasOfIssue, repoLabel: (o, r) => repoLabelOf({ local }, o, r) }), [panes, targets, local])
+  return useMemo(() => toRows(panes, { targets, hostOf: aliasOfIssue, repoLabel: (o, r) => repoLabelOf({ local }, o, r) }, subagents), [panes, targets, local, subagents])
 }
 
 /** 상단 바의 버튼 — 주의가 필요한(입력 대기·끝남) 에이전트 수를 함께 보인다 */
@@ -87,6 +89,29 @@ function Toggle<T extends string>({ label, values, selected, nameOf, onChange }:
   )
 }
 
+/** 한 에이전트 아래에 보일 하위 에이전트 수(실행 중인 것 먼저 — 나머지는 수만 알린다) */
+const MAX_SUBAGENT_LINES = 6
+
+function SubagentList({ subs, now }: { subs: Subagent[]; now: number }) {
+  const shown = subs.slice(0, MAX_SUBAGENT_LINES)
+  return (
+    <ul className="mb-1 ml-9 border-l pl-2 text-xs" aria-label="하위 에이전트" data-testid="subagents">
+      {shown.map((s) => (
+        <li key={s.id} data-testid="subagent-row" data-finished={s.finished} className={s.finished ? 'flex items-center gap-2 py-0.5 text-muted-foreground' : 'flex items-center gap-2 py-0.5'}>
+          <StatusDot status={s.finished ? 'idle' : 'working'} />
+          <span className="w-12 shrink-0">{s.finished ? '끝남' : '실행 중'}</span>
+          <span className="w-28 shrink-0 truncate">{s.type}</span>
+          <span className="min-w-0 flex-1 truncate">{s.description}</span>
+          <span className="w-12 shrink-0 text-right text-muted-foreground" title="마지막 활동 뒤 지난 시간">
+            {ago(now - s.updatedAt)}
+          </span>
+        </li>
+      ))}
+      {subs.length > shown.length && <li className="py-0.5 text-muted-foreground">외 {subs.length - shown.length}개</li>}
+    </ul>
+  )
+}
+
 function OverviewBody({ onDone }: { onDone(): void }) {
   const uid = useId()
   const rows = useRows()
@@ -94,7 +119,7 @@ function OverviewBody({ onDone }: { onDone(): void }) {
   const setView = useUiStore((s) => s.setAgentsView)
   const groups = useMemo(() => groupRows(sortRows(filterRows(rows, view), view.sort), view.group), [rows, view])
   const shown = groups.reduce((n, g) => n + g.rows.length, 0)
-  const filtering = view.statuses.length > 0 || view.agents.length > 0 || view.query.trim() !== ''
+  const filtering = view.statuses.length > 0 || view.agents.length > 0 || view.query.trim() !== '' || view.subagentsOnly
   // 열려 있는 동안 "지난 시간"이 흐르게 한다
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -136,13 +161,17 @@ function OverviewBody({ onDone }: { onDone(): void }) {
             ))}
           </select>
           {filtering && (
-            <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={() => setView({ statuses: DEFAULT_AGENTS_VIEW.statuses, agents: DEFAULT_AGENTS_VIEW.agents, query: '' })}>
+            <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={() => setView({ statuses: DEFAULT_AGENTS_VIEW.statuses, agents: DEFAULT_AGENTS_VIEW.agents, query: '', subagentsOnly: false })}>
               필터 지우기
             </Button>
           )}
         </div>
         <Toggle label="상태" values={STATUS_ORDER} selected={view.statuses} nameOf={(s: AgentStatus) => STATUS_LABEL[s]} onChange={(statuses) => setView({ statuses })} />
         <Toggle label="에이전트" values={AGENTS} selected={view.agents} nameOf={agentName} onChange={(agents) => setView({ agents })} />
+        <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={view.subagentsOnly} onChange={(e) => setView({ subagentsOnly: e.target.checked })} />
+          하위 에이전트가 실행 중인 것만
+        </label>
       </div>
 
       <p className="text-xs text-muted-foreground" role="status">
@@ -183,6 +212,7 @@ function OverviewBody({ onDone }: { onDone(): void }) {
                       {ago(now - r.since)}
                     </span>
                   </button>
+                  {r.subagents.length > 0 && <SubagentList subs={r.subagents} now={now} />}
                 </li>
               ))}
             </ul>
