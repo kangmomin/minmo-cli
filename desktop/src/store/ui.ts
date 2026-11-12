@@ -80,8 +80,10 @@ export interface UiState {
   /**
    * 에이전트를 실행할 터미널 패널을 마련하고 그 id 를 돌려준다. 아직 터미널을 띄운 적이 없으면 첫 패널을 쓰고,
    * 이미 쓰는 패널이 있으면 오른쪽에 새 패널을 만든다(쓰던 터미널에 명령을 끼워 넣지 않는다).
+   * keepFirst: 첫 패널을 쓰지 않는다 — 원격 호스트의 첫 패널은 앱을 꺼도 남는 tmux 세션에 다시 붙으므로,
+   * 거기서 돌고 있을지 모르는 프로그램에 명령이 입력되지 않게 항상 새 패널을 만든다.
    */
-  launchPane(issueId: string): string
+  launchPane(issueId: string, keepFirst?: boolean): string
   /**
    * 저장소 식별이 바뀔 때(로컬 저장소를 GitHub 에 올림) 이슈 id 와 트리 노드 id 를 옮긴다.
    * 패널 id 에는 이슈 id 가 들어 있어 옮길 수 없다 — 그 이슈의 터미널 패널은 닫고 다시 열 때 새로 만든다.
@@ -137,26 +139,29 @@ export const useUiStore = create<UiState>()(
       setAgentCommand: (kind, command) => set((s) => ({ agentCommands: { ...s.agentCommands, [kind]: command } })),
       setLastLaunchKind: (lastLaunchKind) => set({ lastLaunchKind }),
       setLaunchRequest: (launchRequest) => set({ launchRequest }),
-      launchPane: (issueId) => {
+      launchPane: (issueId, keepFirst = false) => {
         const s = get()
-        const cur = s.panes[issueId]
+        let cur = s.panes[issueId]
         const leaves = leafIds(cur?.tree ?? null)
-        // 패널이 없거나(모두 닫음·아직 안 만듦) 하나도 터미널을 띄우지 않았으면 그 자리를 쓴다
-        if (!cur || leaves.length === 0) {
-          const seq = (cur?.seq ?? 0) + 1
-          const id = paneIdOf(issueId, seq)
-          set({ panes: { ...s.panes, [issueId]: { tree: leaf(id), focused: id, seq } }, focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 } })
+        const commit = (next: NonNullable<typeof cur>, id: string) => {
+          set({ panes: { ...s.panes, [issueId]: next }, focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 } })
           return id
         }
-        if (!leaves.some((p) => p in s.terminalIds)) {
-          set({ panes: { ...s.panes, [issueId]: { ...cur, focused: leaves[0] } }, focusRequest: { paneId: leaves[0], token: (s.focusRequest?.token ?? 0) + 1 } })
-          return leaves[0]
+        if (!cur || leaves.length === 0) {
+          // 패널이 없으면(모두 닫음·아직 안 만듦) 새로 만든다
+          const seq = (cur?.seq ?? 0) + 1
+          const id = paneIdOf(issueId, seq)
+          cur = { tree: leaf(id), focused: id, seq }
+          if (!keepFirst) return commit(cur, id)
+          leaves.push(id)
+        } else if (!keepFirst && !leaves.some((p) => p in s.terminalIds)) {
+          // 하나도 터미널을 띄우지 않았으면 그 자리를 쓴다
+          return commit({ ...cur, focused: leaves[0] }, leaves[0])
         }
         const from = cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[leaves.length - 1]
         const seq = cur.seq + 1
         const id = paneIdOf(issueId, seq)
-        set({ panes: { ...s.panes, [issueId]: { tree: splitPane(cur.tree!, from, 'row', id), focused: id, seq } }, focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 } })
-        return id
+        return commit({ tree: splitPane(cur.tree!, from, 'row', id), focused: id, seq }, id)
       },
       rekey: (issues, nodes) =>
         set((s) => {
@@ -255,7 +260,11 @@ export const useUiStore = create<UiState>()(
         return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme, fontSize: state.fontSize === undefined ? current.fontSize : clampFontSize(state.fontSize),
           // 예전 버전의 저장 값에는 없거나 모양이 다를 수 있다 — 기본값 위에 얹는다
           agentsView: { ...current.agentsView, ...(typeof state.agentsView === 'object' && state.agentsView !== null ? state.agentsView : {}) },
-          agentCommands: { ...current.agentCommands, ...(typeof state.agentCommands === 'object' && state.agentCommands !== null ? state.agentCommands : {}) },
+          // 저장된 값이 글자가 아니면 버린다(대화상자가 그 값을 명령으로 쓴다)
+          agentCommands: {
+            ...current.agentCommands,
+            ...Object.fromEntries(Object.entries(typeof state.agentCommands === 'object' && state.agentCommands !== null ? state.agentCommands : {}).filter(([k, v]) => LAUNCH_KINDS.includes(k as LaunchKind) && typeof v === 'string')),
+          },
           lastLaunchKind: LAUNCH_KINDS.includes(state.lastLaunchKind as LaunchKind) ? (state.lastLaunchKind as LaunchKind) : current.lastLaunchKind,
         }
       },

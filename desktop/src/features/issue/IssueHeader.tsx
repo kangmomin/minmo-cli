@@ -26,13 +26,17 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
   const issueId = host.issueId(target.owner, target.repo, target.key)
   const [launchOpen, setLaunchOpen] = useState(false)
   // 트리 메뉴의 [에이전트 실행] — 작업 폴더가 준비되면 대화상자를 연다
-  const launchRequested = useUiStore((s) => s.launchRequest === issueId)
-  const ready = state?.phase === 'ready'
+  const launchRequest = useUiStore((s) => s.launchRequest)
+  const phase = state?.phase
   useEffect(() => {
-    if (!launchRequested || !ready) return
-    useUiStore.getState().setLaunchRequest(null)
-    setLaunchOpen(true)
-  }, [launchRequested, ready])
+    if (launchRequest === null) return
+    // 다른 이슈를 보고 있거나 작업 폴더 준비에 실패했으면 요청을 버린다 — 한참 뒤에 대화상자가 불쑥 뜨지 않게
+    if (launchRequest !== issueId || phase === 'error') useUiStore.getState().setLaunchRequest(null)
+    else if (phase === 'ready') {
+      useUiStore.getState().setLaunchRequest(null)
+      setLaunchOpen(true)
+    }
+  }, [launchRequest, issueId, phase])
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2" data-testid="issue-header">
       {host.alias !== null && (

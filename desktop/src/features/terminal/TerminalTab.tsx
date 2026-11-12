@@ -10,7 +10,7 @@ import { Button } from '../../components/ui/button'
 import { remotePty } from '../../lib/sshHost'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
-import { LAUNCH_DELAY_MS, takeLaunch } from '../agents/launchQueue'
+import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
 import { noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
@@ -247,18 +247,27 @@ function TerminalSession({
       // spawn 응답(id 확정) 전에 온 출력은 첫 프롬프트일 수 있어 id 별로 보관했다가 확정 후 flush 한다(CR-07)
       const pending = new Map<string, string>()
       let settled = false
-      // [에이전트 실행] 으로 맡겨 둔 명령은 셸이 첫 출력을 낸 뒤에 한 번 넣는다
-      let launched = false
+      // [에이전트 실행] 으로 맡겨 둔 명령은 셸이 출력을 내고 잠잠해진 뒤에 한 번 넣는다.
+      // null = 아직 꺼내지 않음, undefined = 없음(또는 이미 넣음)
+      let launchCmd: string | undefined | null = null
+      let launchTimer: ReturnType<typeof setTimeout> | undefined
+      cleanups.push(() => clearTimeout(launchTimer))
       const launchWhenReady = () => {
-        if (launched || !state.ptyId) return
-        launched = true
-        const cmd = takeLaunch(paneId)
+        if (!state.ptyId) return
+        if (launchCmd === null) launchCmd = takeLaunch(paneId)
+        if (launchCmd === undefined) return
         const id = state.ptyId
-        if (cmd === undefined) return
-        const timer = setTimeout(() => {
-          if (!disposed && !state.ended) tauri.ptyWrite(id, `${cmd}\r`).catch(state.end)
+        clearTimeout(launchTimer)
+        launchTimer = setTimeout(() => {
+          if (disposed || state.ended || !launchCmd) return
+          // ssh 가 비밀번호·호스트 키를 묻는 중이면 넣지 않고 다음 출력을 기다린다
+          const buf = t.buffer?.active
+          const line = buf?.getLine(buf.baseY + buf.cursorY)?.translateToString(true) ?? ''
+          if (looksLikeAuthPrompt(line)) return
+          const cmd = launchCmd
+          launchCmd = undefined
+          tauri.ptyWrite(id, `${cmd}\r`).catch(state.end)
         }, LAUNCH_DELAY_MS)
-        cleanups.push(() => clearTimeout(timer))
       }
       try {
         const unlisten = await tauri.onPtyData((e) => {

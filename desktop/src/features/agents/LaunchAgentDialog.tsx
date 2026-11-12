@@ -64,7 +64,8 @@ function LaunchBody({ issueId, target, onDone }: { issueId: string; target: Issu
     // 고친 명령 틀과 고른 에이전트는 다음에도 쓰게 저장한다
     ui.setAgentCommand(kind, template.trim())
     ui.setLastLaunchKind(kind)
-    const paneId = ui.launchPane(issueId)
+    // 원격 호스트의 첫 패널은 남아 있던 tmux 세션에 다시 붙는다 → 항상 새 패널에서 실행한다
+    const paneId = ui.launchPane(issueId, host.alias !== null)
     queueLaunch(paneId, built.command)
     ui.setTab('terminal')
     onDone()

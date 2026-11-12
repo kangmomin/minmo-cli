@@ -48,11 +48,25 @@ export function oneLine(text: string): string {
   )
 }
 
+/** `{prompt}` 가 따옴표 안에 있거나 따옴표에 붙어 있는가(앞쪽에 닫히지 않은 따옴표가 있으면 안이다) */
+function slotInQuotes(tpl: string): boolean {
+  const parts = tpl.split(PROMPT_SLOT)
+  let before = ''
+  for (let i = 0; i < parts.length - 1; i++) {
+    before += parts[i]
+    const odd = (q: string) => before.split(q).length % 2 === 0
+    if (odd('"') || odd("'") || odd('`') || /^["'`]/.test(parts[i + 1])) return true
+  }
+  return false
+}
+
 export type BuiltCommand = { ok: true; command: string } | { ok: false; error: string }
 
 /**
  * 명령 틀 + 지시문 → 터미널에 넣을 한 줄.
- * 지시문이 비면 `{prompt}` 와 바로 앞의 옵션(-i 처럼 값을 받는 것)을 함께 뺀다 — "gemini -i" 처럼 값 없는 옵션이 남지 않게.
+ * 지시문이 비면 `{prompt}` 와 바로 앞의 한 글자 옵션(-i·-p 처럼 값을 받는 것)을 함께 뺀다 — "gemini -i" 처럼 값 없는 옵션이 남지 않게.
+ * 긴 옵션(--full-auto 등)은 값을 받는지 알 수 없어 그대로 둔다.
+ * `{prompt}` 를 따옴표 안에 두면 거절한다 — 감싼 지시문이 그 따옴표와 겹쳐 풀려 버린다(지시문에는 남이 쓴 이슈 제목이 들어간다).
  */
 export function buildCommand(template: string, prompt: string, shell: ShellKind): BuiltCommand {
   const tpl = oneLine(template)
@@ -61,7 +75,8 @@ export function buildCommand(template: string, prompt: string, shell: ShellKind)
   if (!tpl.includes(PROMPT_SLOT)) {
     return text === '' ? { ok: true, command: tpl } : { ok: false, error: `명령에 ${PROMPT_SLOT} 자리가 없어 지시문을 넘길 수 없습니다 — 명령에 ${PROMPT_SLOT} 를 넣거나 지시문을 비우세요` }
   }
-  const command = text === '' ? tpl.replace(/(?:(?<=^|\s)-{1,2}[\w-]+\s+)?\{prompt\}/g, '').replace(/ {2,}/g, ' ').trim() : tpl.split(PROMPT_SLOT).join(quoteArg(text, shell))
+  if (slotInQuotes(tpl)) return { ok: false, error: `${PROMPT_SLOT} 를 따옴표로 감싸지 마세요 — 지시문은 자동으로 감싸져 들어갑니다` }
+  const command = text === '' ? tpl.replace(/(?:(?<=^|\s)-[A-Za-z]\s+)?\{prompt\}/g, '').replace(/ {2,}/g, ' ').trim() : tpl.split(PROMPT_SLOT).join(quoteArg(text, shell))
   return command === '' ? { ok: false, error: '실행할 명령을 입력하세요' } : { ok: true, command }
 }
 
