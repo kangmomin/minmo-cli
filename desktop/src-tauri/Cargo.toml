@@ -21,7 +21,12 @@ tauri-plugin-opener = "2"
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["process", "io-util", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["process", "io-util", "rt", "sync", "time", "net", "macros"] }
+# 원격 접속(호스트 모드, remote.rs): 웹 화면·WebSocket 서버, 이 PC 의 서버·GitHub 로의 대리 요청, 기기 토큰 해시, 열 주소 찾기
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+reqwest = { version = "0.13", features = ["json"] }
+sha2 = "0.10"
+if-addrs = "0.13"
 # 내장 서버 토큰 암호화 키 생성(32바이트 → base64)
 getrandom = "0.3"
 base64 = "0.21"
