@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IssueTarget } from '@minmo/core'
 
 import type { Peer, Unlisten } from '../../lib/tauri'
+import { RemoteConnection as RemoteConnectionClass } from '../../lib/tauri.remote'
 import type { RemoteConnection, RemoteLink } from '../../lib/tauri.remote'
 import { usePeersStore } from '../../store/peers'
 import { useUiStore } from '../../store/ui'
@@ -15,7 +16,6 @@ import { groupRows, rowKey } from '../agents/overview'
 import type { AgentRow } from '../agents/overview'
 import { consumeHash, parseHash } from './deepLink'
 import { newlyUrgent, parsePeerRows, usePeerAgents, usePeerAgentsStore } from './peerAgents'
-import { peerSrc } from './PeerView'
 import { RemoteAccessDialog } from './RemoteAccessDialog'
 
 const PEER: Peer = { id: 'p1', name: '회사 PC', url: 'http://100.64.0.5:8790', token: 'tok' }
@@ -23,7 +23,7 @@ const TARGET: IssueTarget = { owner: 'acme', repo: 'app', key: '42', number: 42,
 const raw = (o: Record<string, unknown> = {}) => ({ paneId: 'acme/app#42::1', issueId: 'acme/app#42', host: null, hostLabel: '이 PC', repo: 'acme/app', issue: '#42 Add login', agent: 'claude', agentLabel: 'Claude Code', label: '', status: 'working', since: 1, lastOutputAt: 2, subagents: [], running: 0, target: TARGET, ...o })
 
 beforeEach(() => {
-  usePeersStore.setState({ peers: [], activeId: null, open: null })
+  usePeersStore.setState({ peers: [] })
   usePeerAgentsStore.setState({ rows: {}, online: {} })
   useUiStore.setState({ agentNotify: true })
 })
@@ -94,6 +94,19 @@ describe('usePeerAgents: 등록한 PC 에 붙어 현황을 받는다', () => {
     expect(usePeerAgentsStore.getState()).toMatchObject({ online: { p1: false }, rows: { p1: [] } })
   })
 
+  it('화면이 다시 그려져도 연결을 새로 만들지 않는다(다시 그릴 때마다 끊고 붙으면 한 번도 붙지 못한다)', async () => {
+    const connect = vi.spyOn(RemoteConnectionClass.prototype, 'connect').mockImplementation(() => new Promise(() => {}))
+    const fake = createFakeTauri({ runtime: 'native', peersList: async () => [PEER] })
+    // 연결 방법을 넘기지 않는다 — 기본 연결을 쓴다
+    const r = renderHookWithDeps(() => usePeerAgents(fake.tauri), makeDeps({ tauri: fake.tauri }))
+    await waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
+    r.rerender()
+    r.rerender()
+    await Promise.resolve()
+    expect(connect).toHaveBeenCalledTimes(1)
+    connect.mockRestore()
+  })
+
   it('원격 화면(다른 기기의 브라우저)에서는 하지 않는다', async () => {
     const fake = createFakeTauri({ runtime: 'remote', peersList: async () => [PEER] })
     const connect = vi.fn()
@@ -106,11 +119,10 @@ describe('usePeerAgents: 등록한 PC 에 붙어 현황을 받는다', () => {
 })
 
 describe('그 PC 의 화면 열기(주소 # 뒤)', () => {
-  it('기기 토큰과 열 곳은 # 뒤에 붙인다(서버로 보내지지 않는다)', () => {
-    expect(peerSrc(PEER, null)).toBe('http://100.64.0.5:8790/#device=tok')
-    const src = peerSrc(PEER, { target: TARGET, paneId: 'acme/app#42::2', token: 3 })
-    expect(src.startsWith('http://100.64.0.5:8790/#')).toBe(true)
-    expect(parseHash(new URL(src).hash)).toEqual({ device: 'tok', open: { target: TARGET, paneId: 'acme/app#42::2' } })
+  it('# 뒤의 기기 토큰과 열 곳을 읽는다(호스트 앱이 src-tauri/src/remote.rs peer_url 로 만든 모양)', () => {
+    const open = encodeURIComponent(JSON.stringify({ target: TARGET, paneId: 'acme/app#42::2' }))
+    expect(parseHash(`#device=tok&open=${open}&n=7`)).toEqual({ device: 'tok', open: { target: TARGET, paneId: 'acme/app#42::2' } })
+    expect(parseHash('#device=tok')).toEqual({ device: 'tok', open: null })
   })
 
   it('모양이 맞지 않는 "열 곳"은 무시한다', () => {

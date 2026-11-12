@@ -53,6 +53,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     peerAdd: async () => [],
     peerRemove: async () => [],
     agentsPublish: async () => {},
+    peerOpen: async () => {},
     sshHosts: async () => [],
     sshHostSave: async () => [],
     sshHostRemove: async () => [],

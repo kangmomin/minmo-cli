@@ -76,9 +76,11 @@ export function newlyUrgent(prev: AgentRow[], next: AgentRow[]): AgentRow[] {
 }
 
 const wsUrl = (url: string) => `${url.replace(/^http/, 'ws')}/ws`
+// 모듈에 한 번만 둔다 — 인자의 기본값으로 매번 새 함수를 만들면 렌더할 때마다 연결을 끊고 다시 붙는다
+const defaultConnect = (url: string, token: string) => new RemoteConnection(wsUrl(url), token)
 
 /** 이 PC 의 창에서만: 등록한 PC 마다 붙어 현황을 받는다. 끊기면 다시 붙는다 */
-export function usePeerAgents(tauri: TauriApi, connect: (url: string, token: string) => RemoteConnection = (url, token) => new RemoteConnection(wsUrl(url), token)) {
+export function usePeerAgents(tauri: TauriApi, connect: (url: string, token: string) => RemoteConnection = defaultConnect) {
   const peers = usePeersStore((s) => s.peers)
   // 목록은 앱이 뜰 때 한 번 읽는다(등록·삭제는 설정 화면이 store 를 갱신한다)
   useEffect(() => {

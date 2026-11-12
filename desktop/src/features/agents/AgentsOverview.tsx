@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '../../components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip'
 import { repoLabelOf, useReposStore } from '../../store/repos'
-import { usePeersStore } from '../../store/peers'
+import { useBaseDeps } from '../../app/deps'
 import { useSetupStore } from '../../store/setup'
 import { DEFAULT_AGENTS_VIEW, useUiStore } from '../../store/ui'
 import type { AgentsView } from '../../store/ui'
@@ -124,6 +124,7 @@ function SubagentList({ subs, now }: { subs: Subagent[]; now: number }) {
 
 function OverviewBody({ onDone }: { onDone(): void }) {
   const uid = useId()
+  const { tauri } = useBaseDeps()
   const rows = useRows()
   const view = useUiStore((s) => s.agentsView)
   const setView = useUiStore((s) => s.setAgentsView)
@@ -140,10 +141,9 @@ function OverviewBody({ onDone }: { onDone(): void }) {
   function go(row: AgentRow) {
     // 다른 PC 의 에이전트: 그 PC 의 화면을 열고 그 이슈의 터미널로 간다
     if (row.peer) {
-      usePeersStore.getState().setActive(row.peer.id, row.target ? { target: row.target, paneId: row.paneId } : undefined)
+      void tauri.peerOpen(row.peer.id, row.target ? { target: row.target, paneId: row.paneId } : undefined).catch(() => undefined)
       return onDone()
     }
-    usePeersStore.getState().setActive(null)
     const ui = useUiStore.getState()
     ui.selectIssue(row.issueId)
     ui.setTab('terminal')

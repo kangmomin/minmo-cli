@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, ListTreeIcon, LogOutIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
+import { ListTreeIcon, LogOutIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import type { SettingsScope } from '@minmo/api-client'
@@ -10,9 +10,7 @@ import { AgentsButton, AgentsOverview, useLocalRows } from '../features/agents/A
 import { useAgentTracker } from '../features/agents/useAgentTracker'
 import { useDeepLinkOpen } from '../features/remote/deepLink'
 import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
-import { PeerView } from '../features/remote/PeerView'
 import { RemoteAccessDialog } from '../features/remote/RemoteAccessDialog'
-import { usePeersStore } from '../store/peers'
 import { useSharedTerminals } from '../features/remote/useRemoteHost'
 import { useBaseDeps } from './deps'
 import { useAuth } from '../features/auth/useAuth'
@@ -55,14 +53,10 @@ export function Workspace() {
   useSharedTerminals(baseTauri)
   // 원격으로 붙은 화면에서는 이 PC 전용 설정(원격 접속·서버·원격 CLI)을 보이지 않는다
   const isHost = baseTauri.runtime !== 'remote'
-  // 여러 PC: 등록한 다른 PC 의 현황을 받아 합치고, 이 PC 의 현황은 올려 둔다. 다른 PC 를 고르면 그 PC 의 화면을 이 안에 연다
+  // 여러 PC: 등록한 다른 PC 의 현황을 받아 합치고, 이 PC 의 현황은 올려 둔다
   usePeerAgents(baseTauri)
   useAgentPublisher(baseTauri, useLocalRows())
   useDeepLinkOpen()
-  const peers = usePeersStore((s) => s.peers)
-  const activePeer = usePeersStore((s) => s.peers.find((p) => p.id === s.activeId) ?? null)
-  const peerOpen = usePeersStore((s) => s.open)
-  const setActivePeer = usePeersStore((s) => s.setActive)
   // 열어 둔 모든 터미널의 에이전트 상태를 추적한다(이슈 행·패널·현황·알림)
   useAgentTracker()
   const connection = useHostConnection()
@@ -79,23 +73,6 @@ export function Workspace() {
           <ListTreeIcon />
         </Button>
         <span className="font-semibold">minmo</span>
-        {isHost && peers.length > 0 && (
-          <>
-            {activePeer && (
-              <Button variant="ghost" size="sm" onClick={() => setActivePeer(null)}>
-                <ArrowLeftIcon /> 이 PC
-              </Button>
-            )}
-            <select aria-label="PC" data-testid="peer-select" className="h-7 max-w-40 rounded border bg-background px-1.5 text-sm" value={activePeer?.id ?? ''} onChange={(e) => setActivePeer(e.target.value === '' ? null : e.target.value)}>
-              <option value="">이 PC</option>
-              {peers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
         <AppVersion />
         <span className="flex-1" />
         {auth.me && <span className="text-sm text-muted-foreground">{auth.me.githubLogin}</span>}
@@ -161,9 +138,7 @@ export function Workspace() {
         </div>
       )}
 
-      {/* 다른 PC 를 열어도 이 PC 의 화면(터미널 등)은 내리지 않고 가려만 둔다 — 돌아오면 그대로다 */}
-      {activePeer && <PeerView key={activePeer.id} peer={activePeer} open={peerOpen} />}
-      <div className={activePeer ? 'hidden' : 'flex min-h-0 flex-1'}>
+      <div className="flex min-h-0 flex-1">
         <Sidebar
           className={showTree ? 'max-md:w-full' : 'max-md:hidden'}
           connection={connection}

@@ -217,6 +217,7 @@ export function createRemoteTauri(conn: RemoteConnection): TauriApi {
     peersList: async () => [],
     peerAdd: hostOnly('다른 PC 등록'),
     peerRemove: hostOnly('다른 PC 삭제'),
+    peerOpen: hostOnly('다른 PC 열기'),
     agentsPublish: async () => undefined,
   }
   return new Proxy(local as TauriApi, {

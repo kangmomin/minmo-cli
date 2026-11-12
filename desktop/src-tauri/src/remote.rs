@@ -650,6 +650,18 @@ pub fn init(app: &AppHandle) {
         if let Ok(code) = std::env::var("MINMO_REMOTE_TEST_PAIR_CODE") {
             app.state::<RemoteManager>().pairings.preset(code);
         }
+        // 격리 검증용: 시작하면서 다른 PC 의 창을 연다("<PC id>" 또는 "<PC id>|<열 곳 JSON>")
+        if let Ok(spec) = std::env::var("MINMO_REMOTE_TEST_OPEN_PEER") {
+            let (id, open) = match spec.split_once('|') {
+                Some((id, json)) => (id.to_string(), serde_json::from_str(json).ok()),
+                None => (spec.clone(), None),
+            };
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(4)).await;
+                let _ = peer_open(handle, id, open).await;
+            });
+        }
     }
     for name in FORWARDED_EVENTS {
         let handle = app.clone();
@@ -1161,6 +1173,21 @@ async fn proxy_github(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
     forward(&ctx, req, url, token, true).await
 }
 
+/// desktop/src/lib/tauri.ts 의 runtimeKind 가 읽는 표시
+const REMOTE_MARK: &str = r#"<meta name="minmo-runtime" content="remote" />"#;
+
+/// index.html 의 <head> 바로 뒤에 표시를 넣는다(<head> 가 없으면 그대로 둔다)
+fn mark_remote(html: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(html);
+    match text.find("<head>") {
+        Some(i) => {
+            let at = i + "<head>".len();
+            format!("{}{REMOTE_MARK}{}", &text[..at], &text[at..]).into_bytes()
+        }
+        None => html.to_vec(),
+    }
+}
+
 /// 웹 화면 파일 — 앱에 들어 있는 것과 같은 것을 내준다. 없는 경로는 index.html(화면이 주소를 직접 다룬다)
 async fn asset(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
     let path = req.uri().path().trim_start_matches('/').to_string();
@@ -1182,7 +1209,15 @@ async fn asset(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
             && resolver
                 .get("index.html".into())
                 .is_some_and(|i| i.bytes == a.bytes));
-    let mut resp = Response::new(Body::from(a.bytes));
+    // 화면 파일에는 "호스트가 내준 화면"이라는 표시를 넣는다. 다른 PC 의 minmo 앱이 이 화면을 자기 창으로 열면
+    // 그 창에도 앱의 네이티브 다리(__TAURI_INTERNALS__)가 있어, 표시가 없으면 화면이 자신을 그 앱의 본창으로 착각한다
+    // (네이티브 호출은 권한이 없어 거절되고 화면은 뜨지 못한다 — 실제 창에서 확인)
+    let bytes = if is_index {
+        mark_remote(&a.bytes)
+    } else {
+        a.bytes.to_vec()
+    };
+    let mut resp = Response::new(Body::from(bytes));
     // 앱에 들어 있는 파일의 형식 추측은 .webmanifest 를 모른다 — 홈 화면에 추가할 때 브라우저가 읽는 파일이다
     let mime = if !is_index && path.ends_with(".webmanifest") {
         "application/manifest+json"
@@ -1212,7 +1247,7 @@ async fn asset(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
         // 같은 출처(이 서버)와만 통신한다. 다른 사이트의 틀 안에 넣지 못하게 한다
         h.insert(
             header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static("default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://avatars.githubusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors 'self' http://tauri.localhost https://tauri.localhost tauri://localhost"),
+            HeaderValue::from_static("default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://avatars.githubusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors 'self'"),
         );
     }
     resp
@@ -1496,6 +1531,73 @@ pub fn peer_remove(app: AppHandle, id: String) -> Result<Vec<PeerView>, String> 
     Ok(peer_views(&path))
 }
 
+/// 주소의 # 뒤에 넣을 값 — 글자·숫자와 `-_.~` 만 그대로 두고 나머지는 %XX 로 바꾼다
+fn percent_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// 다른 PC 의 화면 주소. 기기 토큰과 "열 곳"은 # 뒤에 붙인다 — # 뒤는 서버로 보내지지 않고,
+/// 그 화면(desktop/src/features/remote/deepLink.ts)이 읽은 뒤 주소에서 지운다.
+pub fn peer_url(base: &str, token: &str, open: Option<&Value>, nonce: u64) -> String {
+    let mut hash = format!("device={}", percent_encode(token));
+    if let Some(o) = open {
+        // n: 같은 곳을 다시 열어도 주소가 달라져 그 화면이 다시 처리한다
+        hash.push_str(&format!(
+            "&open={}&n={nonce}",
+            percent_encode(&o.to_string())
+        ));
+    }
+    format!("{base}/#{hash}")
+}
+
+/// 다른 PC 의 화면을 별도 창으로 연다(이미 열려 있으면 그 창을 앞으로 가져오고, open 이 있으면 그곳으로 간다).
+/// 앱 화면 안의 틀(iframe)에 넣지 않는 이유: 브라우저 엔진이 앱 화면에서 사설 네트워크 주소의 틀을 여는 것을 막는다.
+/// 이 창은 그 PC 가 내준 화면이며 이 앱의 네이티브 명령을 부를 수 없다(권한은 main 창에만 있다).
+/// async 여야 한다 — Windows 에서는 메인 스레드(동기 명령)에서 창을 만들면 멈춘다.
+#[tauri::command]
+pub async fn peer_open(app: AppHandle, id: String, open: Option<Value>) -> Result<(), String> {
+    let path = app.state::<RemoteManager>().peers_path.clone();
+    let peer = load_peers(&path)
+        .into_iter()
+        .find(|p| p.id == id)
+        .ok_or("등록되지 않은 PC 입니다")?;
+    let token = keychain::get(&peer_key(&peer.id))?
+        .ok_or("그 PC 의 등록 정보를 읽을 수 없습니다 — [원격 접속] 에서 지우고 다시 등록하세요")?;
+    let url = peer_url(&peer.url, &token, open.as_ref(), now_ms());
+    let label = format!("peer-{}", peer.id);
+    if let Some(win) = app.get_webview_window(&label) {
+        if open.is_some() {
+            // 이미 떠 있는 화면에는 # 뒤만 바꿔 알린다(다시 불러오지 않는다)
+            let hash = url.split_once('#').map_or("", |(_, h)| h);
+            let js = format!(
+                "location.hash = {}",
+                serde_json::to_string(hash).map_err(|e| e.to_string())?
+            );
+            win.eval(&js).map_err(|e| e.to_string())?;
+        }
+        let _ = win.unminimize();
+        let _ = win.show();
+        return win.set_focus().map_err(|e| e.to_string());
+    }
+    let parsed = url
+        .parse()
+        .map_err(|e| format!("주소가 올바르지 않습니다: {e}"))?;
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed))
+        .title(format!("minmo — {}", peer.name))
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(600.0, 400.0)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// 화면이 맡은 호출의 결과를 돌려준다
 #[tauri::command]
 pub fn remote_rpc_reply(app: AppHandle, id: u64, ok: bool, value: Value) {
@@ -1555,6 +1657,43 @@ mod tests {
         ] {
             assert!(normalize_peer_url(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn peer_window_url_carries_token_and_target_in_the_fragment_only() {
+        assert_eq!(
+            peer_url("http://100.64.0.5:8790", "tok_en-1", None, 7),
+            "http://100.64.0.5:8790/#device=tok_en-1"
+        );
+        let open =
+            json!({ "target": { "owner": "a", "title": "로그인 & 가입" }, "paneId": "a/b#1::2" });
+        let url = peer_url("http://h:1", "t", Some(&open), 7);
+        let (base, hash) = url.split_once('#').unwrap();
+        assert_eq!(base, "http://h:1/");
+        assert!(hash.starts_with("device=t&open=%7B") && hash.ends_with("&n=7"));
+        // 값 안의 & # 공백·한글이 주소를 깨지 않는다
+        let value = hash
+            .strip_prefix("device=t&open=")
+            .unwrap()
+            .strip_suffix("&n=7")
+            .unwrap();
+        assert!(value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.~%".contains(c)));
+        assert_eq!(percent_encode("a b&c#d"), "a%20b%26c%23d");
+    }
+
+    #[test]
+    fn served_index_is_marked_as_remote() {
+        let out = String::from_utf8(mark_remote(
+            b"<!doctype html><html><head><title>x</title></head></html>",
+        ))
+        .unwrap();
+        assert_eq!(
+            out,
+            format!("<!doctype html><html><head>{REMOTE_MARK}<title>x</title></head></html>")
+        );
+        assert_eq!(mark_remote(b"no head here"), b"no head here");
     }
 
     #[test]

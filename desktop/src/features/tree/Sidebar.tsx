@@ -13,6 +13,7 @@ import { ScrollArea } from '../../components/ui/scroll-area'
 import { sshErrorText } from '../../lib/sshHost'
 import { useHostsStore } from '../../store/hosts'
 import { usePeersStore } from '../../store/peers'
+import { useBaseDeps } from '../../app/deps'
 import { LOCAL_OWNER, splitFullName, useReposStore } from '../../store/repos'
 import { useUiStore } from '../../store/ui'
 import { HostsDialog } from '../hosts/HostsDialog'
@@ -43,6 +44,7 @@ const PEER_PREFIX = 'peer:'
 export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: SidebarProps & { className?: string }) {
   const aliases = useHostsStore((s) => s.aliases)
   const peers = usePeersStore((s) => s.peers)
+  const { tauri } = useBaseDeps()
   const [hostsOpen, setHostsOpen] = useState(false)
   const { selected } = connection
   const owners = useOwners()
@@ -94,8 +96,8 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
           className="h-7 min-w-0 flex-1 rounded border bg-background px-1.5 text-sm"
           value={selected ?? ''}
           onChange={(e) => {
-            // 다른 PC(minmo 가 깔린 PC)는 그 PC 의 화면을 통째로 연다
-            if (e.target.value.startsWith(PEER_PREFIX)) return usePeersStore.getState().setActive(e.target.value.slice(PEER_PREFIX.length))
+            // 다른 PC(minmo 가 깔린 PC)는 그 PC 의 화면을 별도 창으로 연다 — 이 창의 호스트 선택은 그대로 둔다
+            if (e.target.value.startsWith(PEER_PREFIX)) return void tauri.peerOpen(e.target.value.slice(PEER_PREFIX.length)).catch(() => undefined)
             void connection.connect(e.target.value === '' ? null : e.target.value)
           }}
         >
@@ -106,7 +108,7 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
             </option>
           ))}
           {peers.length > 0 && (
-            <optgroup label="다른 PC">
+            <optgroup label="다른 PC (새 창으로 열기)">
               {peers.map((p) => (
                 <option key={p.id} value={PEER_PREFIX + p.id}>
                   {p.name}

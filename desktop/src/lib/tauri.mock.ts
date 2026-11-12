@@ -11,6 +11,8 @@ export type TauriMockOptions = {
 export interface MinmoMockHandle {
   /** openUrl 로 연 URL 목록 (로그인 승인 주소 확인용) */
   openedUrls: string[]
+  /** peerOpen 으로 연 다른 PC(와 열 곳) */
+  openedPeers: { id: string; open: unknown }[]
   readonly keychain: Record<string, string>
   /** 창 닫기 버튼을 누른 것처럼 close-requested 를 보낸다 */
   emitCloseRequested(): void
@@ -148,6 +150,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
 
   const handle: MinmoMockHandle = {
     openedUrls: [],
+    openedPeers: [],
     get keychain() {
       return Object.fromEntries(keychain)
     },
@@ -327,6 +330,9 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       return peers
     },
     agentsPublish: async () => {},
+    peerOpen: async (id, open) => {
+      handle.openedPeers.push({ id, open: open ?? null })
+    },
     ptyProcesses: async (id) => ptyProcs.get(id) ?? [],
     claudeSubagents: async (cwd) => subagents.get(cwd) ?? [],
     notify: async (title, body) => {
