@@ -91,10 +91,12 @@ impl PtySession {
 const SCROLLBACK_LIMIT: usize = 256 * 1024;
 
 #[derive(Default)]
-pub(crate) struct Scrollback(String);
+/// (보관한 글, 지금까지 나온 전체 길이) — 길이는 붙는 화면이 "어디까지 받았는지" 맞추는 데 쓴다
+pub(crate) struct Scrollback(String, u64);
 
 impl Scrollback {
-    fn push(&mut self, text: &str) {
+    fn push(&mut self, text: &str) -> u64 {
+        self.1 += text.len() as u64;
         self.0.push_str(text);
         if self.0.len() > SCROLLBACK_LIMIT {
             // 넘친 만큼 앞을 버리되 줄 경계에서 자른다 — 제어 문자열 중간부터 다시 그리면 화면이 깨진다
@@ -105,6 +107,7 @@ impl Scrollback {
             let cut = self.0[cut..].find('\n').map_or(cut, |i| cut + i + 1);
             self.0.drain(..cut);
         }
+        self.1
     }
 }
 
@@ -127,6 +130,8 @@ fn contains_cpr(data: &[u8]) -> bool {
 #[derive(Default)]
 pub struct PtyState {
     sessions: Mutex<HashMap<String, PtySession>>,
+    /// key 로 여는 동안 잡는다 — 두 화면이 같은 패널을 동시에 열어도 셸은 하나만 뜬다
+    opening: Mutex<()>,
     seq: AtomicU64,
 }
 
@@ -134,6 +139,8 @@ pub struct PtyState {
 struct PtyData {
     id: String,
     data: String,
+    /// 이 조각까지의 전체 출력 길이 — 붙는 화면이 지난 출력(scrollback)과 겹치는 조각을 가려낸다
+    end: u64,
 }
 
 fn default_shell() -> String {
@@ -232,10 +239,13 @@ pub fn pty_spawn(
     remote: Option<RemotePty>,
     key: Option<String>,
 ) -> Result<String, String> {
-    if let Some(k) = &key {
-        if let Some(found) = find_alive(&state, k)? {
-            return Ok(found.id);
-        }
+    let Some(k) = &key else {
+        return spawn(&app, &state, None, cwd, cols, rows, remote);
+    };
+    // 찾기와 만들기를 한 묶음으로 — 그 사이에 다른 화면이 같은 패널을 열면 셸이 두 개 뜬다
+    let _opening = state.opening.lock().map_err(err)?;
+    if let Some(found) = find_alive(&state, k)? {
+        return Ok(found.id);
     }
     spawn(&app, &state, key, cwd, cols, rows, remote)
 }
@@ -246,6 +256,8 @@ pub struct PtyFound {
     id: String,
     /// 지금까지의 출력 — 붙는 화면이 먼저 그린다
     scrollback: String,
+    /// scrollback 이 담은 마지막 위치(전체 출력 길이) — 이보다 뒤의 pty-data 만 이어서 그린다
+    offset: u64,
     cols: u16,
     rows: u16,
 }
@@ -263,10 +275,14 @@ fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
         };
         let s = sessions.get_mut(&id).ok_or("pty 없음")?;
         if matches!(s.child.try_wait(), Ok(None)) {
-            let scrollback = s.scrollback.lock().map_err(err)?.0.clone();
+            let (scrollback, offset) = {
+                let sb = s.scrollback.lock().map_err(err)?;
+                (sb.0.clone(), sb.1)
+            };
             return Ok(Some(PtyFound {
                 id,
                 scrollback,
+                offset,
                 cols: s.cols,
                 rows: s.rows,
             }));
@@ -359,14 +375,13 @@ fn spawn(
                     pending.extend_from_slice(&buf[..n]);
                     let text = take_utf8(&mut pending);
                     if !text.is_empty() {
-                        if let Ok(mut k) = kept.lock() {
-                            k.push(&text);
-                        }
+                        let end = kept.lock().map(|mut k| k.push(&text)).unwrap_or(0);
                         let _ = app.emit(
                             "pty-data",
                             PtyData {
                                 id: emit_id.clone(),
                                 data: text,
+                                end,
                             },
                         );
                     }
@@ -430,23 +445,25 @@ pub fn pty_resize(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().map_err(err)?;
-    let s = sessions
-        .get_mut(&id)
-        .ok_or_else(|| format!("pty {id} 없음"))?;
-    if s.cols == cols && s.rows == rows {
-        return Ok(());
+    {
+        let mut sessions = state.sessions.lock().map_err(err)?;
+        let s = sessions
+            .get_mut(&id)
+            .ok_or_else(|| format!("pty {id} 없음"))?;
+        if s.cols == cols && s.rows == rows {
+            return Ok(());
+        }
+        s.master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(err)?;
+        s.cols = cols;
+        s.rows = rows;
     }
-    s.master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(err)?;
-    s.cols = cols;
-    s.rows = rows;
     // 같은 터미널을 보는 다른 화면이 같은 크기로 그리게 알린다
     let _ = app.emit("pty-resized", PtyResized { id, cols, rows });
     Ok(())
@@ -614,8 +631,10 @@ mod tests {
         assert!(!sb.0.contains("first"));
         // 줄바꿈이 없는 긴 출력도 상한을 지킨다
         let mut sb = Scrollback::default();
-        sb.push(&"x".repeat(SCROLLBACK_LIMIT + 10));
+        let end = sb.push(&"x".repeat(SCROLLBACK_LIMIT + 10));
         assert_eq!(sb.0.len(), SCROLLBACK_LIMIT);
+        // 버린 것까지 센 전체 길이를 돌려준다
+        assert_eq!(end, SCROLLBACK_LIMIT as u64 + 10);
     }
 
     #[test]

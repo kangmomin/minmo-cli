@@ -228,13 +228,22 @@ impl Pairings {
     }
 }
 
-/// 열 주소를 고른다: 127.0.0.1 + Tailscale(100.64.0.0/10) + (lan 이면) 사설 LAN. 공인 주소에는 열지 않는다
-pub fn pick_addrs(all: &[Ipv4Addr], lan: bool) -> Vec<(Ipv4Addr, &'static str)> {
+/// 100.64.0.0/10 — Tailscale 이 쓰는 대역이지만 통신사 NAT(CGNAT)도 같은 대역을 쓴다
+fn is_cgnat(ip: &Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 100 && (o[1] & 0xc0) == 64
+}
+
+/// 열 주소를 고른다: 127.0.0.1 + Tailscale 주소 + (lan 이면) 사설 LAN. 공인 주소에는 열지 않는다.
+/// Tailscale 주소는 tailscale 이 직접 알려 준 것만 쓴다 — 대역만 보고 고르면 통신사 NAT 주소(테더링 등)에도 열게 된다.
+pub fn pick_addrs(
+    all: &[Ipv4Addr],
+    tailscale: &[Ipv4Addr],
+    lan: bool,
+) -> Vec<(Ipv4Addr, &'static str)> {
     let mut out = vec![(Ipv4Addr::LOCALHOST, "local")];
     for ip in all {
-        let o = ip.octets();
-        let tailscale = o[0] == 100 && (o[1] & 0xc0) == 64;
-        if tailscale {
+        if tailscale.contains(ip) {
             out.push((*ip, "tailscale"));
         } else if lan && ip.is_private() {
             out.push((*ip, "lan"));
@@ -243,6 +252,57 @@ pub fn pick_addrs(all: &[Ipv4Addr], lan: bool) -> Vec<(Ipv4Addr, &'static str)> 
     out.sort();
     out.dedup();
     out
+}
+
+/// `tailscale ip -4` 가 알려 주는 이 PC 의 Tailscale 주소(없거나 실행할 수 없으면 빈 목록). 잠깐 기억해 둔다
+fn tailscale_addrs(all: &[Ipv4Addr]) -> Vec<Ipv4Addr> {
+    static CACHE: Mutex<Option<(Instant, Vec<Ipv4Addr>)>> = Mutex::new(None);
+    // 그 대역의 주소가 없으면 물어볼 것도 없다
+    if !all.iter().any(is_cgnat) {
+        return Vec::new();
+    }
+    if let Ok(c) = CACHE.lock() {
+        if let Some((at, list)) = c.as_ref() {
+            if at.elapsed() < Duration::from_secs(60) {
+                return list.clone();
+            }
+        }
+    }
+    let mut candidates = vec![std::path::PathBuf::from("tailscale")];
+    if cfg!(windows) {
+        candidates.push(r"C:\Program Files\Tailscale\tailscale.exe".into());
+    } else if cfg!(target_os = "macos") {
+        candidates.push("/Applications/Tailscale.app/Contents/MacOS/Tailscale".into());
+    }
+    let mut list = Vec::new();
+    for exe in candidates {
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(["ip", "-4"]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW — 콘솔 창이 깜박이지 않게
+            cmd.creation_flags(0x0800_0000);
+        }
+        if let Ok(out) = cmd.output() {
+            if out.status.success() {
+                list = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter_map(|l| l.trim().parse().ok())
+                    .collect();
+                break;
+            }
+        }
+    }
+    if let Ok(mut c) = CACHE.lock() {
+        *c = Some((Instant::now(), list.clone()));
+    }
+    list
+}
+
+fn listen_addrs(lan: bool) -> Vec<(Ipv4Addr, &'static str)> {
+    let all = interface_addrs();
+    pick_addrs(&all, &tailscale_addrs(&all), lan)
 }
 
 fn interface_addrs() -> Vec<Ipv4Addr> {
@@ -300,6 +360,9 @@ pub struct RemoteManager {
     listeners: Mutex<Listeners>,
     /// 붙은 기기에 보낼 이벤트(JSON 한 줄)
     events: broadcast::Sender<String>,
+    shared_revs: Mutex<HashMap<String, u64>>,
+    /// 열려 있는 WebSocket 수(기기 확인 전 포함)
+    sockets: std::sync::atomic::AtomicUsize,
     /// 화면(웹뷰)에 맡긴 호출의 응답 대기
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>,
     seq: AtomicU64,
@@ -321,6 +384,8 @@ impl RemoteManager {
                 error: None,
             }),
             events: broadcast::channel(1024).0,
+            shared_revs: Mutex::new(HashMap::new()),
+            sockets: std::sync::atomic::AtomicUsize::new(0),
             pending: Mutex::new(HashMap::new()),
             seq: AtomicU64::new(0),
             connected: Mutex::new(HashMap::new()),
@@ -370,7 +435,7 @@ impl RemoteManager {
         let c = self.config();
         let connected = self.connected.lock().map(|m| m.clone()).unwrap_or_default();
         let addresses = if c.enabled {
-            pick_addrs(&interface_addrs(), c.lan)
+            listen_addrs(c.lan)
                 .into_iter()
                 .map(|(ip, kind)| Address {
                     kind,
@@ -405,7 +470,7 @@ impl RemoteManager {
     pub fn reconcile(&self, app: &AppHandle) {
         let c = self.config();
         let want: Vec<SocketAddr> = if c.enabled {
-            pick_addrs(&interface_addrs(), c.lan)
+            listen_addrs(c.lan)
                 .into_iter()
                 .map(|(ip, _)| SocketAddr::new(IpAddr::V4(ip), c.port))
                 .collect()
@@ -490,31 +555,71 @@ impl RemoteManager {
         Ok(self.shared_dir.join(format!("{key}.json")))
     }
 
-    pub fn shared_get(&self, key: &str) -> Result<Option<String>, String> {
-        match std::fs::read_to_string(self.shared_path(key)?) {
-            Ok(t) => Ok(Some(t)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.to_string()),
-        }
+    /// 값과 판 번호(rev). 판 번호는 앱이 떠 있는 동안 저장할 때마다 1씩 오른다
+    pub fn shared_get(&self, key: &str) -> Result<SharedValue, String> {
+        let path = self.shared_path(key)?;
+        let revs = self.shared_revs.lock().map_err(|e| e.to_string())?;
+        let value = match std::fs::read_to_string(path) {
+            Ok(t) => Some(t),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.to_string()),
+        };
+        Ok(SharedValue {
+            value,
+            rev: revs.get(key).copied().unwrap_or(0),
+        })
     }
 
+    /// base 는 이 화면이 마지막으로 본 판 번호다. 그 사이 다른 화면이 저장했으면(판 번호가 다르면) 거절한다 —
+    /// 그대로 덮어쓰면 다른 화면의 변경(방금 나눈 터미널 패널 등)이 사라진다. 거절당한 화면은 다시 읽어 합친 뒤 저장한다.
     pub fn shared_set(
         &self,
         app: &AppHandle,
         key: &str,
         value: &str,
         origin: &str,
-    ) -> Result<(), String> {
+        base: u64,
+    ) -> Result<u64, String> {
+        let rev = self.shared_store(key, value, base)?;
+        // 다른 화면(이 PC 의 창·붙은 기기)이 다시 읽게 알린다. origin 은 바꾼 화면 — 자기 것은 다시 읽지 않는다
+        let _ = app.emit(
+            "shared-changed",
+            json!({ "key": key, "origin": origin, "rev": rev }),
+        );
+        Ok(rev)
+    }
+
+    fn shared_store(&self, key: &str, value: &str, base: u64) -> Result<u64, String> {
         let path = self.shared_path(key)?;
+        let mut revs = self.shared_revs.lock().map_err(|e| e.to_string())?;
+        let current = revs.get(key).copied().unwrap_or(0);
+        if base != current {
+            return Err(SHARED_CONFLICT.to_string());
+        }
         std::fs::create_dir_all(&self.shared_dir).map_err(|e| e.to_string())?;
         // 임시 파일에 쓰고 바꿔치기 — 쓰는 도중 꺼져도 반쯤 쓴 파일이 남지 않는다
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, value).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-        // 다른 화면(이 PC 의 창·붙은 기기)이 다시 읽게 알린다. origin 은 바꾼 화면 — 자기 것은 다시 읽지 않는다
-        let _ = app.emit("shared-changed", json!({ "key": key, "origin": origin }));
-        Ok(())
+        revs.insert(key.to_string(), current + 1);
+        Ok(current + 1)
     }
+
+    /// 화면(웹뷰)이 새로 고쳐지면 맡겨 둔 호출의 답은 오지 않는다 — 기다리게 두지 않고 바로 실패시킨다
+    pub fn fail_pending(&self) {
+        if let Ok(mut p) = self.pending.lock() {
+            p.clear();
+        }
+    }
+}
+
+/// 공유 상태 저장이 겹쳤다(desktop/src/lib/sharedState.ts 와 같아야 한다)
+pub const SHARED_CONFLICT: &str = "shared_conflict";
+
+#[derive(Serialize)]
+pub struct SharedValue {
+    value: Option<String>,
+    rev: u64,
 }
 
 /// 앱 시작 시: 설정을 읽고, 이벤트 전달과 주기적인 주소 확인을 건다
@@ -562,6 +667,7 @@ fn router(app: AppHandle) -> Router {
         .route("/api/{*path}", any(proxy_api))
         .route("/gh/{*path}", any(proxy_github))
         .fallback(get(asset))
+        .layer(axum::middleware::from_fn(check_host))
         .with_state(Ctx { app })
 }
 
@@ -628,9 +734,61 @@ fn device_from_headers(ctx: &Ctx, headers: &HeaderMap) -> Option<String> {
     ctx.mgr().device_of(token)
 }
 
+/// 동시에 열어 둘 수 있는 WebSocket 수 — 기기 확인 전의 연결로 자원을 잡아 두지 못하게 한다
+const MAX_SOCKETS: usize = 64;
+
+struct SocketSlot(Ctx);
+
+impl Drop for SocketSlot {
+    fn drop(&mut self) {
+        self.0.mgr().sockets.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 async fn ws_upgrade(AxState(ctx): AxState<Ctx>, ws: WebSocketUpgrade) -> Response {
+    if ctx.mgr().sockets.fetch_add(1, Ordering::SeqCst) >= MAX_SOCKETS {
+        ctx.mgr().sockets.fetch_sub(1, Ordering::SeqCst);
+        return text(StatusCode::SERVICE_UNAVAILABLE, "too_many_connections");
+    }
+    let slot = SocketSlot(ctx.clone());
     ws.max_message_size(MAX_BODY)
-        .on_upgrade(move |socket| ws_session(ctx, socket))
+        .on_upgrade(move |socket| async move {
+            let _slot = slot;
+            ws_session(ctx, socket).await
+        })
+}
+
+/// 주소창의 호스트 이름이 믿을 수 있는 모양인가: IP 주소, 점 없는 이름(localhost·tailnet 의 기기 이름), *.ts.net.
+/// 다른 도메인이 이 PC 의 주소를 가리키게 해(DNS rebinding) 그 사이트의 스크립트가 이 서버와 같은 출처가 되는 것을 막는다.
+pub fn host_allowed(host: &str) -> bool {
+    let name = match host.strip_prefix('[') {
+        // [IPv6]:port
+        Some(rest) => rest.split(']').next().unwrap_or(""),
+        None => host.rsplit_once(':').map_or(host, |(h, port)| {
+            if port.chars().all(|c| c.is_ascii_digit()) {
+                h
+            } else {
+                host
+            }
+        }),
+    };
+    !name.is_empty()
+        && (name.parse::<IpAddr>().is_ok()
+            || !name.contains('.')
+            || name.to_ascii_lowercase().ends_with(".ts.net"))
+}
+
+async fn check_host(req: Request, next: axum::middleware::Next) -> Response {
+    let ok = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(host_allowed);
+    if ok {
+        next.run(req).await
+    } else {
+        text(StatusCode::MISDIRECTED_REQUEST, "host_not_allowed")
+    }
 }
 
 /// 연결이 끊기면(어떤 경로로든) 붙은 기기 수를 줄인다
@@ -657,6 +815,8 @@ async fn ws_session(ctx: Ctx, mut socket: WebSocket) {
         Ok(Some(Ok(Message::Text(t)))) => serde_json::from_str::<Value>(t.as_str())
             .ok()
             .and_then(|v| v.get("auth").and_then(Value::as_str).map(str::to_string)),
+        // 시간 안에 토큰이 오지 않았다(느린 연결) — "거절"로 답하지 않고 닫는다. 거절로 답하면 화면이 등록을 지운다
+        Err(_) | Ok(None) | Ok(Some(Err(_))) => return,
         _ => None,
     };
     let Some(device) = token.and_then(|t| ctx.mgr().device_of(&t)) else {
@@ -764,19 +924,32 @@ async fn call(ctx: &Ctx, method: &str, args: Value) -> Result<Value, String> {
         "sharedGet" => to(serde_json::to_value(
             ctx.mgr().shared_get(&arg::<String>(&args, 0)?)?,
         )),
-        "sharedSet" => ok(ctx.mgr().shared_set(
-            app,
-            &arg::<String>(&args, 0)?,
-            &arg::<String>(&args, 1)?,
-            &arg::<String>(&args, 2)?,
-        )),
+        "sharedSet" => ctx
+            .mgr()
+            .shared_set(
+                app,
+                &arg::<String>(&args, 0)?,
+                &arg::<String>(&args, 1)?,
+                &arg::<String>(&args, 2)?,
+                arg(&args, 3)?,
+            )
+            .map(Value::from),
+        "appVersion" => Ok(Value::String(app.package_info().version.to_string())),
         _ => {
-            // 원격 화면은 GitHub 토큰 대신 표식을 보낸다 — 여기서 실제 토큰으로 바꾼다
-            let args = substitute_token(ctx, args).await;
+            // 원격 화면은 GitHub 토큰 대신 표식을 보낸다 — 명령을 실행하는 호출에서만 실제 토큰으로 바꾼다
+            // (파일 쓰기 같은 호출에서는 바꾸지 않는다 — 써 놓고 읽으면 토큰이 그대로 나온다)
+            let args = if TOKEN_METHODS.contains(&method) {
+                substitute_token(ctx, args).await
+            } else {
+                args
+            };
             ctx.mgr().call_webview(app, method, args).await
         }
     }
 }
+
+/// GitHub 토큰 표식을 실제 토큰으로 바꿔 주는 호출 — git·ssh 로 원격 저장소에 접근하는 것들
+const TOKEN_METHODS: &[&str] = &["gitRun", "ghRun", "sshExec", "sshScriptRun", "scriptRun"];
 
 async fn substitute_token(ctx: &Ctx, args: Value) -> Value {
     let raw = args.to_string();
@@ -837,13 +1010,35 @@ fn github_api_base() -> String {
     "https://api.github.com".to_string()
 }
 
-/// 원격 화면이 부를 수 없는 서버 경로 — 로그인(이 PC 에서 한다)과 토큰을 그대로 돌려주는 것
-pub fn api_path_allowed(path: &str) -> bool {
-    let p = path.trim_start_matches('/');
-    !(p.starts_with("auth/")
-        || p == "auth"
-        || p.starts_with("me/github-token")
-        || p.starts_with("sessions"))
+/// 원격 화면이 부를 수 있는 서버 요청인가. 화면이 쓰는 것만 허용한다(설정·메모·보일 저장소·내 정보).
+/// 로그인·세션·토큰·CLI 코드(/auth/*, /me/github-token, /me/sessions, /me/cli-codes)는 이 PC 에서만 한다.
+/// 경로는 글자 그대로 본다 — 인코딩(%)이나 `.`·`..`·빈 구간이 있으면 거절한다(서버가 다르게 풀이해 막은 경로에 닿지 않게).
+pub fn api_request_allowed(method: &Method, path: &str) -> bool {
+    if !(method == Method::GET || method == Method::PUT) {
+        return false;
+    }
+    let Some(rest) = path.strip_prefix('/') else {
+        return false;
+    };
+    let segs: Vec<&str> = rest.split('/').collect();
+    let plain = |s: &&str| {
+        !s.is_empty()
+            && *s != "."
+            && *s != ".."
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    };
+    if !segs.iter().all(plain) {
+        return false;
+    }
+    match segs.as_slice() {
+        ["me"] => method == Method::GET,
+        ["me", "visible-repos"] | ["settings"] => true,
+        ["orgs", _, "settings"] | ["projects", _, _, "settings"] => true,
+        ["projects", _, _, "settings", "effective"] => method == Method::GET,
+        ["projects", _, _, "issues", _, "notes"] => true,
+        _ => false,
+    }
 }
 
 async fn forward(ctx: &Ctx, req: Request, url: String, bearer: String, github: bool) -> Response {
@@ -914,7 +1109,7 @@ async fn proxy_api(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
         return text(StatusCode::UNAUTHORIZED, "device_required");
     }
     let rest = path_and_query(&req, "/api");
-    if !api_path_allowed(rest.split('?').next().unwrap_or("")) {
+    if !api_request_allowed(req.method(), rest.split('?').next().unwrap_or("")) {
         return text(StatusCode::FORBIDDEN, "remote_forbidden");
     }
     let Some(session) = session_token() else {
@@ -1083,7 +1278,7 @@ pub fn remote_rpc_reply(app: AppHandle, id: u64, ok: bool, value: Value) {
 }
 
 #[tauri::command]
-pub fn shared_get(app: AppHandle, key: String) -> Result<Option<String>, String> {
+pub fn shared_get(app: AppHandle, key: String) -> Result<SharedValue, String> {
     app.state::<RemoteManager>().shared_get(&key)
 }
 
@@ -1093,9 +1288,10 @@ pub fn shared_set(
     key: String,
     value: String,
     origin: String,
-) -> Result<(), String> {
+    base: u64,
+) -> Result<u64, String> {
     app.state::<RemoteManager>()
-        .shared_set(&app, &key, &value, &origin)
+        .shared_set(&app, &key, &value, &origin, base)
 }
 
 #[cfg(test)]
@@ -1137,26 +1333,28 @@ mod tests {
 
     #[test]
     fn only_listens_on_loopback_tailscale_and_opted_in_lan() {
+        let ts = Ipv4Addr::new(100, 101, 102, 103);
         let all = [
             Ipv4Addr::new(192, 168, 0, 10),
-            Ipv4Addr::new(100, 101, 102, 103),
+            ts,
             Ipv4Addr::new(8, 8, 8, 8),
-            Ipv4Addr::new(100, 128, 0, 1),
+            // 통신사 NAT(테더링 등) — Tailscale 과 같은 대역이지만 tailscale 이 알려 준 주소가 아니다
+            Ipv4Addr::new(100, 70, 1, 2),
             Ipv4Addr::new(10, 0, 0, 5),
         ];
-        let kinds = |lan| {
-            pick_addrs(&all, lan)
+        let kinds = |tailscale: &[Ipv4Addr], lan| {
+            pick_addrs(&all, tailscale, lan)
                 .into_iter()
                 .map(|(ip, k)| format!("{ip}={k}"))
                 .collect::<Vec<_>>()
         };
-        // 공인 주소(8.8.8.8)와 CGNAT 밖의 100.x(100.128.0.1)에는 열지 않는다
+        // 공인 주소(8.8.8.8)와 통신사 NAT 주소(100.70.1.2)에는 열지 않는다
         assert_eq!(
-            kinds(false),
+            kinds(&[ts], false),
             ["100.101.102.103=tailscale", "127.0.0.1=local"]
         );
         assert_eq!(
-            kinds(true),
+            kinds(&[ts], true),
             [
                 "10.0.0.5=lan",
                 "100.101.102.103=tailscale",
@@ -1164,6 +1362,35 @@ mod tests {
                 "192.168.0.10=lan"
             ]
         );
+        // tailscale 을 확인할 수 없으면 그 대역의 주소에는 열지 않는다
+        assert_eq!(kinds(&[], false), ["127.0.0.1=local"]);
+        assert!(is_cgnat(&ts) && !is_cgnat(&Ipv4Addr::new(100, 128, 0, 1)));
+    }
+
+    #[test]
+    fn host_header_must_be_an_ip_a_bare_name_or_a_tailnet_name() {
+        for h in [
+            "127.0.0.1:8790",
+            "100.101.102.103:8790",
+            "192.168.0.10",
+            "localhost:8790",
+            "my-pc:8790",
+            "my-pc.tail1234.ts.net",
+            "MY-PC.Tail1234.TS.NET:443",
+            "[::1]:8790",
+        ] {
+            assert!(host_allowed(h), "{h}");
+        }
+        // 다른 도메인이 이 PC 를 가리키게 한 경우(DNS rebinding)
+        for h in [
+            "evil.com:8790",
+            "127.0.0.1.evil.com",
+            "ts.net.evil.com:8790",
+            "evil.com",
+            "",
+        ] {
+            assert!(!host_allowed(h), "{h}");
+        }
     }
 
     #[test]
@@ -1199,15 +1426,42 @@ mod tests {
         assert!(allowed("ghRun", &json!([["pr", "list"]])));
         assert!(!allowed("ghRun", &json!([["auth", "token"]])));
 
-        assert!(api_path_allowed("/me"));
-        assert!(api_path_allowed("/issues/acme/app/1/note"));
-        for p in [
-            "/me/github-token",
-            "/auth/github/device/start",
-            "/auth/cli/exchange",
-            "/sessions",
+        let (get, put, post, delete) = (Method::GET, Method::PUT, Method::POST, Method::DELETE);
+        for (m, p) in [
+            (&get, "/me"),
+            (&get, "/me/visible-repos"),
+            (&put, "/me/visible-repos"),
+            (&get, "/settings"),
+            (&put, "/orgs/acme/settings"),
+            (&get, "/projects/acme/app/settings/effective"),
+            (&put, "/projects/_local/my-app-1a2b/issues/etc/notes"),
         ] {
-            assert!(!api_path_allowed(p), "{p}");
+            assert!(api_request_allowed(m, p), "{m} {p}");
+        }
+        for (m, p) in [
+            // 토큰·세션·로그인·CLI 코드
+            (&get, "/me/github-token"),
+            (&get, "/me/sessions"),
+            (&delete, "/me/sessions/abc"),
+            (&post, "/me/cli-codes"),
+            (&post, "/auth/github/device/start"),
+            (&post, "/auth/cli/exchange"),
+            (&delete, "/auth/session"),
+            // 서버가 다르게 풀이할 수 있는 모양
+            (&get, "/./me/github-token"),
+            (&get, "/me/../me/github-token"),
+            (&get, "/me/%67ithub-token"),
+            (&get, "//me"),
+            (&get, "/me/"),
+            (&get, "me"),
+            (&get, "/projects/a/b/settings/../../../../me/github-token"),
+            // 허용한 경로라도 다른 메서드는 안 된다
+            (&put, "/me"),
+            (&delete, "/settings"),
+            (&post, "/projects/a/b/issues/1/notes"),
+            (&get, "/healthz"),
+        ] {
+            assert!(!api_request_allowed(m, p), "{m} {p}");
         }
     }
 
@@ -1253,7 +1507,20 @@ mod tests {
         for bad in ["", "../x", "a/b", "A", "a.b"] {
             assert!(mgr.shared_path(bad).is_err(), "{bad}");
         }
-        assert_eq!(mgr.shared_get("repos").unwrap(), None);
+        let empty = mgr.shared_get("repos").unwrap();
+        assert_eq!((empty.value, empty.rev), (None, 0));
+
+        // 저장할 때마다 판 번호가 오르고, 마지막으로 본 판이 지금과 다르면 거절한다(다른 화면의 변경을 덮어쓰지 않게)
+        assert_eq!(mgr.shared_store("repos", r#"{"n":1}"#, 0), Ok(1));
+        assert_eq!(mgr.shared_store("repos", r#"{"n":2}"#, 1), Ok(2));
+        assert_eq!(
+            mgr.shared_store("repos", r#"{"n":3}"#, 1),
+            Err(SHARED_CONFLICT.to_string())
+        );
+        let now = mgr.shared_get("repos").unwrap();
+        assert_eq!((now.value.as_deref(), now.rev), (Some(r#"{"n":2}"#), 2));
+        // 판 번호는 이름마다 따로다
+        assert_eq!(mgr.shared_store("ui", "{}", 0), Ok(1));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -360,7 +360,8 @@ function TerminalSession({
 
     void (async () => {
       // spawn 응답(id 확정) 전에 온 출력은 첫 프롬프트일 수 있어 id 별로 보관했다가 확정 후 flush 한다(CR-07)
-      const pending = new Map<string, string>()
+      const pending = new Map<string, { data: string; end?: number }[]>()
+      let pendingChars = 0
       let settled = false
       let replaying = false
       // [에이전트 실행] 으로 맡겨 둔 명령은 셸이 출력을 내고 잠잠해진 뒤에 한 번 넣는다.
@@ -395,8 +396,10 @@ function TerminalSession({
           }
           // 확정 후(또는 spawn 실패 후)의 다른 id 는 다른 세션 출력 — 버린다
           if (settled) return
-          const prev = pending.get(e.id) ?? ''
-          if (prev.length < MAX_PENDING_PTY_CHARS) pending.set(e.id, (prev + e.data).slice(0, MAX_PENDING_PTY_CHARS))
+          if (pendingChars >= MAX_PENDING_PTY_CHARS) return
+          const data = e.data.slice(0, MAX_PENDING_PTY_CHARS - pendingChars)
+          pendingChars += data.length
+          pending.set(e.id, [...(pending.get(e.id) ?? []), { data, end: e.end }])
         })
         // 구독이 끝나기 전에 언마운트됐으면 cleanup 이 이미 돌았다 → 여기서 바로 해제(CR-01)
         if (disposed) {
@@ -433,11 +436,14 @@ function TerminalSession({
           t.write(found.scrollback, () => {
             replaying = false
           })
-          // 붙기 전에 받은 조각은 scrollback 에 이미 들어 있다
-          pending.clear()
           launchWhenReady()
         }
-        const early = pending.get(id)
+        // 응답을 기다리는 동안 온 조각을 이어 그린다. 붙은 경우에는 지난 출력(scrollback)이 담은 위치보다 뒤의 것만 —
+        // 그 앞의 조각은 이미 scrollback 에 들어 있다(위치를 모르는 조각은 겹칠 수 있으므로 버린다)
+        const early = (pending.get(id) ?? [])
+          .filter((c) => !found || (c.end !== undefined && c.end > found.offset))
+          .map((c) => c.data)
+          .join('')
         pending.clear()
         if (early) {
           t.write(early)

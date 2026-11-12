@@ -52,6 +52,10 @@ pub fn run() {
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 pty::kill_all(&webview.state::<pty::PtyState>());
+                // 붙은 기기의 호출 중 이 화면에 맡겨 둔 것은 답이 오지 않는다 — 기다리게 두지 않는다
+                if let Some(remote) = webview.try_state::<remote::RemoteManager>() {
+                    remote.fail_pending();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![

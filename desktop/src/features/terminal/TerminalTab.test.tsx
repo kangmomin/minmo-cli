@@ -817,7 +817,7 @@ describe('글자 크기 (Ctrl + / Ctrl - / Ctrl 0)', () => {
 })
 
 describe('함께 쓰는 터미널 — 이미 떠 있는 터미널에 붙기(원격 접속)', () => {
-  const FOUND = { id: 'pty-9', scrollback: 'PS C:\\w> echo hi\r\nhi\r\n', cols: 120, rows: 40 }
+  const FOUND = { id: 'pty-9', scrollback: 'PS C:\\w> echo hi\r\nhi\r\n', offset: 100, cols: 120, rows: 40 }
 
   /** 이벤트를 테스트에서 직접 넣을 수 있는 구독 */
   function emitter<T>() {
@@ -841,6 +841,26 @@ describe('함께 쓰는 터미널 — 이미 떠 있는 터미널에 붙기(원�
     // 입력은 그 터미널로 간다
     act(() => xterm.instances[0].dataHandler?.('ls\r'))
     expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-9', 'ls\r')
+  })
+
+  it('붙는 사이에 온 출력은 지난 출력(scrollback)과 겹치는 것은 버리고 그 뒤의 것만 이어 그린다', async () => {
+    const data = emitter<{ id: string; data: string; end?: number }>()
+    const find = deferred<typeof FOUND>()
+    setup({ onPtyData: data.on, ptyFind: () => find.promise })
+    await flush()
+    // ptyFind 의 답을 기다리는 동안 도착한 조각들: 앞의 둘은 scrollback(위치 100까지)에 이미 들어 있다
+    act(() => {
+      data.emit({ id: 'pty-9', data: 'old-1', end: 90 })
+      data.emit({ id: 'pty-9', data: 'old-2', end: 100 })
+      data.emit({ id: 'pty-9', data: 'new-1', end: 105 })
+      data.emit({ id: 'pty-9', data: 'new-2', end: 110 })
+      data.emit({ id: 'other', data: 'x', end: 999 })
+    })
+    await act(async () => {
+      find.resolve(FOUND)
+      await flush()
+    })
+    await vi.waitFor(() => expect(xterm.instances[0].written).toEqual([FOUND.scrollback, 'new-1new-2']))
   })
 
   it('새로 만들 때는 패널 id 를 key 로 넘긴다(다른 기기가 같은 터미널에 붙을 수 있게)', async () => {

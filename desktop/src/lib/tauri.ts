@@ -34,9 +34,11 @@ export type RemotePty = { host: string; session: string | null; ephemeral: boole
 
 /** key(화면의 패널 id)가 있으면 그 패널의 터미널이 이미 떠 있을 때 새로 만들지 않고 그 id 를 돌려준다(다른 기기와 함께 쓴다) */
 export type PtySpawnRequest = { cwd: string; cols: number; rows: number; remote?: RemotePty; key?: string }
-export type PtyDataEvent = { id: string; data: string }
+/** end: 이 조각까지의 전체 출력 길이 — 붙는 화면이 지난 출력(PtyFound.scrollback)과 겹치는 조각을 가려낸다 */
+export type PtyDataEvent = { id: string; data: string; end?: number }
 /** 이미 떠 있는 터미널 — scrollback(지금까지의 출력)을 먼저 그리고 붙는다 */
-export type PtyFound = { id: string; scrollback: string; cols: number; rows: number }
+/** offset: scrollback 이 담은 마지막 위치(전체 출력 길이) */
+export type PtyFound = { id: string; scrollback: string; offset: number; cols: number; rows: number }
 export type PtyInfo = { id: string; key: string | null; cwd: string; host: string | null }
 export type PtyResizedEvent = { id: string; cols: number; rows: number }
 
@@ -47,7 +49,9 @@ export type RemoteStatus = { enabled: boolean; lan: boolean; port: number; addre
 export type RemoteConfigInput = Partial<Pick<RemoteStatus, 'enabled' | 'lan' | 'port'>>
 /** 붙은 기기가 보낸 호출 — 이 PC 의 화면이 대신 실행해 remoteRpcReply 로 답한다 */
 export type RemoteRpcRequest = { id: number; method: string; args: unknown[] }
-export type SharedChangedEvent = { key: string; origin: string }
+export type SharedChangedEvent = { key: string; origin: string; rev?: number }
+/** rev: 판 번호 — 저장할 때마다 오른다 */
+export type SharedValue = { value: string | null; rev: number }
 /** native = Tauri 창, remote = 다른 기기의 브라우저(호스트에 붙음), mock = 개발·테스트 */
 export type RuntimeKind = 'native' | 'remote' | 'mock'
 
@@ -105,8 +109,9 @@ export interface TauriApi extends WorktreeHost, GhHost {
   onPtyResized(cb: (e: PtyResizedEvent) => void): Promise<Unlisten>
 
   /** 여러 화면(이 PC 의 창·붙은 기기)이 함께 쓰는 상태 — 이 PC 의 파일에 저장된다. origin 은 바꾼 화면 */
-  sharedGet(key: string): Promise<string | null>
-  sharedSet(key: string, value: string, origin: string): Promise<void>
+  sharedGet(key: string): Promise<SharedValue>
+  /** base 는 마지막으로 본 판 번호 — 그 사이 다른 화면이 저장했으면 shared_conflict 로 reject 한다. 새 판 번호를 돌려준다 */
+  sharedSet(key: string, value: string, origin: string, base: number): Promise<number>
   onSharedChanged(cb: (e: SharedChangedEvent) => void): Promise<Unlisten>
 
   /** 원격 접속 설정·기기 등록 — 이 PC 의 창에서만 쓴다 */
@@ -294,7 +299,7 @@ export function createTauriApi(): TauriApi {
     onPtyExit: async (cb) => (await event()).listen<string>(TAURI_EVENTS.ptyExit, (e) => cb(e.payload)),
     onPtyResized: async (cb) => (await event()).listen<PtyResizedEvent>(TAURI_EVENTS.ptyResized, (e) => cb(e.payload)),
     sharedGet: (key) => call(C.sharedGet, { key }),
-    sharedSet: (key, value, origin) => call(C.sharedSet, { key, value, origin }),
+    sharedSet: (key, value, origin, base) => call(C.sharedSet, { key, value, origin, base }),
     onSharedChanged: async (cb) => (await event()).listen<SharedChangedEvent>(TAURI_EVENTS.sharedChanged, (e) => cb(e.payload)),
     remoteStatus: () => call(C.remoteStatus),
     remoteConfigure: (input) => call(C.remoteConfigure, { input }),

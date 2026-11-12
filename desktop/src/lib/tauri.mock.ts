@@ -298,8 +298,8 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     onPtyExit: async () => () => {},
     onPtyResized: async () => () => {},
     // 공유 상태·원격 접속은 mock 에서 쓰지 않는다(화면 상태는 평소처럼 브라우저 저장소에만 남는다)
-    sharedGet: async () => null,
-    sharedSet: async () => {},
+    sharedGet: async () => ({ value: null, rev: 0 }),
+    sharedSet: async (_key, _value, _origin, base) => base + 1,
     onSharedChanged: async () => () => {},
     remoteStatus: async () => remote,
     remoteConfigure: async (input) => {

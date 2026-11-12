@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SHARED_PUSH_DELAY_MS, bindShared } from '../../lib/sharedState'
+import { SHARED_CONFLICT, SHARED_PUSH_DELAY_MS, bindShared, merge3 } from '../../lib/sharedState'
 import type { SharedChangedEvent } from '../../lib/tauri'
 import { DEVICE_HEADER, PairError, RemoteConnection, SESSION_PLACEHOLDER, TOKEN_SENTINEL, createRemoteTauri, pairDevice, remoteFetch } from '../../lib/tauri.remote'
 import { useReposStore } from '../../store/repos'
@@ -13,7 +13,7 @@ import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { leaf } from '../terminal/panes'
 import { RemoteAccessDialog, shareableAddress } from './RemoteAccessDialog'
-import { defaultDeviceName, pairErrorMessage } from './RemoteGate'
+import { defaultDeviceName, pairErrorMessage, reloadAllowed } from './RemoteGate'
 import { runRemoteCall } from './useRemoteHost'
 
 /** 브라우저 WebSocket 대신 쓰는 가짜 — 보낸 것을 기록하고, 서버가 보낸 것처럼 넣을 수 있다 */
@@ -199,6 +199,13 @@ describe('remoteFetch · pairDevice', () => {
     expect(defaultDeviceName('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36 Edg/130.0')).toBe('Windows PC · Edge')
     expect(defaultDeviceName('curl/8')).toBe('기기')
   })
+
+  it('놓친 출력 때문에 새로 고치는 것은 한동안 한 번만 한다(느린 연결에서 되풀이되지 않게)', () => {
+    sessionStorage.clear()
+    expect(reloadAllowed(100_000)).toBe(true)
+    expect(reloadAllowed(110_000)).toBe(false)
+    expect(reloadAllowed(140_000)).toBe(true)
+  })
 })
 
 describe('runRemoteCall: 붙은 기기의 호출을 이 PC 의 화면이 대신 실행', () => {
@@ -219,27 +226,67 @@ describe('runRemoteCall: 붙은 기기의 호출을 이 PC 의 화면이 대신 
   })
 })
 
+describe('merge3: 내가 바꾼 것만 호스트의 지금 값 위에 얹는다', () => {
+  it('서로 다른 항목을 바꾼 두 화면의 변경이 모두 남는다(패널 구성은 이슈별로)', () => {
+    const base = { panes: { a: { seq: 1 }, b: { seq: 1 } }, worktreePathMap: { a: '/a' } }
+    const mine = { panes: { a: { seq: 2 }, b: { seq: 1 } }, worktreePathMap: { a: '/a' } }
+    const theirs = { panes: { a: { seq: 1 }, b: { seq: 5 }, c: { seq: 1 } }, worktreePathMap: { a: '/a', c: '/c' } }
+    expect(merge3(base, mine, theirs)).toEqual({ panes: { a: { seq: 2 }, b: { seq: 5 }, c: { seq: 1 } }, worktreePathMap: { a: '/a', c: '/c' } })
+  })
+
+  it('내가 지운 항목은 지워지고, 남이 지운 항목은 내가 건드리지 않았으면 지워진 채로 둔다', () => {
+    const base = { local: { x: 1, y: 1, z: 1 } }
+    expect(merge3(base, { local: { y: 1, z: 1 } }, { local: { x: 1, y: 1, z: 1, w: 1 } })).toEqual({ local: { y: 1, z: 1, w: 1 } })
+    expect(merge3(base, { local: { x: 1, y: 1, z: 1 } }, { local: { x: 1 } })).toEqual({ local: { x: 1 } })
+  })
+
+  it('같은 항목을 둘 다 바꿨으면 이 화면의 값이 이긴다 · 내가 안 바꾼 것은 호스트의 값', () => {
+    expect(merge3({ a: { k: 1 } }, { a: { k: 2 } }, { a: { k: 3 } })).toEqual({ a: { k: 2 } })
+    expect(merge3({ a: { k: 1 } }, { a: { k: 1 } }, { a: { k: 3 } })).toEqual({ a: { k: 3 } })
+  })
+
+  it('글자 목록은 집합처럼 합친다(저장소 목록)', () => {
+    expect(merge3({ added: ['a/x', 'a/y'] }, { added: ['a/y', 'a/mine'] }, { added: ['a/x', 'a/y', 'a/theirs'] })).toEqual({ added: ['a/y', 'a/theirs', 'a/mine'] })
+  })
+})
+
 describe('함께 쓰는 상태(bindShared)', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  /** 호스트의 공유 상태 저장소 흉내 */
+  /** 호스트의 공유 상태 저장소 흉내 — 판 번호가 다르면 거절한다 */
   function host(initial: Record<string, string> = {}) {
     const values = new Map(Object.entries(initial))
+    const revs = new Map<string, number>()
     const listeners = new Set<(e: SharedChangedEvent) => void>()
     const sets: { key: string; value: string; origin: string }[] = []
+    let conflicts = 0
     return {
       values,
       sets,
+      conflicts: () => conflicts,
+      /** 다른 화면이 저장한 것처럼 */
       emit: (key: string, value: string, origin = 'other') => {
         values.set(key, value)
+        revs.set(key, (revs.get(key) ?? 0) + 1)
         for (const l of listeners) l({ key, origin })
       },
+      /** 알림 없이 값만 바꾼다(알림이 닿기 전에 이 화면이 저장하는 상황) */
+      silently: (key: string, value: string) => {
+        values.set(key, value)
+        revs.set(key, (revs.get(key) ?? 0) + 1)
+      },
       api: {
-        sharedGet: async (key: string) => values.get(key) ?? null,
-        sharedSet: async (key: string, value: string, origin: string) => {
+        sharedGet: async (key: string) => ({ value: values.get(key) ?? null, rev: revs.get(key) ?? 0 }),
+        sharedSet: async (key: string, value: string, origin: string, base: number) => {
+          if (base !== (revs.get(key) ?? 0)) {
+            conflicts++
+            throw new Error(SHARED_CONFLICT)
+          }
           values.set(key, value)
+          revs.set(key, base + 1)
           sets.push({ key, value, origin })
+          return base + 1
         },
         onSharedChanged: async (cb: (e: SharedChangedEvent) => void) => {
           listeners.add(cb)
@@ -248,66 +295,90 @@ describe('함께 쓰는 상태(bindShared)', () => {
       },
     }
   }
-  function store(initial: number) {
+  function store<T>(initial: T) {
     let value = initial
     const subs = new Set<() => void>()
     return {
       get: () => value,
-      set: (v: number) => {
+      set: (v: T) => {
         value = v
         subs.forEach((s) => s())
       },
-      binding: { key: 'k', pick: () => ({ n: value }), apply: (v: { n: number }) => void (value = v.n), subscribe: (cb: () => void) => (subs.add(cb), () => subs.delete(cb)) },
+      binding: { key: 'k', pick: () => value, apply: (v: T) => void (value = v), subscribe: (cb: () => void) => (subs.add(cb), () => subs.delete(cb)) },
     }
   }
   const settle = () => vi.advanceTimersByTimeAsync(SHARED_PUSH_DELAY_MS + 10)
 
   it('호스트에 값이 없으면(이 기능 전의 설치) 지금 값을 한 번 올린다', async () => {
     const h = host()
-    const s = store(7)
+    const s = store({ n: 7 })
     bindShared(h.api, s.binding)
     await settle()
     expect(h.sets.map((x) => x.value)).toEqual(['{"n":7}'])
   })
 
-  it('호스트에 값이 있으면 그것을 적용하고, 되올리지 않는다', async () => {
+  it('호스트에 값이 있으면 그것을 적용하고(이 화면의 저장소에 남은 옛 값으로 덮지 않는다), 되올리지 않는다', async () => {
     const h = host({ k: '{"n":3}' })
-    const s = store(7)
+    const s = store({ n: 7 })
     bindShared(h.api, s.binding)
     await settle()
-    expect(s.get()).toBe(3)
+    expect(s.get()).toEqual({ n: 3 })
     expect(h.sets).toEqual([])
   })
 
   it('이 화면에서 바뀌면 모아서 한 번 올리고, 다른 화면이 바꾸면 내려받아 적용한다(되올리지 않는다)', async () => {
     const h = host({ k: '{"n":1}' })
-    const s = store(0)
+    const s = store({ n: 0 })
     bindShared(h.api, s.binding)
     await settle()
-    s.set(2)
-    s.set(3)
+    s.set({ n: 2 })
+    s.set({ n: 3 })
     await settle()
     expect(h.sets.map((x) => x.value)).toEqual(['{"n":3}'])
     h.emit('k', '{"n":9}')
     await settle()
-    expect(s.get()).toBe(9)
+    expect(s.get()).toEqual({ n: 9 })
     expect(h.sets).toHaveLength(1)
-    // 내가 올린 값의 알림(같은 origin)은 다시 읽지 않는다
-    h.emit('k', '{"n":100}', h.sets[0].origin)
-    await settle()
-    expect(s.get()).toBe(9)
   })
 
-  it('깨진 값은 무시하고, 풀면 더 이상 올리지 않는다', async () => {
+  it('그 사이 다른 화면이 먼저 저장했으면 덮어쓰지 않고, 다시 읽어 내 변경만 얹어 올린다', async () => {
+    const h = host({ k: JSON.stringify({ panes: { a: 1 } }) })
+    const s = store<{ panes: Record<string, number> }>({ panes: {} })
+    bindShared(h.api, s.binding)
+    await settle()
+    // 다른 화면이 패널 b 를 더해 저장했는데(알림은 아직 안 옴), 이 화면은 패널 a 를 바꿔 저장하려 한다
+    h.silently('k', JSON.stringify({ panes: { a: 1, b: 1 } }))
+    s.set({ panes: { a: 2 } })
+    await settle()
+    expect(h.conflicts()).toBe(1)
+    // 남의 변경(b)이 남고 내 변경(a=2)도 들어간다
+    expect(JSON.parse(h.values.get('k')!)).toEqual({ panes: { a: 2, b: 1 } })
+    expect(s.get()).toEqual({ panes: { a: 2, b: 1 } })
+  })
+
+  it('아직 올리지 않은 내 변경이 있을 때 다른 화면의 변경이 와도 내 변경을 잃지 않는다', async () => {
+    const h = host({ k: JSON.stringify({ panes: { a: 1 } }) })
+    const s = store<{ panes: Record<string, number> }>({ panes: {} })
+    bindShared(h.api, s.binding)
+    await settle()
+    s.set({ panes: { a: 1, mine: 1 } })
+    h.emit('k', JSON.stringify({ panes: { a: 1, theirs: 1 } }))
+    await settle()
+    expect(s.get()).toEqual({ panes: { a: 1, theirs: 1, mine: 1 } })
+    expect(JSON.parse(h.values.get('k')!)).toEqual({ panes: { a: 1, theirs: 1, mine: 1 } })
+  })
+
+  it('깨진 값은 무시하고 이 화면의 값으로 덮는다 · 풀면 더 이상 올리지 않는다', async () => {
     const h = host({ k: 'not json' })
-    const s = store(5)
+    const s = store({ n: 5 })
     const stop = bindShared(h.api, s.binding)
     await settle()
-    expect(s.get()).toBe(5)
+    expect(s.get()).toEqual({ n: 5 })
+    expect(h.values.get('k')).toBe('{"n":5}')
     stop()
-    s.set(6)
+    s.set({ n: 6 })
     await settle()
-    expect(h.sets).toEqual([])
+    expect(h.values.get('k')).toBe('{"n":5}')
   })
 })
 

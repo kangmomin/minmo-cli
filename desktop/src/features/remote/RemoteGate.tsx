@@ -11,6 +11,20 @@ import { PairError, RemoteConnection, createRemoteTauri, pairDevice, remoteFetch
 type Phase = 'connecting' | 'pair' | 'ready' | 'lost'
 
 const RETRY_MS = [1000, 2000, 4000, 8000]
+const LAG_RELOAD_KEY = 'minmo-lag-reload'
+const LAG_RELOAD_MIN_MS = 30_000
+
+/** 놓친 출력 때문에 새로 고친 지 얼마 안 됐으면 false */
+export function reloadAllowed(now: number = Date.now()): boolean {
+  try {
+    const last = Number(sessionStorage.getItem(LAG_RELOAD_KEY) ?? 0)
+    if (now - last < LAG_RELOAD_MIN_MS) return false
+    sessionStorage.setItem(LAG_RELOAD_KEY, String(now))
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** 기기 이름의 기본값 — 호스트의 기기 목록에서 알아볼 수 있게 */
 export function defaultDeviceName(ua: string = navigator.userAgent): string {
@@ -73,6 +87,11 @@ export function RemoteGate({ children, origin = window.location.origin }: { chil
           attempt = 0
           everReady.current = true
           globalThis.fetch = remoteFetch(origin, storedDeviceToken, globalThis.fetch.bind(globalThis))
+          // 호스트가 보낸 이벤트(터미널 출력 등)가 너무 밀려 일부를 놓쳤다 — 화면을 새로 띄워 지난 출력부터 다시 맞춘다.
+          // 느린 연결에서 되풀이되지 않게 한동안은 한 번만 한다
+          c.on('lagged', () => {
+            if (reloadAllowed()) window.location.reload()
+          })
           setTauri(createRemoteTauri(c))
           setPhase('ready')
         })
