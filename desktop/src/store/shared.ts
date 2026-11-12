@@ -60,12 +60,16 @@ export function applySharedUi(value: unknown) {
   })
 }
 
-/** 다른 화면이 연 이슈의 정보를 받는다. 이 화면이 이미 아는 이슈는 그대로 둔다 */
+/**
+ * 다른 화면이 연 이슈의 정보를 받는다. 같은 이슈는 받은 값으로 덮어쓴다 — 이 화면의 값을 남겨 두면 두 화면이 서로 다른 값을
+ * 되올리며 끝없이 오간다(이 화면만 아는 이슈는 그대로 두고, 그것은 한 번 올라가면 끝난다).
+ */
 export function applySharedTargets(value: unknown) {
   if (!isRecord(value)) return
   const known = useSetupStore.getState().targets
-  const add = Object.entries(value).filter(([id, t]) => !(id in known) && isRecord(t) && typeof t.owner === 'string' && typeof t.repo === 'string' && typeof t.key === 'string' && typeof t.title === 'string')
-  if (add.length > 0) useSetupStore.setState({ targets: { ...known, ...(Object.fromEntries(add) as SetupState['targets']) } })
+  const valid = Object.entries(value).filter(([, t]) => isRecord(t) && typeof t.owner === 'string' && typeof t.repo === 'string' && typeof t.key === 'string' && typeof t.title === 'string' && (t.number === null || typeof t.number === 'number'))
+  const changed = valid.filter(([id, t]) => JSON.stringify(known[id]) !== JSON.stringify(t))
+  if (changed.length > 0) useSetupStore.setState({ targets: { ...known, ...(Object.fromEntries(changed) as SetupState['targets']) } })
 }
 
 export function applySharedRepos(value: unknown) {

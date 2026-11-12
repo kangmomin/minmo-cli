@@ -1179,11 +1179,12 @@ const REMOTE_MARK: &str = r#"<meta name="minmo-runtime" content="remote" />"#;
 /// index.html 의 <head> 바로 뒤에 표시를 넣는다(<head> 가 없으면 그대로 둔다)
 fn mark_remote(html: &[u8]) -> Vec<u8> {
     let text = String::from_utf8_lossy(html);
-    match text.find("<head>") {
-        Some(i) => {
-            let at = i + "<head>".len();
-            format!("{}{REMOTE_MARK}{}", &text[..at], &text[at..]).into_bytes()
-        }
+    // <head> 에 속성이 붙어 있어도 찾는다
+    match text
+        .find("<head")
+        .and_then(|i| text[i..].find('>').map(|j| i + j + 1))
+    {
+        Some(at) => format!("{}{REMOTE_MARK}{}", &text[..at], &text[at..]).into_bytes(),
         None => html.to_vec(),
     }
 }
@@ -1469,6 +1470,11 @@ pub async fn peer_add(app: AppHandle, input: PeerInput) -> Result<Vec<PeerView>,
         let mgr = app.state::<RemoteManager>();
         (mgr.http.clone(), mgr.peers_path.clone())
     };
+    // 등록 요청은 적은 주소로만 보낸다 — 다른 곳으로 넘기는 응답(redirect)을 따라가면 코드가 엉뚱한 곳에 다시 보내진다
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or(http);
     let res = http
         .post(format!("{url}/pair"))
         .timeout(Duration::from_secs(10))
@@ -1507,18 +1513,36 @@ pub async fn peer_add(app: AppHandle, input: PeerInput) -> Result<Vec<PeerView>,
         .take(40)
         .collect();
     let mut peers = load_peers(&path);
-    // 같은 주소를 다시 등록하면 바꿔 넣는다(토큰이 새로 발급됐다)
-    for old in peers.iter().filter(|p| p.url == url) {
-        let _ = keychain::delete(&peer_key(&old.id));
-    }
+    // 같은 주소를 다시 등록하면 바꿔 넣는다(토큰이 새로 발급됐다). 옛 항목의 토큰·창은 목록을 저장한 뒤에 치운다
+    let replaced: Vec<String> = peers
+        .iter()
+        .filter(|p| p.url == url)
+        .map(|p| p.id.clone())
+        .collect();
     peers.retain(|p| p.url != url);
     peers.push(Peer {
         id,
         name: if name.is_empty() { url.clone() } else { name },
         url,
     });
-    save_peers(&path, &peers)?;
+    if let Err(e) = save_peers(&path, &peers) {
+        // 목록에 넣지 못했으면 방금 받은 토큰도 남기지 않는다
+        let _ = keychain::delete(&peer_key(
+            &peers.last().map(|p| p.id.clone()).unwrap_or_default(),
+        ));
+        return Err(e);
+    }
+    for old in replaced {
+        let _ = keychain::delete(&peer_key(&old));
+        close_peer_window(&app, &old);
+    }
     Ok(peer_views(&path))
+}
+
+fn close_peer_window(app: &AppHandle, id: &str) {
+    if let Some(win) = app.get_webview_window(&format!("peer-{id}")) {
+        let _ = win.close();
+    }
 }
 
 #[tauri::command]
@@ -1528,7 +1552,25 @@ pub fn peer_remove(app: AppHandle, id: String) -> Result<Vec<PeerView>, String> 
     peers.retain(|p| p.id != id);
     save_peers(&path, &peers)?;
     let _ = keychain::delete(&peer_key(&id));
+    // 열어 둔 그 PC 의 창도 닫는다(토큰이 없으면 다시 붙지 못한다)
+    close_peer_window(&app, &id);
     Ok(peer_views(&path))
+}
+
+/// 주소의 출처(scheme://host[:port]) — 비교용. 읽을 수 없으면 빈 글자(어느 것과도 같지 않게 쓰는 쪽에서 다룬다)
+pub fn origin_of(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return String::new();
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{}://{}",
+        scheme.to_ascii_lowercase(),
+        host.to_ascii_lowercase()
+    )
 }
 
 /// 주소의 # 뒤에 넣을 값 — 글자·숫자와 `-_.~` 만 그대로 두고 나머지는 %XX 로 바꾼다
@@ -1572,8 +1614,14 @@ pub async fn peer_open(app: AppHandle, id: String, open: Option<Value>) -> Resul
         .ok_or("그 PC 의 등록 정보를 읽을 수 없습니다 — [원격 접속] 에서 지우고 다시 등록하세요")?;
     let url = peer_url(&peer.url, &token, open.as_ref(), now_ms());
     let label = format!("peer-{}", peer.id);
+    let origin = origin_of(&peer.url);
     if let Some(win) = app.get_webview_window(&label) {
-        if open.is_some() {
+        // 그 창이 아직 그 PC 의 화면을 보이고 있을 때만 알린다(토큰이 든 주소를 다른 화면에 넣지 않는다)
+        let on_peer = win
+            .url()
+            .ok()
+            .is_some_and(|u| origin_of(u.as_str()) == origin);
+        if open.is_some() && on_peer {
             // 이미 떠 있는 화면에는 # 뒤만 바꿔 알린다(다시 불러오지 않는다)
             let hash = url.split_once('#').map_or("", |(_, h)| h);
             let js = format!(
@@ -1593,6 +1641,9 @@ pub async fn peer_open(app: AppHandle, id: String, open: Option<Value>) -> Resul
         .title(format!("minmo — {}", peer.name))
         .inner_size(1280.0, 800.0)
         .min_inner_size(600.0, 400.0)
+        // 이 창은 그 PC 의 주소 안에서만 움직인다 — 그 PC 의 화면이 이 창을 이 앱의 화면(http://tauri.localhost 등)이나
+        // 다른 사이트로 보내지 못하게 한다. 이 앱의 주소로 가면 그 창이 본창처럼 네이티브 명령을 쓸 수 있게 된다
+        .on_navigation(move |u| origin_of(u.as_str()) == origin)
         .build()
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -1684,7 +1735,32 @@ mod tests {
     }
 
     #[test]
+    fn peer_window_stays_on_the_peer_origin() {
+        let peer = origin_of("http://100.64.0.5:8790");
+        assert_eq!(peer, "http://100.64.0.5:8790");
+        assert_eq!(origin_of("http://100.64.0.5:8790/some/path#device=x"), peer);
+        assert_eq!(origin_of("HTTP://MY-PC:8790/"), "http://my-pc:8790");
+        // 이 앱의 화면·다른 사이트·다른 포트는 그 PC 의 주소가 아니다
+        for other in [
+            "http://tauri.localhost/",
+            "tauri://localhost",
+            "https://100.64.0.5:8790/",
+            "http://100.64.0.5:8791/",
+            "http://evil.example/",
+            "about:blank",
+            "",
+        ] {
+            assert_ne!(origin_of(other), peer, "{other}");
+        }
+    }
+
+    #[test]
     fn served_index_is_marked_as_remote() {
+        assert!(String::from_utf8(mark_remote(
+            b"<html><head lang=\"ko\"><title>x</title></head></html>"
+        ))
+        .unwrap()
+        .contains("<head lang=\"ko\"><meta name=\"minmo-runtime\""));
         let out = String::from_utf8(mark_remote(
             b"<!doctype html><html><head><title>x</title></head></html>",
         ))

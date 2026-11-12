@@ -9,13 +9,15 @@ import type { Peer, Unlisten } from '../../lib/tauri'
 import { RemoteConnection as RemoteConnectionClass } from '../../lib/tauri.remote'
 import type { RemoteConnection, RemoteLink } from '../../lib/tauri.remote'
 import { usePeersStore } from '../../store/peers'
+import { useSetupStore } from '../../store/setup'
+import { applySharedTargets } from '../../store/shared'
 import { useUiStore } from '../../store/ui'
 import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderHookWithDeps, renderWithDeps } from '../../test/render'
 import { groupRows, rowKey } from '../agents/overview'
 import type { AgentRow } from '../agents/overview'
-import { consumeHash, parseHash } from './deepLink'
-import { newlyUrgent, parsePeerRows, usePeerAgents, usePeerAgentsStore } from './peerAgents'
+import { consumeHash, parseHash, takePendingOpen } from './deepLink'
+import { MAX_PEER_ROWS, NOTIFY_MAX, NOTIFY_WINDOW_MS, allowNotify, forPublish, newlyUrgent, parsePeerRows, usePeerAgents, usePeerAgentsStore } from './peerAgents'
 import { RemoteAccessDialog } from './RemoteAccessDialog'
 
 const PEER: Peer = { id: 'p1', name: '회사 PC', url: 'http://100.64.0.5:8790', token: 'tok' }
@@ -38,6 +40,29 @@ describe('parsePeerRows · newlyUrgent', () => {
   it('모양이 맞지 않는 줄은 버린다(다른 PC 가 보낸 값을 그대로 믿지 않는다)', () => {
     expect(parsePeerRows('nope', PEER)).toEqual([])
     expect(parsePeerRows([null, 3, { paneId: 1 }, raw({ status: 'exploded' }), raw({ agent: 'weird', since: 'x' })], PEER)).toMatchObject([{ agent: 'other', since: 0 }])
+  })
+
+  it('줄 수·글자 수를 제한하고 같은 패널이 두 번 오면 처음 것만 쓴다', () => {
+    const many = Array.from({ length: MAX_PEER_ROWS + 50 }, (_, i) => raw({ paneId: `p${i}` }))
+    expect(parsePeerRows(many, PEER)).toHaveLength(MAX_PEER_ROWS)
+    const rows = parsePeerRows([raw({ label: 'x'.repeat(5000) }), raw({ status: 'done' })], PEER)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('working')
+    expect(rows[0].label.length).toBeLessThanOrEqual(200)
+  })
+
+  it('알림은 PC 마다 일정 시간에 정해진 횟수까지만(상태를 계속 뒤집어 알림을 쏟아내지 못한다)', () => {
+    const times: number[] = []
+    for (let i = 0; i < NOTIFY_MAX; i++) expect(allowNotify(times, 1000 + i)).toBe(true)
+    expect(allowNotify(times, 2000)).toBe(false)
+    // 시간이 지나면 다시 된다
+    expect(allowNotify(times, 1000 + NOTIFY_WINDOW_MS)).toBe(true)
+  })
+
+  it('올리는 줄의 "마지막 출력 시각"은 10초 단위로 뭉친다(출력 중에 매초 다시 올리지 않는다)', () => {
+    const row = parsePeerRows([raw({ lastOutputAt: 123_456 })], PEER)[0]
+    expect(forPublish([row])[0].lastOutputAt).toBe(120_000)
+    expect(JSON.stringify(forPublish([{ ...row, lastOutputAt: 125_999 }]))).toBe(JSON.stringify(forPublish([row])))
   })
 
   it('방금 끝났거나 입력을 기다리게 된 줄만 알림 대상이다 — 처음 보는 줄·그대로인 줄·기타 프로그램은 아니다', () => {
@@ -131,12 +156,46 @@ describe('그 PC 의 화면 열기(주소 # 뒤)', () => {
     expect(parseHash('')).toEqual({ device: null, open: null })
   })
 
+  it('"열 곳"은 이 화면이 쓰는 토큰과 같은 토큰이 함께 온 경우에만 따른다(토큰을 모르는 쪽이 만든 링크는 따르지 않는다)', () => {
+    const open = encodeURIComponent(JSON.stringify({ target: TARGET, paneId: null }))
+    const win = (hash: string) => ({ location: { hash, pathname: '/', search: '' }, history: { replaceState: vi.fn() }, dispatchEvent: vi.fn() }) as unknown as Window
+    // 토큰 없이 온 "열 곳" — 기억조차 하지 않는다
+    consumeHash(win(`#open=${open}`))
+    expect(takePendingOpen('real-token')).toBeNull()
+    // 다른(틀린) 토큰과 함께 온 "열 곳"
+    consumeHash(win(`#device=guess&open=${open}`))
+    expect(takePendingOpen('real-token')).toBeNull()
+    // 이 화면이 쓰는 토큰과 함께 온 것만 따른다 — 한 번만
+    consumeHash(win(`#device=real-token&open=${open}`))
+    expect(takePendingOpen('real-token')).toEqual({ target: TARGET, paneId: null })
+    expect(takePendingOpen('real-token')).toBeNull()
+    // 아직 등록되지 않은 화면(토큰 없음)은 따르지 않는다
+    consumeHash(win(`#device=real-token&open=${open}`))
+    expect(takePendingOpen(null)).toBeNull()
+  })
+
   it('읽은 뒤 주소에서 지운다(토큰이 주소창·기록에 남지 않게)', () => {
     const replaceState = vi.fn()
     const win = { location: { hash: '#device=tok', pathname: '/', search: '' }, history: { replaceState }, dispatchEvent: vi.fn() } as unknown as Window
     expect(consumeHash(win)).toBe('tok')
     expect(replaceState).toHaveBeenCalledWith(null, '', '/')
     expect(consumeHash({ ...win, location: { hash: '', pathname: '/', search: '' } } as unknown as Window)).toBeNull()
+  })
+})
+
+describe('함께 쓰는 이슈 정보', () => {
+  it('같은 이슈는 받은 값으로 덮어쓴다 — 이 화면의 값을 남기면 두 화면이 서로 되올리며 끝없이 오간다', () => {
+    useSetupStore.setState({ targets: { 'acme/app#42': { ...TARGET, title: '옛 제목' }, 'acme/app#7': { ...TARGET, key: '7', number: 7, title: '나만 아는 이슈' } } })
+    applySharedTargets({ 'acme/app#42': TARGET, 'acme/app#9': { ...TARGET, key: '9', number: 9, title: '남이 연 이슈' }, bad: { owner: 1 } })
+    const t = useSetupStore.getState().targets
+    expect(t['acme/app#42'].title).toBe('Add login')
+    expect(t['acme/app#9'].title).toBe('남이 연 이슈')
+    expect(t['acme/app#7'].title).toBe('나만 아는 이슈')
+    expect(t.bad).toBeUndefined()
+    // 같은 값을 다시 받으면 store 를 건드리지 않는다(되올림이 생기지 않는다)
+    const before = useSetupStore.getState().targets
+    applySharedTargets({ 'acme/app#42': TARGET })
+    expect(useSetupStore.getState().targets).toBe(before)
   })
 })
 

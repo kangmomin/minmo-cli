@@ -53,18 +53,14 @@ export function RemoteGate({ children, origin = window.location.origin }: { chil
   // 토큰이 바뀌면(등록 직후) 다시 붙는다
   const [token, setToken] = useState(() => {
     // 다른 PC 의 minmo 앱이 이 화면을 자기 안에 열 때는 주소의 # 뒤에 기기 토큰을 붙여 준다 — 등록 화면을 건너뛴다
-    const given = consumeHash()
-    if (given) storeDeviceToken(given)
-    return given ?? storedDeviceToken()
+    // 받은 토큰은 아직 저장하지 않는다 — 실제로 붙은 뒤에 저장한다(엉뚱한 토큰이 든 링크가 등록을 지우지 못하게)
+    return consumeHash() ?? storedDeviceToken()
   })
   // 떠 있는 동안 # 뒤가 바뀌면(다른 이슈를 열라는 요청) 다시 읽는다
   useEffect(() => {
     const onHash = () => {
       const given = consumeHash()
-      if (given && given !== storedDeviceToken()) {
-        storeDeviceToken(given)
-        setToken(given)
-      }
+      if (given && given !== storedDeviceToken()) setToken(given)
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
@@ -88,6 +84,12 @@ export function RemoteGate({ children, origin = window.location.origin }: { chil
       c.onLink((link) => {
         if (stopped || conn !== c) return
         if (link === 'rejected') {
+          const stored = storedDeviceToken()
+          if (stored && stored !== token) {
+            // 주소로 받은 토큰이 통하지 않았다 — 등록해 둔 토큰은 그대로 두고 그것으로 붙는다
+            setToken(stored)
+            return
+          }
           // 호스트에서 이 기기를 끊었거나 원격 접속을 껐다
           storeDeviceToken(null)
           setError('이 기기의 등록이 해제되었습니다. 다시 등록하세요')
@@ -104,6 +106,8 @@ export function RemoteGate({ children, origin = window.location.origin }: { chil
           if (everReady.current) return window.location.reload()
           attempt = 0
           everReady.current = true
+          // 붙는 데 성공한 토큰만 저장한다
+          storeDeviceToken(token)
           globalThis.fetch = remoteFetch(origin, storedDeviceToken, globalThis.fetch.bind(globalThis))
           // 호스트가 보낸 이벤트(터미널 출력 등)가 너무 밀려 일부를 놓쳤다 — 화면을 새로 띄워 지난 출력부터 다시 맞춘다.
           // 느린 연결에서 되풀이되지 않게 한동안은 한 번만 한다

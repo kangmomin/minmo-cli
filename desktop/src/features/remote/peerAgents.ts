@@ -16,6 +16,25 @@ const STATUSES: readonly AgentStatus[] = ['working', 'attention', 'done', 'idle'
 const RETRY_MS = 10_000
 /** 현황이 바뀐 뒤 이만큼 모아서 올린다 */
 export const PUBLISH_DELAY_MS = 400
+/** 다른 PC 한 곳에서 받는 줄 수·글자 수의 상한 — 다른 PC 가 보낸 값을 그대로 믿지 않는다 */
+export const MAX_PEER_ROWS = 200
+const MAX_TEXT = 200
+/** 다른 PC 한 곳의 알림은 이 시간 동안 이만큼만 띄운다(상태를 계속 뒤집어 알림을 쏟아내지 못하게) */
+export const NOTIFY_WINDOW_MS = 60_000
+export const NOTIFY_MAX = 5
+
+/** 알림을 띄워도 되는가 — times 는 그 PC 의 최근 알림 시각들(이 함수가 고쳐 쓴다) */
+export function allowNotify(times: number[], now: number): boolean {
+  while (times.length > 0 && now - times[0] >= NOTIFY_WINDOW_MS) times.shift()
+  if (times.length >= NOTIFY_MAX) return false
+  times.push(now)
+  return true
+}
+
+/** 올리는 줄에서 "마지막 출력 시각"은 10초 단위로 뭉친다 — 에이전트가 출력하는 동안 매초 바뀌어 매번 다시 올라가지 않게 */
+export function forPublish(rows: AgentRow[]): AgentRow[] {
+  return rows.map((r) => ({ ...r, lastOutputAt: Math.floor(r.lastOutputAt / 10_000) * 10_000 }))
+}
 
 export interface PeerAgentsState {
   /** PC id → 그 PC 의 에이전트 줄 */
@@ -38,12 +57,16 @@ export const usePeerAgentsStore = create<PeerAgentsState>()((set) => ({
 /** 다른 PC 가 보낸 줄 — 모양이 맞는 것만 받고, 그 PC 의 것임을 표시한다 */
 export function parsePeerRows(raw: unknown, peer: Pick<Peer, 'id' | 'name'>): AgentRow[] {
   if (!Array.isArray(raw)) return []
-  const str = (v: unknown) => (typeof v === 'string' ? v : '')
+  const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, MAX_TEXT) : '')
+  const seen = new Set<string>()
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-  return raw.flatMap((r: unknown): AgentRow[] => {
+  return raw.slice(0, MAX_PEER_ROWS).flatMap((r: unknown): AgentRow[] => {
     if (typeof r !== 'object' || r === null) return []
     const o = r as Record<string, unknown>
     if (typeof o.paneId !== 'string' || typeof o.issueId !== 'string' || !STATUSES.includes(o.status as AgentStatus)) return []
+    // 같은 패널이 두 번 오면 처음 것만 쓴다
+    if (seen.has(o.paneId)) return []
+    seen.add(o.paneId)
     const host = typeof o.host === 'string' ? o.host : null
     return [
       {
@@ -60,7 +83,9 @@ export function parsePeerRows(raw: unknown, peer: Pick<Peer, 'id' | 'name'>): Ag
         status: o.status as AgentStatus,
         since: num(o.since),
         lastOutputAt: num(o.lastOutputAt),
-        subagents: Array.isArray(o.subagents) ? (o.subagents as AgentRow['subagents']).filter((s) => typeof s === 'object' && s !== null && typeof s.id === 'string') : [],
+        subagents: Array.isArray(o.subagents)
+          ? (o.subagents as AgentRow['subagents']).slice(0, 50).filter((s) => typeof s === 'object' && s !== null && typeof s.id === 'string' && typeof s.type === 'string' && typeof s.description === 'string')
+          : [],
         running: num(o.running),
         target: typeof o.target === 'object' && o.target !== null ? (o.target as AgentRow['target']) : null,
         peer: { id: peer.id, name: peer.name },
@@ -103,13 +128,17 @@ export function usePeerAgents(tauri: TauriApi, connect: (url: string, token: str
       let stopped = false
       let conn: RemoteConnection | null = null
       let timer: ReturnType<typeof setTimeout> | undefined
+      const notified: number[] = []
       const apply = (raw: unknown) => {
         const s = usePeerAgentsStore.getState()
         const next = parsePeerRows(raw, peer)
         const urgent = newlyUrgent(s.rows[peer.id] ?? [], next)
         s.setRows(peer.id, next)
         if (!useUiStore.getState().agentNotify) return
-        for (const r of urgent) void tauri.notify(`${peer.name}: ${r.agentLabel} — ${STATUS_LABEL[r.status]}`, [r.repo, r.issue].filter(Boolean).join(' ')).catch(() => undefined)
+        for (const r of urgent) {
+          if (!allowNotify(notified, Date.now())) break
+          void tauri.notify(`${peer.name}: ${r.agentLabel} — ${STATUS_LABEL[r.status]}`, [r.repo, r.issue].filter(Boolean).join(' ')).catch(() => undefined)
+        }
       }
       const open = () => {
         if (stopped) return
@@ -147,9 +176,11 @@ export function usePeerAgents(tauri: TauriApi, connect: (url: string, token: str
 
 /** 이 PC 의 창에서만: 이 PC 의 에이전트 현황을 올려 둔다 — 이 PC 를 등록한 다른 PC 가 받아 간다 */
 export function useAgentPublisher(tauri: TauriApi, rows: AgentRow[]) {
+  // 내용이 같으면(뭉친 뒤) 다시 올리지 않는다
+  const json = JSON.stringify(forPublish(rows))
   useEffect(() => {
     if (tauri.runtime !== 'native') return
-    const t = setTimeout(() => void tauri.agentsPublish(rows).catch(() => undefined), PUBLISH_DELAY_MS)
+    const t = setTimeout(() => void tauri.agentsPublish(JSON.parse(json) as unknown[]).catch(() => undefined), PUBLISH_DELAY_MS)
     return () => clearTimeout(t)
-  }, [tauri, rows])
+  }, [tauri, json])
 }
