@@ -10,7 +10,7 @@ import { Button } from '../../components/ui/button'
 import { remotePty } from '../../lib/sshHost'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
-import { PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
+import { CLIPBOARD_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 import { layoutPanes, leafIds } from './panes'
 
 /** remote 가 있으면 그 호스트(SSH 프로필)의 cwd 에서 터미널을 연다 */
@@ -70,7 +70,7 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
         <div className="flex shrink-0 flex-wrap gap-x-4 px-3 pt-1.5 text-xs text-neutral-400">
           <p id={hintId}>{TERMINAL_EXIT_HINT}: 터미널 밖으로 이동</p>
           <p>
-            {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기
+            {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기 · {CLIPBOARD_KEYS.copy}: 복사(선택했을 때) · {CLIPBOARD_KEYS.paste}: 붙여넣기
           </p>
         </div>
       )}
@@ -151,6 +151,7 @@ function TerminalSession({
   const remoteHost = spec.remote?.host
   const remoteTmux = spec.remote?.tmux ?? false
   const theme = useUiStore((s) => s.theme)
+  const fontSize = useUiStore((s) => s.fontSize)
   const focusRequest = useUiStore((s) => s.focusRequest)
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<TermState | null>(null)
@@ -177,19 +178,29 @@ function TerminalSession({
     const t = new Terminal({
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      fontSize: 13,
+      fontSize: useUiStore.getState().fontSize,
       theme: terminalTheme(useUiStore.getState().theme),
       // 출력을 스크린 리더가 읽을 수 있는 접근성 트리로도 내보낸다
       screenReaderMode: true,
     })
     const ui = useUiStore.getState
     t.attachCustomKeyEventHandler(
-      createTerminalKeyHandler(() => onExitRef.current?.(), {
-        splitRight: () => ui().splitPane(spec.issueId, paneId, 'row'),
-        splitDown: () => ui().splitPane(spec.issueId, paneId, 'col'),
-        // 패널이 언마운트되면 아래 cleanup 이 PTY(와 그 자손 프로세스)를 종료한다
-        close: () => ui().closePane(spec.issueId, paneId),
-      }),
+      createTerminalKeyHandler(
+        () => onExitRef.current?.(),
+        {
+          splitRight: () => ui().splitPane(spec.issueId, paneId, 'row'),
+          splitDown: () => ui().splitPane(spec.issueId, paneId, 'col'),
+          // 패널이 언마운트되면 아래 cleanup 이 PTY(와 그 자손 프로세스)를 종료한다
+          close: () => ui().closePane(spec.issueId, paneId),
+        },
+        {
+          hasSelection: () => t.hasSelection(),
+          selection: () => t.getSelection(),
+          // 클립보드를 쓸 수 없는 환경이어도 터미널은 계속 쓸 수 있게 실패는 무시한다
+          copy: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
+          clearSelection: () => t.clearSelection(),
+        },
+      ),
     )
     const fit = new FitAddon()
     t.loadAddon(fit)
@@ -309,6 +320,12 @@ function TerminalSession({
     if (cur) cur.t.options.theme = terminalTheme(theme)
   }, [theme])
 
+  // 글자 크기 변경을 열린 터미널에도 반영 — 칸 수가 달라지므로 아래의 크기 맞춤(effect)이 이어서 다시 돈다
+  useEffect(() => {
+    const cur = term.current
+    if (cur) cur.t.options.fontSize = fontSize
+  }, [fontSize, gen])
+
   // 사용자가 이 터미널을 쓰던 중 세션이 끝났을 때만 포커스를 옮긴다 — 다른 탭·이슈에 포커스가 있으면 자동 포커스 금지(AX-02) 유지
   useEffect(() => {
     if (!ended || !focusRestartButton.current) return
@@ -335,7 +352,7 @@ function TerminalSession({
     const ro = new ResizeObserver(resize)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [active, tauri, gen])
+  }, [active, tauri, gen, fontSize])
 
   const restart = () => {
     focusAfterRestart.current = true

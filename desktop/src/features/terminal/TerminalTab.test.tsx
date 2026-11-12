@@ -21,6 +21,7 @@ const xterm = vi.hoisted(() => ({
     dataHandler: ((d: string) => void) | null
     host: HTMLElement | null
     textarea: HTMLTextAreaElement | undefined
+    selection: string
   }[],
   // 정적 Terminal.strings — 실제 xterm 처럼 open() 이전에 바꿔야 입력 textarea 라벨에 반영된다
   strings: { promptLabel: 'Terminal input', tooMuchOutput: '' },
@@ -59,6 +60,16 @@ vi.mock('@xterm/xterm', () => ({
     }
     attachCustomKeyEventHandler(h: (e: KeyboardEvent) => boolean) {
       this.keyHandler = h
+    }
+    selection = ''
+    getSelection() {
+      return this.selection
+    }
+    hasSelection() {
+      return this.selection !== ''
+    }
+    clearSelection() {
+      this.selection = ''
     }
     dispose() {}
   },
@@ -597,5 +608,144 @@ describe('원격 호스트 터미널', () => {
     const t = setup()
     await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
     expect(t.tauri.ptySpawn.mock.calls[0][0].remote).toBeUndefined()
+  })
+})
+
+describe('복사·붙여넣기 (Ctrl+C / Ctrl+V — Windows Terminal 방식)', () => {
+  const key = (init: KeyboardEventInit, type = 'keydown') => new KeyboardEvent(type, { ctrlKey: true, cancelable: true, ...init })
+  function handler(selected = '') {
+    const clip = { text: selected, copied: [] as string[] }
+    const h = createTerminalKeyHandler(vi.fn(), undefined, {
+      hasSelection: () => clip.text !== '',
+      selection: () => clip.text,
+      copy: (t) => void clip.copied.push(t),
+      clearSelection: () => {
+        clip.text = ''
+      },
+    })
+    return { h, clip }
+  }
+
+  it('Ctrl+C: 선택이 있으면 복사하고 선택을 풀며 셸로 보내지 않는다 · 선택이 없으면 셸로 보낸다(중단)', () => {
+    const { h, clip } = handler('hello')
+    const down = key({ key: 'c', code: 'KeyC' })
+    expect(h(down)).toBe(false)
+    expect(down.defaultPrevented).toBe(true)
+    expect(clip.copied).toEqual(['hello'])
+    // 복사 뒤에는 선택이 없으므로 다음 Ctrl+C 는 중단 신호다
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(true)
+    expect(clip.copied).toEqual(['hello'])
+  })
+
+  it('Ctrl+C: 복사한 키를 누르고 있어도(키 반복) 셸로 중단 신호를 보내지 않는다 — 뗀 뒤 다시 누르면 보낸다', () => {
+    const { h, clip } = handler('abc')
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(false)
+    // 복사로 선택이 풀린 뒤의 키 반복
+    expect(h(key({ key: 'c', code: 'KeyC', repeat: true }))).toBe(false)
+    expect(h(key({ key: 'c', code: 'KeyC', repeat: true }))).toBe(false)
+    expect(h(key({ key: 'c', code: 'KeyC' }, 'keyup'))).toBe(false)
+    expect(clip.copied).toEqual(['abc'])
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(true)
+    // 선택 없이 누르고 있는 Ctrl+C 는 계속 셸로 간다
+    expect(h(key({ key: 'c', code: 'KeyC', repeat: true }))).toBe(true)
+  })
+
+  it('Ctrl+C: 빈칸만 선택하면(글자는 비어 있음) 셸로 보내지 않고 선택만 푼다 — 클립보드는 덮어쓰지 않는다', () => {
+    const copied: string[] = []
+    const clear = vi.fn()
+    const h = createTerminalKeyHandler(vi.fn(), undefined, { hasSelection: () => true, selection: () => '', copy: (t) => void copied.push(t), clearSelection: clear })
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(false)
+    expect(copied).toEqual([])
+    expect(clear).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl+C: keyup 을 놓쳐도(포커스 이동 등) 다음에 새로 누르면 정상 동작한다', () => {
+    const { h, clip } = handler('abc')
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(false)
+    // keyup 없이 새로 누름: 선택이 없으니 셸로 간다
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(true)
+    expect(h(key({ key: 'c', code: 'KeyC', repeat: true }))).toBe(true)
+    expect(clip.copied).toEqual(['abc'])
+  })
+
+  it('Ctrl+Shift+C: 복사 전용 — 선택이 없어도 셸로 보내지 않는다', () => {
+    const { h, clip } = handler()
+    expect(h(key({ key: 'C', code: 'KeyC', shiftKey: true }))).toBe(false)
+    expect(clip.copied).toEqual([])
+    const sel = handler('x')
+    expect(sel.h(key({ key: 'C', code: 'KeyC', shiftKey: true }))).toBe(false)
+    expect(sel.clip.copied).toEqual(['x'])
+  })
+
+  it('Ctrl+V · Ctrl+Shift+V: 셸로 ^V 를 보내지 않고, 브라우저의 붙여넣기(기본 동작)는 막지 않는다', () => {
+    const { h } = handler()
+    for (const init of [{ key: 'v', code: 'KeyV' }, { key: 'V', code: 'KeyV', shiftKey: true }]) {
+      const down = key(init)
+      expect(h(down)).toBe(false)
+      expect(down.defaultPrevented).toBe(false)
+    }
+  })
+
+  it('한글 입력 상태에서도 물리 키로 동작한다 · Alt 조합과 다른 글자는 그대로 셸로', () => {
+    const { h, clip } = handler('가나다')
+    expect(h(key({ key: 'ㅊ', code: 'KeyC' }))).toBe(false)
+    expect(clip.copied).toEqual(['가나다'])
+    expect(h(key({ key: 'ㅍ', code: 'KeyV' }))).toBe(false)
+    expect(h(key({ key: 'v', code: 'KeyV', altKey: true }))).toBe(true)
+    expect(h(key({ key: 'x', code: 'KeyX' }))).toBe(true)
+  })
+
+  it('터미널에 연결: 선택한 글자를 클립보드에 쓰고 선택을 푼다', async () => {
+    const writeText = vi.fn(async (_text: string) => {})
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    try {
+      setup()
+      const term = xterm.instances[0]
+      term.selection = 'npm run build'
+      act(() => void term.keyHandler?.(key({ key: 'c', code: 'KeyC' })))
+      expect(writeText).toHaveBeenCalledWith('npm run build')
+      expect(term.selection).toBe('')
+      // 클립보드에 쓰지 못해도(권한 등) 터미널은 그대로 동작한다
+      writeText.mockRejectedValueOnce(new Error('denied'))
+      term.selection = 'again'
+      expect(() => act(() => void term.keyHandler?.(key({ key: 'c', code: 'KeyC' })))).not.toThrow()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    const term = xterm.instances[0]
+    expect(term.selection).toBe('')
+    expect(screen.getByText(/Ctrl\+C: 복사\(선택했을 때\) · Ctrl\+V: 붙여넣기/)).toBeInTheDocument()
+  })
+})
+
+describe('글자 크기 (Ctrl + / Ctrl - / Ctrl 0)', () => {
+  const key = (init: KeyboardEventInit) => new KeyboardEvent('keydown', { ctrlKey: true, cancelable: true, ...init })
+
+  it('세 조합은 셸로 보내지 않는다(앱이 처리) · 다른 조합은 그대로', () => {
+    const h = createTerminalKeyHandler(vi.fn())
+    for (const init of [{ key: '=' }, { key: '+', shiftKey: true }, { key: '-' }, { key: '0' }, { key: '+', code: 'NumpadAdd' }, { key: '-', code: 'NumpadSubtract' }, { key: '0', code: 'Numpad0' }]) {
+      expect(h(key(init))).toBe(false)
+    }
+    expect(h(key({ key: '_', shiftKey: true }))).toBe(true)
+    expect(h(key({ key: '1' }))).toBe(true)
+    expect(h(key({ key: '-', altKey: true }))).toBe(true)
+  })
+
+  it('저장된 크기로 터미널을 만들고, 바꾸면 열린 터미널에 반영한 뒤 PTY 에 새 크기를 알린다(새로 띄우지 않는다)', async () => {
+    useUiStore.setState({ fontSize: 16 })
+    try {
+      const t = setup()
+      await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+      const term = xterm.instances[0]
+      expect(term.options.fontSize).toBe(16)
+      const before = t.tauri.ptyResize.mock.calls.length
+      act(() => useUiStore.getState().setFontSize(20))
+      expect(term.options.fontSize).toBe(20)
+      await vi.waitFor(() => expect(t.tauri.ptyResize.mock.calls.length).toBeGreaterThan(before))
+      expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1)
+      expect(xterm.instances).toHaveLength(1)
+    } finally {
+      useUiStore.setState({ fontSize: 13 })
+    }
   })
 })

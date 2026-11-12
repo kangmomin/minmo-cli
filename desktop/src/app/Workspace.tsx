@@ -9,11 +9,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/toolti
 import { useAuth } from '../features/auth/useAuth'
 import { CliAccessDialog } from '../features/cli/CliAccessDialog'
 import { IssueHeader } from '../features/issue/IssueHeader'
+import { AppVersion } from '../features/update/AppVersion'
 import { WorkTabs } from '../features/issue/WorkTabs'
 import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
 import type { PreviewIssue } from '../features/settings/SettingsDialog'
 import { Sidebar } from '../features/tree/Sidebar'
+import { useFontSizeShortcuts } from '../lib/fontSize'
 import { openServerSettings } from '../store/server'
 import { HostScope, aliasOfIssue, useHostConnection } from './host'
 import { useSessionStore } from '../store/session'
@@ -32,6 +34,7 @@ export function Workspace() {
   const openState = useSetupStore((s) => (selectedId ? s.open[selectedId] : undefined))
   const [settings, setSettings] = useState<SettingsTarget | null>(null)
   const [cliOpen, setCliOpen] = useState(false)
+  useFontSizeShortcuts()
   const connection = useHostConnection()
 
   const selectedPreview: PreviewIssue | null = target ?? null
@@ -43,6 +46,7 @@ export function Workspace() {
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-center gap-3 border-b px-4 py-2">
         <span className="font-semibold">minmo</span>
+        <AppVersion />
         <span className="flex-1" />
         {auth.me && <span className="text-sm text-muted-foreground">{auth.me.githubLogin}</span>}
         <ThemeToggle />

@@ -28,6 +28,8 @@ export interface MinmoMockHandle {
   pickedFolder: string | null
   /** 실행한 git 명령(인자 목록) */
   gitCalls: string[][]
+  /** 터미널(PTY)로 보낸 입력 */
+  ptyWrites: string[]
 }
 
 /** mock 서버 포트 — VITE_MINMO_SERVER(Playwright) 주소를 따른다 */
@@ -159,6 +161,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     installCalls: 0,
     pickedFolder: null,
     gitCalls: [],
+    ptyWrites: [],
   }
   if (typeof window !== 'undefined') window.__MINMO_MOCK__ = handle
 
@@ -277,6 +280,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       return id
     },
     ptyWrite: async (id, data) => {
+      handle.ptyWrites.push(data)
       // 에코만 한다(Enter → 새 프롬프트)
       emitPty(id, data === '\r' ? '\r\n$ ' : data)
     },

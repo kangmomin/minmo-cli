@@ -10,6 +10,7 @@ import { rust } from '@codemirror/lang-rust'
 import { yaml } from '@codemirror/lang-yaml'
 import { indentWithTab } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { Compartment } from '@codemirror/state'
 import type { Extension } from '@codemirror/state'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView, keymap } from '@codemirror/view'
@@ -18,6 +19,7 @@ import { tags as t } from '@lezer/highlight'
 import { useEffect, useRef } from 'react'
 
 import { GHOSTTY, GHOSTTY_COLORS as C, GHOSTTY_UI } from '../../lib/ghostty'
+import { useUiStore } from '../../store/ui'
 import type { Theme } from '../../store/ui'
 
 export interface CodeEditorProps {
@@ -117,8 +119,19 @@ export function editorTheme(theme: Theme): Extension[] {
   return theme === 'ghostty' ? ghosttyEditor : theme === 'black' ? [oneDark] : []
 }
 
+// 크기별 스타일은 한 번만 만든다(EditorView.theme 은 부를 때마다 새 스타일을 문서에 더한다)
+const fontSizeThemes = new Map<number, Extension>()
+function fontSizeTheme(px: number): Extension {
+  let ext = fontSizeThemes.get(px)
+  if (!ext) fontSizeThemes.set(px, (ext = EditorView.theme({ '&': { fontSize: `${px}px` } })))
+  return ext
+}
+
 export function CodeEditor({ initial, fileName, theme, label, onChange, onSave }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null)
+  const fontSize = useUiStore((s) => s.fontSize)
+  // 글자 크기만 바꿔 끼운다 — 뷰를 다시 만들면 편집 내용의 실행 취소 기록과 커서를 잃는다
+  const editor = useRef<{ view: EditorView; size: Compartment } | null>(null)
   // 뷰는 마운트 때 한 번 만든다 — 최신 콜백은 ref 로 읽는다
   const handlers = useRef({ onChange, onSave })
   useEffect(() => {
@@ -127,6 +140,7 @@ export function CodeEditor({ initial, fileName, theme, label, onChange, onSave }
 
   useEffect(() => {
     if (!host.current) return
+    const size = new Compartment()
     const view = new EditorView({
       doc: initial,
       parent: host.current,
@@ -145,17 +159,27 @@ export function CodeEditor({ initial, fileName, theme, label, onChange, onSave }
         ]),
         ...languageFor(fileName),
         ...editorTheme(theme),
-        EditorView.theme({ '&': { height: '100%', fontSize: '13px' }, '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' } }),
+        size.of(fontSizeTheme(useUiStore.getState().fontSize)),
+        EditorView.theme({ '&': { height: '100%' }, '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' } }),
         EditorView.contentAttributes.of({ 'aria-label': label }),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) handlers.current.onChange(u.state.doc.toString())
         }),
       ],
     })
-    return () => view.destroy()
+    editor.current = { view, size }
+    return () => {
+      editor.current = null
+      view.destroy()
+    }
     // initial 은 처음 값만 쓴다(다른 내용은 key 로 다시 마운트)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileName, theme, label])
+
+  useEffect(() => {
+    const cur = editor.current
+    if (cur) cur.view.dispatch({ effects: cur.size.reconfigure(fontSizeTheme(fontSize)) })
+  }, [fontSize, fileName, theme, label])
 
   return <div ref={host} className="size-full overflow-hidden" data-testid="code-editor" />
 }
