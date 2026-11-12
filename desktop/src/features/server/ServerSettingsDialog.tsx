@@ -234,6 +234,12 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
               if (Number.isInteger(n) && n >= FONT_SIZE.min && n <= FONT_SIZE.max) setFontSize(n)
             }}
             onBlur={() => setFontDraft(String(fontSize))}
+            // 이 값은 바로 적용된다 — Enter 가 아래의 서버 설정 저장(서버 재시작)을 일으키지 않게 한다
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              e.currentTarget.blur()
+            }}
             className="w-24"
           />
           <span className="text-sm text-muted-foreground">px</span>

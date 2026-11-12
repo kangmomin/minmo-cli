@@ -9,7 +9,7 @@ import { FONT_SIZE, clampFontSize, useUiStore } from '../store/ui'
 import { createFakeTauri } from '../test/fakes'
 import { fontSizeAction, useFontSizeShortcuts } from './fontSize'
 
-const ev = (init: Partial<KeyboardEvent>) => ({ ctrlKey: true, altKey: false, metaKey: false, shiftKey: false, key: '', code: '', ...init })
+const ev = (init: Partial<KeyboardEvent>) => ({ ctrlKey: true, altKey: false, metaKey: false, shiftKey: false, key: '', ...init })
 
 beforeEach(() => {
   localStorage.clear()
@@ -34,6 +34,8 @@ describe('fontSizeAction', () => {
     expect(fontSizeAction(ev({ key: '_', shiftKey: true }))).toBeNull()
     expect(fontSizeAction(ev({ key: ')', shiftKey: true }))).toBeNull()
     expect(fontSizeAction(ev({ key: '1' }))).toBeNull()
+    // NumLock 이 꺼진 키패드 0 = Insert — Ctrl+Insert(복사)를 가로채지 않는다
+    expect(fontSizeAction(ev({ key: 'Insert', code: 'Numpad0' }))).toBeNull()
   })
 })
 
@@ -103,5 +105,11 @@ describe('설정 화면', () => {
     expect(useUiStore.getState().fontSize).toBe(13)
     expect(input).toHaveValue(13)
     expect(screen.getByRole('button', { name: '기본값' })).toBeDisabled()
+    // Enter 는 서버 설정을 저장(서버 재시작)하지 않는다
+    await user.clear(input)
+    await user.type(input, '15{Enter}')
+    expect(useUiStore.getState().fontSize).toBe(15)
+    expect(tauri.serverSettingsSave).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 })

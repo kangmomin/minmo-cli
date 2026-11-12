@@ -119,7 +119,13 @@ export function editorTheme(theme: Theme): Extension[] {
   return theme === 'ghostty' ? ghosttyEditor : theme === 'black' ? [oneDark] : []
 }
 
-const fontSizeTheme = (px: number) => EditorView.theme({ '&': { fontSize: `${px}px` } })
+// 크기별 스타일은 한 번만 만든다(EditorView.theme 은 부를 때마다 새 스타일을 문서에 더한다)
+const fontSizeThemes = new Map<number, Extension>()
+function fontSizeTheme(px: number): Extension {
+  let ext = fontSizeThemes.get(px)
+  if (!ext) fontSizeThemes.set(px, (ext = EditorView.theme({ '&': { fontSize: `${px}px` } })))
+  return ext
+}
 
 export function CodeEditor({ initial, fileName, theme, label, onChange, onSave }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null)

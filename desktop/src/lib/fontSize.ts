@@ -6,13 +6,14 @@ import { FONT_SIZE, useUiStore } from '../store/ui'
 export type FontSizeAction = 'in' | 'out' | 'reset'
 
 /** 글자 크기 단축키면 그 동작. Ctrl 만 누른 조합만 본다(Ctrl+Alt 는 AltGr 글자 입력일 수 있다) */
-export function fontSizeAction(e: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey' | 'key' | 'code'>): FontSizeAction | null {
+export function fontSizeAction(e: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey' | 'key'>): FontSizeAction | null {
   if (!e.ctrlKey || e.altKey || e.metaKey) return null
+  // 입력된 글자로만 판단한다 — 키 위치(code)로 보면 NumLock 이 꺼진 키패드 0(Ctrl+Insert = 복사)까지 잡는다.
   // + 는 자판에 따라 Shift+= 로 입력하므로 Shift 여부를 가리지 않는다
-  if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') return 'in'
+  if (e.key === '+' || e.key === '=') return 'in'
   if (e.shiftKey) return null
-  if (e.key === '-' || e.code === 'NumpadSubtract') return 'out'
-  if (e.key === '0' || e.code === 'Numpad0') return 'reset'
+  if (e.key === '-') return 'out'
+  if (e.key === '0') return 'reset'
   return null
 }
 

@@ -60,7 +60,9 @@ export function createTerminalKeyHandler(onExit: () => void, panes?: PaneKeyActi
       if (e.type === 'keydown') {
         e.preventDefault()
         if (selected) {
-          clipboard.copy(clipboard.selection())
+          // 빈칸만 고른 선택은 글자가 없다 — 빈 문자열로 클립보드를 덮어쓰지 않는다
+          const text = clipboard.selection()
+          if (text !== '') clipboard.copy(text)
           clipboard.clearSelection()
           copying = true
         }

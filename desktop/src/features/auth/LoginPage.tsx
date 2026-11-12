@@ -5,6 +5,7 @@ import { ThemeToggle } from '../../components/ThemeToggle'
 import { Button } from '../../components/ui/button'
 import { openServerSettings } from '../../store/server'
 import { useSessionStore } from '../../store/session'
+import { AppVersion } from '../update/AppVersion'
 import { useAuth } from './useAuth'
 
 /** UI State "로그인 대기": 2분이 지나면 시간 초과 안내 (pendingLogin 자체 TTL 은 10분) */
@@ -37,7 +38,10 @@ export function LoginPage() {
       </div>
       <div className="grid w-full max-w-sm gap-4 rounded-lg border bg-background p-8 shadow-sm">
         <div>
-          <h1 className="text-xl font-semibold">minmo</h1>
+          <div className="flex items-baseline gap-1">
+            <h1 className="text-xl font-semibold">minmo</h1>
+            <AppVersion />
+          </div>
           <p className="text-sm text-muted-foreground">GitHub 이슈 단위 작업 공간</p>
         </div>
 

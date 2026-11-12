@@ -1,4 +1,4 @@
-// 터미널 복사·붙여넣기 — Ctrl+V 붙여넣기, 선택 후 Ctrl+C 복사(Windows Terminal 방식). 실제 xterm + mock PTY(에코)
+// 터미널 단축키 — Ctrl+V 붙여넣기, 선택 후 Ctrl+C 복사(Windows Terminal 방식), Ctrl + / - / 0 글자 크기. 실제 xterm + mock PTY(에코)
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 

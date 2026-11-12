@@ -650,11 +650,22 @@ describe('복사·붙여넣기 (Ctrl+C / Ctrl+V — Windows Terminal 방식)', (
     expect(h(key({ key: 'c', code: 'KeyC', repeat: true }))).toBe(true)
   })
 
-  it('Ctrl+C: 빈칸만 선택해도(글자는 비어 있음) 복사로 처리하고 셸로 보내지 않는다', () => {
+  it('Ctrl+C: 빈칸만 선택하면(글자는 비어 있음) 셸로 보내지 않고 선택만 푼다 — 클립보드는 덮어쓰지 않는다', () => {
     const copied: string[] = []
-    const h = createTerminalKeyHandler(vi.fn(), undefined, { hasSelection: () => true, selection: () => '', copy: (t) => void copied.push(t), clearSelection: () => {} })
+    const clear = vi.fn()
+    const h = createTerminalKeyHandler(vi.fn(), undefined, { hasSelection: () => true, selection: () => '', copy: (t) => void copied.push(t), clearSelection: clear })
     expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(false)
-    expect(copied).toEqual([''])
+    expect(copied).toEqual([])
+    expect(clear).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl+C: keyup 을 놓쳐도(포커스 이동 등) 다음에 새로 누르면 정상 동작한다', () => {
+    const { h, clip } = handler('abc')
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(false)
+    // keyup 없이 새로 누름: 선택이 없으니 셸로 간다
+    expect(h(key({ key: 'c', code: 'KeyC' }))).toBe(true)
+    expect(h(key({ key: 'c', code: 'KeyC', repeat: true }))).toBe(true)
+    expect(clip.copied).toEqual(['abc'])
   })
 
   it('Ctrl+Shift+C: 복사 전용 — 선택이 없어도 셸로 보내지 않는다', () => {
@@ -712,7 +723,7 @@ describe('글자 크기 (Ctrl + / Ctrl - / Ctrl 0)', () => {
 
   it('세 조합은 셸로 보내지 않는다(앱이 처리) · 다른 조합은 그대로', () => {
     const h = createTerminalKeyHandler(vi.fn())
-    for (const init of [{ key: '=' }, { key: '+', shiftKey: true }, { key: '-' }, { key: '0' }, { key: '+', code: 'NumpadAdd' }, { key: '-', code: 'NumpadSubtract' }]) {
+    for (const init of [{ key: '=' }, { key: '+', shiftKey: true }, { key: '-' }, { key: '0' }, { key: '+', code: 'NumpadAdd' }, { key: '-', code: 'NumpadSubtract' }, { key: '0', code: 'Numpad0' }]) {
       expect(h(key(init))).toBe(false)
     }
     expect(h(key({ key: '_', shiftKey: true }))).toBe(true)
