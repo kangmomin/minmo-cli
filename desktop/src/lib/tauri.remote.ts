@@ -163,6 +163,7 @@ const EVENTS: Partial<Record<keyof TauriApi, string>> = {
   onPtyResized: TAURI_EVENTS.ptyResized,
   onScriptLog: TAURI_EVENTS.scriptLog,
   onSharedChanged: TAURI_EVENTS.sharedChanged,
+  onSyncApplied: TAURI_EVENTS.syncApplied,
 }
 
 const hostOnly = (what: string) => async (): Promise<never> => {
@@ -215,6 +216,7 @@ export function createRemoteTauri(conn: RemoteConnection): TauriApi {
     remoteRpcReply: async () => undefined,
     // 다른 PC 등록과 통합 현황은 데스크톱 앱에서만 한다
     peersList: async () => [],
+    deviceName: async () => '',
     peerAdd: hostOnly('다른 PC 등록'),
     peerRemove: hostOnly('다른 PC 삭제'),
     peerOpen: hostOnly('다른 PC 열기'),

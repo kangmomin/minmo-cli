@@ -54,6 +54,10 @@ export const usePeerAgentsStore = create<PeerAgentsState>()((set) => ({
   forget: (keep) => set((s) => ({ rows: Object.fromEntries(Object.entries(s.rows).filter(([k]) => keep.includes(k))), online: Object.fromEntries(Object.entries(s.online).filter(([k]) => keep.includes(k))) })),
 }))
 
+/** 붙어 있는 PC 의 연결 — 동기화(peerSync.ts)가 같은 연결로 그 PC 를 부른다 */
+const connections = new Map<string, RemoteConnection>()
+export const peerConnection = (peerId: string): RemoteConnection | null => connections.get(peerId) ?? null
+
 /** 다른 PC 가 보낸 줄 — 모양이 맞는 것만 받고, 그 PC 의 것임을 표시한다 */
 export function parsePeerRows(raw: unknown, peer: Pick<Peer, 'id' | 'name'>): AgentRow[] {
   if (!Array.isArray(raw)) return []
@@ -148,6 +152,7 @@ export function usePeerAgents(tauri: TauriApi, connect: (url: string, token: str
         c.onLink((link) => {
           if (stopped || conn !== c) return
           if (link === 'closed' || link === 'rejected') {
+            if (connections.get(peer.id) === c) connections.delete(peer.id)
             usePeerAgentsStore.getState().setOnline(peer.id, false)
             // 거절(그 PC 에서 이 PC 를 끊음)은 다시 시도해도 같으므로 그만둔다 — 다시 등록해야 한다
             if (link === 'closed') timer = setTimeout(open, RETRY_MS)
@@ -156,6 +161,7 @@ export function usePeerAgents(tauri: TauriApi, connect: (url: string, token: str
         c.connect()
           .then(async () => {
             if (stopped || conn !== c) return
+            connections.set(peer.id, c)
             usePeerAgentsStore.getState().setOnline(peer.id, true)
             // 처음 받은 것은 알리지 않는다(기준이 될 뿐이다)
             usePeerAgentsStore.getState().setRows(peer.id, parsePeerRows(await c.call('agentsSnapshot', []), peer))
@@ -166,6 +172,7 @@ export function usePeerAgents(tauri: TauriApi, connect: (url: string, token: str
       return () => {
         stopped = true
         clearTimeout(timer)
+        if (conn && connections.get(peer.id) === conn) connections.delete(peer.id)
         conn?.close()
       }
     })

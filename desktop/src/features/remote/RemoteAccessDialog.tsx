@@ -1,5 +1,6 @@
 // 원격 접속 설정(이 PC 의 창에서만) — 켜기/끄기, 접속 주소, 기기 등록 코드, 등록된 기기 끊기
-import { CopyIcon, MonitorIcon, SmartphoneIcon, Trash2Icon } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { CopyIcon, MonitorIcon, RefreshCwIcon, SmartphoneIcon, Trash2Icon } from 'lucide-react'
 import qrcode from 'qrcode-generator'
 import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 
@@ -11,7 +12,9 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import type { RemoteAddress, RemoteStatus } from '../../lib/tauri'
 import { usePeersStore } from '../../store/peers'
+import { useUiStore } from '../../store/ui'
 import { usePeerAgentsStore } from './peerAgents'
+import { runPeerSync, usePeerSyncStore } from './peerSync'
 
 const KIND_LABEL: Record<RemoteAddress['kind'], string> = { tailscale: 'Tailscale', lan: '같은 네트워크(LAN)', local: '이 PC' }
 
@@ -247,6 +250,11 @@ function PeersSection() {
   const peers = usePeersStore((s) => s.peers)
   const setPeers = usePeersStore((s) => s.setPeers)
   const online = usePeerAgentsStore((s) => s.online)
+  const { api } = useBaseDeps()
+  const queryClient = useQueryClient()
+  const sync = usePeerSyncStore((s) => s.status)
+  const syncOn = useUiStore((s) => s.peerSync)
+  const setSyncOn = useUiStore((s) => s.setPeerSync)
   const [url, setUrl] = useState('')
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
@@ -282,19 +290,45 @@ function PeersSection() {
       {peers.length > 0 && (
         <ul className="grid gap-1">
           {peers.map((p) => (
-            <li key={p.id} className="flex items-center gap-2" data-testid="peer">
+            <li key={p.id} className="flex flex-wrap items-center gap-2" data-testid="peer">
               <MonitorIcon className="size-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">
                 {p.name}
                 <span className="block truncate font-mono text-xs text-muted-foreground">{p.url}</span>
               </span>
               <Badge variant={online[p.id] ? 'default' : 'outline'}>{online[p.id] ? '연결됨' : '연결 안 됨'}</Badge>
+              {syncOn && (
+                <Button size="sm" variant="outline" disabled={!online[p.id] || sync[p.id]?.busy} onClick={() => void runPeerSync(p, { tauri, api, queryClient })}>
+                  <RefreshCwIcon className={sync[p.id]?.busy ? 'animate-spin' : undefined} /> 지금 동기화
+                </Button>
+              )}
               <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => tauri.peerRemove(p.id))}>
                 <Trash2Icon /> 삭제
               </Button>
+              {syncOn && sync[p.id] && (sync[p.id].at !== null || sync[p.id].error) && (
+                <span className="basis-full pl-6 text-xs text-muted-foreground" data-testid="peer-sync-status">
+                  {sync[p.id].error ? (
+                    <span className="text-destructive">동기화하지 못했습니다 — {sync[p.id].error}</span>
+                  ) : (
+                    <>
+                      마지막 동기화 {new Date(sync[p.id].at!).toLocaleTimeString()} · 주고받은 항목 {sync[p.id].moved}개
+                      {sync[p.id].conflicts > 0 && ` · 양쪽에서 고친 메모 ${sync[p.id].conflicts}개는 충돌 사본을 붙였습니다`}
+                    </>
+                  )}
+                </span>
+              )}
             </li>
           ))}
         </ul>
+      )}
+      {peers.length > 0 && (
+        <label className="flex items-start gap-2">
+          <input type="checkbox" className="mt-0.5" checked={syncOn} onChange={(e) => setSyncOn(e.target.checked)} />
+          <span>
+            등록한 PC 와 동기화
+            <span className="block text-xs text-muted-foreground">메모 · 브랜치 이름 설정 · 저장소 목록(GitHub 저장소)을 맞춥니다. 같은 항목이 다르면 나중에 고친 쪽을 쓰고, 양쪽에서 고친 메모는 밀린 쪽 내용을 메모 끝에 붙여 둡니다. 작업 폴더 경로·생성 후 스크립트·에이전트 실행 명령처럼 실행되는 값은 맞추지 않습니다.</span>
+          </span>
+        </label>
       )}
       <form
         className="grid gap-2 sm:grid-cols-[2fr_1fr_1.5fr_auto] sm:items-end"

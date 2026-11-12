@@ -69,3 +69,14 @@ export type GithubToken = { accessToken: string }
 export type Health = { status: 'ok' }
 /** me/getGithubToken/logout 전용: 로그인 확정 전 후보 세션 검증(CT-35) */
 export type TokenOverride = { token?: string }
+
+/**
+ * PC 사이 동기화(GET·PUT /me/sync) — 서버의 메모와 설정 중 이름을 정하는 값. updatedAtMs 로 어느 쪽이 더 새로운지 가린다.
+ * 작업 폴더 경로·생성 후 스크립트는 이 경로로 오가지 않는다(서버가 내보내지도 받지도 않는다).
+ */
+export type SyncSetting = { scope: SettingsSource; owner: string; repo: string; branchTemplate: string | null; etcBranchName: string | null; sparsePaths: string | null; updatedAtMs: number }
+export type SyncNote = { owner: string; repo: string; key: string; body: string; updatedAtMs: number }
+/** nowMs: 내보낸 서버의 지금 시각(두 PC 의 시계 차이를 재는 데 쓴다) */
+export type SyncDoc = { nowMs?: number; settings: SyncSetting[]; notes: SyncNote[] }
+/** 넣은 수와 넣지 않은 수(더 새롭지 않거나 규칙에 맞지 않는 것) */
+export type SyncResult = { settings: number; notes: number; skipped: number }

@@ -117,6 +117,7 @@ pub fn run() {
             remote::remote_rpc_reply,
             remote::agents_publish,
             remote::peers_list,
+            remote::device_name,
             remote::peer_add,
             remote::peer_remove,
             remote::peer_open,
