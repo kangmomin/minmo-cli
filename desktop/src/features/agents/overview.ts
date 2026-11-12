@@ -6,6 +6,8 @@ import { STATUS_LABEL, STATUS_ORDER, statusOf } from './agentStore'
 import type { AgentStatus, PaneAgent } from './agentStore'
 import { AGENT_LABEL } from './detect'
 import type { AgentKind } from './detect'
+import { runningCount } from './subagents'
+import type { Subagent } from './subagents'
 
 export type AgentRow = {
   paneId: string
@@ -24,6 +26,10 @@ export type AgentRow = {
   status: AgentStatus
   since: number
   lastOutputAt: number
+  /** Claude Code 가 띄운 하위 에이전트들(실행 중인 것 먼저) */
+  subagents: Subagent[]
+  /** 그중 실행 중인 수 */
+  running: number
 }
 
 export type RowContext = {
@@ -32,7 +38,7 @@ export type RowContext = {
   repoLabel(owner: string, repo: string): string
 }
 
-export function toRows(panes: Record<string, PaneAgent>, ctx: RowContext): AgentRow[] {
+export function toRows(panes: Record<string, PaneAgent>, ctx: RowContext, subagents: Record<string, Subagent[]> = {}): AgentRow[] {
   return Object.values(panes).map((p) => {
     const t = ctx.targets[p.issueId]
     const host = ctx.hostOf(p.issueId)
@@ -49,17 +55,20 @@ export function toRows(panes: Record<string, PaneAgent>, ctx: RowContext): Agent
       status: statusOf(p),
       since: p.since,
       lastOutputAt: p.lastOutputAt,
+      subagents: subagents[p.paneId] ?? [],
+      running: runningCount(subagents[p.paneId]),
     }
   })
 }
 
-export function filterRows(rows: AgentRow[], view: Pick<AgentsView, 'statuses' | 'agents' | 'query'>): AgentRow[] {
+export function filterRows(rows: AgentRow[], view: Pick<AgentsView, 'statuses' | 'agents' | 'query'> & { subagentsOnly?: boolean }): AgentRow[] {
   const q = view.query.trim().toLowerCase()
   return rows.filter(
     (r) =>
       (view.statuses.length === 0 || view.statuses.includes(r.status)) &&
       (view.agents.length === 0 || view.agents.includes(r.agent)) &&
-      (q === '' || [r.repo, r.issue, r.agentLabel, r.label, r.hostLabel].some((s) => s.toLowerCase().includes(q))),
+      (!view.subagentsOnly || r.running > 0) &&
+      (q === '' || [r.repo, r.issue, r.agentLabel, r.label, r.hostLabel].some((s) => s.toLowerCase().includes(q)) || r.subagents.some((s) => `${s.type} ${s.description}`.toLowerCase().includes(q))),
   )
 }
 
@@ -68,6 +77,8 @@ const byName = (a: AgentRow, b: AgentRow) => a.repo.localeCompare(b.repo) || a.i
 export function sortRows(rows: AgentRow[], sort: AgentsView['sort']): AgentRow[] {
   const out = [...rows]
   if (sort === 'name') return out.sort(byName)
+  // 하위 에이전트: 실행 중인 하위 에이전트가 많은 것부터
+  if (sort === 'subagents') return out.sort((a, b) => b.running - a.running || b.subagents.length - a.subagents.length || byName(a, b))
   // 최근 활동: 방금 상태가 바뀌었거나 출력이 나온 것부터
   if (sort === 'recent') return out.sort((a, b) => Math.max(b.since, b.lastOutputAt) - Math.max(a.since, a.lastOutputAt) || byName(a, b))
   // 상태: 급한 것(입력 대기 → 끝남 → 작업 중 → 대기 중)부터, 같은 상태 안에서는 오래 기다린 것부터
@@ -98,7 +109,7 @@ export function groupRows(rows: AgentRow[], group: AgentsView['group']): AgentGr
   return groups.sort((a, b) => a.title.localeCompare(b.title))
 }
 
-export const SORT_LABEL: Record<AgentsView['sort'], string> = { status: '상태(급한 순)', recent: '최근 활동', name: '이름' }
+export const SORT_LABEL: Record<AgentsView['sort'], string> = { status: '상태(급한 순)', recent: '최근 활동', name: '이름', subagents: '하위 에이전트 수' }
 export const GROUP_LABEL: Record<AgentsView['group'], string> = { none: '묶지 않음', repo: '저장소', status: '상태', agent: '에이전트', host: '호스트' }
 
 /** 지난 시간을 짧게: 12초 · 3분 · 2시간 */

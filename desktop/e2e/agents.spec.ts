@@ -103,3 +103,47 @@ test('전체 현황: 여러 이슈의 에이전트를 모아 보고 필터·정�
   await expect(page.getByRole('button', { name: '에이전트가 있는 이슈만' })).toHaveAttribute('aria-pressed', 'false')
   await expect(page.getByTestId('issue-row-etc')).toBeVisible()
 })
+
+test('Claude Code 의 하위 에이전트: 패널 머리줄에 실행 중인 수, 전체 현황에 목록 — 실행 중인 것만 필터', async ({ page }) => {
+  await page.getByTestId('issue-row-42').click()
+  await expect(page.getByTestId('terminal-pane')).toContainText('minmo mock terminal')
+  // 작업 폴더(worktree)의 경로로 세션 기록을 찾는다
+  const cwd = await page.evaluate(() => {
+    const map = JSON.parse(localStorage.getItem('minmo-ui') ?? '{}').state.worktreePathMap as Record<string, { path: string }>
+    return Object.values(map)[0].path
+  })
+  await page.evaluate(
+    ([path]) => {
+      const meta = (agentType: string, description: string, finished: boolean) => JSON.stringify({ agentType, description, finished })
+      window.__MINMO_MOCK__!.setSubagents(path, [
+        { id: 'agent-a1', meta: meta('Explore', '로그인 코드 찾기', false), updatedMs: Date.now() - 20_000 },
+        { id: 'agent-b2', meta: meta('general-purpose', '테스트 작성', false), updatedMs: Date.now() - 5_000 },
+        { id: 'agent-c3', meta: meta('general-purpose', '끝난 리뷰', true), updatedMs: Date.now() - 90_000 },
+      ])
+      window.__MINMO_MOCK__!.setPtyProcesses(1, ['claude.exe'])
+    },
+    [cwd],
+  )
+  await emit(page, 1, title('◐ 로그인 수정'))
+  await expect(page.getByTestId('pane-subagents')).toHaveText('· 하위 에이전트 2개 실행 중', { timeout: 10_000 })
+
+  await page.getByTestId('agents-button').click()
+  const dialog = page.getByRole('dialog', { name: '에이전트 현황' })
+  const subs = dialog.getByTestId('subagent-row')
+  await expect(subs).toHaveCount(3)
+  // 실행 중인 것 먼저(최근 활동순), 끝난 것은 뒤
+  await expect(subs.nth(0)).toContainText('테스트 작성')
+  await expect(subs.nth(1)).toContainText('Explore')
+  await expect(subs.nth(2)).toContainText('끝남')
+  await dialog.getByLabel('정렬').selectOption('subagents')
+  await dialog.getByRole('checkbox', { name: '하위 에이전트가 실행 중인 것만' }).check()
+  await expect(dialog.getByTestId('agent-row')).toHaveCount(1)
+  // 하위 에이전트가 모두 끝나면 필터에서 빠진다
+  await page.evaluate(
+    ([path]) => window.__MINMO_MOCK__!.setSubagents(path, [{ id: 'agent-a1', meta: JSON.stringify({ agentType: 'Explore', description: 'x', finished: true }), updatedMs: Date.now() }]),
+    [cwd],
+  )
+  await expect(dialog.getByTestId('agent-row')).toHaveCount(0, { timeout: 10_000 })
+  await dialog.getByRole('button', { name: '필터 지우기' }).click()
+  await expect(dialog.getByTestId('agent-row')).toHaveCount(1)
+})

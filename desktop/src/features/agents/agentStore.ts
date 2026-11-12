@@ -3,6 +3,7 @@ import { create } from 'zustand'
 
 import { guessProgram } from './detect'
 import type { Activity, AgentKind, TitleSignal } from './detect'
+import type { Subagent } from './subagents'
 
 /** 화면에 보이는 상태: 작업 중 · 입력 대기(사용자 확인 필요) · 끝남(아직 안 봄) · 대기 중 */
 export type AgentStatus = 'working' | 'attention' | 'done' | 'idle'
@@ -92,15 +93,32 @@ export function derive(paneId: string, sig: PaneSignals, prev: PaneAgent | null,
 
 export interface AgentState {
   panes: Record<string, PaneAgent>
+  /** 패널의 Claude Code 가 띄운 하위 에이전트들(실행 중인 것 먼저) */
+  subagents: Record<string, Subagent[]>
   set(paneId: string, next: PaneAgent | null): void
+  setSubagents(paneId: string, subs: Subagent[]): void
   clear(): void
 }
 
 const sameAgent = (a: PaneAgent, b: PaneAgent) =>
   a.agent === b.agent && a.program === b.program && a.label === b.label && a.activity === b.activity && a.unseen === b.unseen && a.since === b.since && a.lastOutputAt === b.lastOutputAt
 
+const sameSubs = (a: Subagent[], b: Subagent[]) => a.length === b.length && a.every((x, i) => x.id === b[i].id && x.finished === b[i].finished && x.updatedAt === b[i].updatedAt && x.description === b[i].description)
+
 export const useAgentStore = create<AgentState>()((set) => ({
   panes: {},
+  subagents: {},
+  setSubagents: (paneId, subs) =>
+    set((s) => {
+      const cur = s.subagents[paneId]
+      if (subs.length === 0) {
+        if (!cur) return s
+        const subagents = { ...s.subagents }
+        delete subagents[paneId]
+        return { subagents }
+      }
+      return cur && sameSubs(cur, subs) ? s : { subagents: { ...s.subagents, [paneId]: subs } }
+    }),
   set: (paneId, next) =>
     set((s) => {
       const cur = s.panes[paneId]
@@ -108,12 +126,15 @@ export const useAgentStore = create<AgentState>()((set) => ({
         if (!cur) return s
         const panes = { ...s.panes }
         delete panes[paneId]
-        return { panes }
+        // 에이전트가 없어지면 그 하위 에이전트 목록도 지운다
+        const subagents = { ...s.subagents }
+        delete subagents[paneId]
+        return { panes, subagents }
       }
       // 바뀐 것이 없으면 그대로 둔다 — 1초마다 다시 계산해도 화면을 다시 그리지 않게
       return cur && sameAgent(cur, next) ? s : { panes: { ...s.panes, [paneId]: next } }
     }),
-  clear: () => set({ panes: {} }),
+  clear: () => set({ panes: {}, subagents: {} }),
 }))
 
 /**

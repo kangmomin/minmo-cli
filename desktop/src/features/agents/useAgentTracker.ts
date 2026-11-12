@@ -2,13 +2,14 @@
 import { useEffect } from 'react'
 
 import { useBaseDeps } from '../../app/deps'
-import { aliasOfIssue } from '../../app/host'
+import { aliasOfIssue, hostOf, useHostDeps } from '../../app/host'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { STATUS_LABEL, derive, issueOfPane, useAgentStore } from './agentStore'
 import type { PaneSignals } from './agentStore'
 import { AGENT_LABEL, guessProgram, parseTitle, titleSignal } from './detect'
 import { PtyStreamParser } from './ptyStream'
+import { parseSubagentFiles } from './subagents'
 
 /** 사용자가 친 글자가 되돌아 나오는 출력(에코)은 "작업 중"으로 치지 않는다 — 입력 뒤 이 시간 안의 출력은 무시 */
 export const ECHO_MS = 400
@@ -17,6 +18,8 @@ export const DONE_BELL_MS = 1500
 const TICK_MS = 1000
 /** 이 PC 의 터미널에서 도는 프로세스를 다시 묻는 간격 */
 const PROCESS_POLL_MS = 3000
+/** Claude Code 의 하위 에이전트 목록을 다시 읽는 간격 */
+const SUBAGENT_POLL_MS = 5000
 
 const inputAt = new Map<string, number>()
 
@@ -31,9 +34,11 @@ type Tracked = PaneSignals & {
   polledAt: number
   /** 프로세스 조회가 진행 중 — 겹쳐 묻지 않는다 */
   polling: boolean
+  subPolledAt: number
+  subPolling: boolean
 }
 
-const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false })
+const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false })
 
 /** 사용자가 지금 그 이슈의 터미널을 보고 있는가 — 대화상자가 덮고 있으면 보는 것이 아니다 */
 function isViewed(issueId: string): boolean {
@@ -44,6 +49,7 @@ function isViewed(issueId: string): boolean {
 
 export function useAgentTracker() {
   const { tauri } = useBaseDeps()
+  const hostDeps = useHostDeps()
 
   useEffect(() => {
     let disposed = false
@@ -133,6 +139,26 @@ export function useAgentTracker() {
             })
         }
         update(paneId, t, now)
+        // Claude Code 가 떠 있는 패널: 세션 기록에서 하위 에이전트를 읽는다(그 패널이 있는 호스트에서)
+        const agent = useAgentStore.getState().panes[paneId]
+        if (agent?.agent !== 'claude') {
+          useAgentStore.getState().setSubagents(paneId, [])
+        } else if (!t.subPolling && now - t.subPolledAt >= SUBAGENT_POLL_MS) {
+          const cwd = useUiStore.getState().worktreePathMap[agent.issueId]?.path
+          if (cwd) {
+            t.subPolledAt = now
+            t.subPolling = true
+            void hostDeps(hostOf(aliasOfIssue(agent.issueId)))
+              .tauri.claudeSubagents(cwd)
+              .then((files) => {
+                if (!disposed && tracked.get(paneId) === t && useAgentStore.getState().panes[paneId]?.agent === 'claude') useAgentStore.getState().setSubagents(paneId, parseSubagentFiles(files))
+              })
+              .catch(() => undefined)
+              .finally(() => {
+                t.subPolling = false
+              })
+          }
+        }
       }
     }, TICK_MS)
 
@@ -152,5 +178,5 @@ export function useAgentTracker() {
       inputAt.clear()
       useAgentStore.getState().clear()
     }
-  }, [tauri])
+  }, [tauri, hostDeps])
 }

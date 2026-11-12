@@ -23,10 +23,12 @@ export type AgentsView = {
   /** 보일 에이전트 종류(빈 목록 = 전부) */
   agents: string[]
   query: string
-  sort: 'status' | 'recent' | 'name'
+  /** 하위 에이전트가 실행 중인 것만 */
+  subagentsOnly: boolean
+  sort: 'status' | 'recent' | 'name' | 'subagents'
   group: 'none' | 'repo' | 'status' | 'agent' | 'host'
 }
-export const DEFAULT_AGENTS_VIEW: AgentsView = { statuses: [], agents: [], query: '', sort: 'status', group: 'none' }
+export const DEFAULT_AGENTS_VIEW: AgentsView = { statuses: [], agents: [], query: '', subagentsOnly: false, sort: 'status', group: 'none' }
 
 export const clampFontSize = (n: unknown): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(FONT_SIZE.max, Math.max(FONT_SIZE.min, Math.round(n))) : FONT_SIZE.default
