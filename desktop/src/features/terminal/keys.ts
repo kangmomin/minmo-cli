@@ -10,6 +10,15 @@ export const PANE_KEYS = { splitRight: 'Ctrl+D', splitDown: 'Ctrl+Shift+D', clos
 /** 복사·붙여넣기 — Windows Terminal 과 같게: 선택이 있으면 Ctrl+C 는 복사, Ctrl+V 는 붙여넣기 */
 export const CLIPBOARD_KEYS = { copy: 'Ctrl+C', paste: 'Ctrl+V' } as const
 
+/**
+ * 편집 키 — xterm 은 Ctrl+Backspace 를 ^H(한 글자 지우기), Shift+Enter 를 Enter 와 같은 \r 로 보낸다.
+ * 셸(PSReadLine·bash)과 에이전트 CLI(Claude Code·Codex·Gemini)가 알아듣는 글자로 바꿔 보낸다:
+ * ^W = 앞 단어 지우기, ESC+\r(Alt+Enter) = 전송하지 않는 줄바꿈.
+ * 줄바꿈으로 \n(Ctrl+J)을 쓰지 않는 이유: Windows 의 Codex 가 무시한다(실제 CLI 로 확인 — Claude Code·Codex 는 ESC+\r 을 줄바꿈으로 읽는다).
+ */
+export const EDIT_KEYS = { deleteWord: 'Ctrl+Backspace', newline: 'Shift+Enter' } as const
+export const EDIT_KEY_DATA = { deleteWord: '\x17', newline: '\x1b\r' } as const
+
 export interface TerminalClipboard {
   /** 선택한 영역이 있는가 — 빈칸만 고르면 글자는 비어 있어도 선택은 있다 */
   hasSelection(): boolean
@@ -36,11 +45,30 @@ function isKey(e: KeyboardEvent, letter: string): boolean {
  * xterm attachCustomKeyEventHandler 용. false 를 돌려주면 xterm 이 키를 처리(셸 전송)하지 않는다.
  * 앱 단축키는 keydown 에서 1회 실행하고, keypress/keyup 도 셸로 새지 않게 막는다.
  */
-export function createTerminalKeyHandler(onExit: () => void, panes?: PaneKeyActions, clipboard?: TerminalClipboard): (e: KeyboardEvent) => boolean {
+export function createTerminalKeyHandler(
+  onExit: () => void,
+  panes?: PaneKeyActions,
+  clipboard?: TerminalClipboard,
+  /** 터미널(셸)로 글자를 보낸다 — 있으면 편집 키(EDIT_KEYS)를 바꿔 보낸다 */
+  send?: (data: string) => void,
+): (e: KeyboardEvent) => boolean {
   // 복사한 Ctrl+C 를 누르고 있는 동안에는 셸로 보내지 않는다 — 복사로 선택이 풀리면, 키 반복이 "선택 없음 = 중단"으로
   // 읽혀 실행 중인 명령을 끊게 된다
   let copying = false
   return (e) => {
+    // 한글 등 조합 중의 Enter·Backspace 는 조합을 끝내거나 지우는 키다 — 가로채지 않는다
+    if (send && !e.altKey && !e.metaKey && !e.isComposing) {
+      const data =
+        e.key === 'Backspace' && e.ctrlKey && !e.shiftKey ? EDIT_KEY_DATA.deleteWord : e.key === 'Enter' && e.shiftKey && !e.ctrlKey ? EDIT_KEY_DATA.newline : undefined
+      if (data !== undefined) {
+        // 누르고 있으면 반복된다(keydown 마다). keypress·keyup 은 셸로 새지 않게 막기만 한다
+        if (e.type === 'keydown') {
+          e.preventDefault()
+          send(data)
+        }
+        return false
+      }
+    }
     if (!e.ctrlKey || e.altKey || e.metaKey) return true
     // 글자 크기 단축키(Ctrl + / - / 0)는 앱이 처리한다(lib/fontSize.ts 의 window 단축키) — 셸로 보내지 않는다
     if (fontSizeAction(e)) return false

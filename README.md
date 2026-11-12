@@ -197,7 +197,7 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 
 상단의 테마 버튼으로 색을 바꾼다: **Ghostty**(기본 — Ghostty 터미널의 기본 색을 터미널 16색·앱 화면·파일 편집기에 쓴다) → 블랙 → 라이트. 색 값은 `desktop/src/lib/ghostty.ts` 와 `index.css` 의 `.ghostty` 에 있다.
 
-터미널의 복사·붙여넣기는 Windows Terminal 과 같다: 글자를 선택하고 **Ctrl+C** 는 복사(선택이 없으면 셸로 보내 실행 중인 명령을 중단), **Ctrl+V** 는 붙여넣기. Ctrl+Shift+C / Ctrl+Shift+V 도 된다. 패널 단축키는 Ctrl+D(오른쪽 분할)·Ctrl+Shift+D(아래 분할)·Ctrl+W(닫기)다(`desktop/src/features/terminal/keys.ts`).
+터미널의 복사·붙여넣기는 Windows Terminal 과 같다: 글자를 선택하고 **Ctrl+C** 는 복사(선택이 없으면 셸로 보내 실행 중인 명령을 중단), **Ctrl+V** 는 붙여넣기. Ctrl+Shift+C / Ctrl+Shift+V 도 된다. **Ctrl+Backspace** 는 앞 단어 지우기, **Shift+Enter** 는 전송하지 않는 줄바꿈(Claude Code·Codex 의 입력창)이다. 패널 단축키는 Ctrl+D(오른쪽 분할)·Ctrl+Shift+D(아래 분할)·Ctrl+W(닫기)다(`desktop/src/features/terminal/keys.ts`).
 
 터미널과 파일 편집기의 글자 크기는 **Ctrl +**(키우기) · **Ctrl -**(줄이기) · **Ctrl 0**(기본 13px)으로 바꾼다(9~28px, 이 PC 에 저장). 서버 설정 대화상자의 "글자 크기" 에서도 바꿀 수 있다(`desktop/src/lib/fontSize.ts`).
 

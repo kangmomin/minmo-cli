@@ -82,3 +82,27 @@ test('Ctrl + / Ctrl - / Ctrl 0 으로 터미널과 파일 편집기의 글자 �
   await page.keyboard.press('Control+0')
   await expect.poll(termSize).toBe('13px')
 })
+
+test('Ctrl+Backspace 는 단어 지우기(^W), Shift+Enter 는 줄바꿈(ESC+\\r)을 보낸다 — 그냥 Backspace·Enter 는 그대로', async ({ page }) => {
+  await page.getByLabel('터미널 입력').focus()
+  await page.keyboard.press('Control+Backspace')
+  await page.keyboard.press('Shift+Enter')
+  await page.keyboard.press('Backspace')
+  await page.keyboard.press('Enter')
+  // xterm 의 원래 글자(^H, \r)가 덧붙지 않고 한 번씩만 간다
+  await expect.poll(() => sent(page)).toEqual(['\x17', '\x1b\r', '\x7f', '\r'])
+})
+
+test('한글 조합이 끝나자마자 Shift+Enter 를 눌러도 마지막 글자가 줄바꿈보다 먼저 간다', async ({ page }) => {
+  await page.getByLabel('터미널 입력').focus()
+  // 조합 종료 직후(xterm 이 그 글자를 보내기 전)에 키가 들어오는 상황을 만든다
+  await page.evaluate(() => {
+    const ta = document.activeElement as HTMLTextAreaElement
+    ta.dispatchEvent(new CompositionEvent('compositionstart'))
+    ta.value += '글'
+    ta.dispatchEvent(new CompositionEvent('compositionupdate', { data: '글' }))
+    ta.dispatchEvent(new CompositionEvent('compositionend', { data: '글' }))
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, shiftKey: true, bubbles: true, cancelable: true }))
+  })
+  await expect.poll(() => sent(page)).toEqual(['글', '\x1b\r'])
+})
