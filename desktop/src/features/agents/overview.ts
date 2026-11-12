@@ -30,6 +30,10 @@ export type AgentRow = {
   subagents: Subagent[]
   /** 그중 실행 중인 수 */
   running: number
+  /** 이 줄의 이슈 — 다른 PC 의 화면에서 바로 열 때 쓴다(모르면 null) */
+  target: IssueTarget | null
+  /** 다른 PC 의 에이전트면 그 PC(이 PC 의 것이면 없다) */
+  peer?: { id: string; name: string }
 }
 
 export type RowContext = {
@@ -57,6 +61,7 @@ export function toRows(panes: Record<string, PaneAgent>, ctx: RowContext, subage
       lastOutputAt: p.lastOutputAt,
       subagents: subagents[p.paneId] ?? [],
       running: runningCount(subagents[p.paneId]),
+      target: t ?? null,
     }
   })
 }
@@ -93,7 +98,7 @@ const AGENT_ORDER: readonly string[] = ['claude', 'codex', 'gemini', 'other']
 export function groupRows(rows: AgentRow[], group: AgentsView['group']): AgentGroup[] {
   if (group === 'none') return [{ key: '', title: '', rows }]
   const keyOf = (r: AgentRow): [string, string] =>
-    group === 'repo' ? [r.repo, r.repo] : group === 'status' ? [r.status, STATUS_LABEL[r.status]] : group === 'agent' ? [r.agent, r.agent === 'other' ? '기타' : AGENT_LABEL[r.agent]] : [r.host ?? '', r.hostLabel]
+    group === 'repo' ? [r.repo, r.repo] : group === 'status' ? [r.status, STATUS_LABEL[r.status]] : group === 'agent' ? [r.agent, r.agent === 'other' ? '기타' : AGENT_LABEL[r.agent]] : r.peer ? [`peer:${r.peer.id}:${r.host ?? ''}`, r.hostLabel] : [r.host ?? '', r.hostLabel]
   const map = new Map<string, AgentGroup>()
   for (const r of rows) {
     const [key, title] = keyOf(r)
@@ -110,7 +115,10 @@ export function groupRows(rows: AgentRow[], group: AgentsView['group']): AgentGr
 }
 
 export const SORT_LABEL: Record<AgentsView['sort'], string> = { status: '상태(급한 순)', recent: '최근 활동', name: '이름', subagents: '하위 에이전트 수' }
-export const GROUP_LABEL: Record<AgentsView['group'], string> = { none: '묶지 않음', repo: '저장소', status: '상태', agent: '에이전트', host: '호스트' }
+export const GROUP_LABEL: Record<AgentsView['group'], string> = { none: '묶지 않음', repo: '저장소', status: '상태', agent: '에이전트', host: 'PC · 호스트' }
+
+/** 화면에서 줄을 가리는 키 — 패널 id 는 PC 마다 따로 매기므로 PC 를 함께 넣는다 */
+export const rowKey = (r: AgentRow) => `${r.peer?.id ?? ''}|${r.paneId}`
 
 /** 지난 시간을 짧게: 12초 · 3분 · 2시간 */
 export function ago(ms: number): string {

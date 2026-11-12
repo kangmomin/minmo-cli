@@ -112,6 +112,10 @@ pub fn run() {
             remote::remote_pair_cancel,
             remote::remote_device_remove,
             remote::remote_rpc_reply,
+            remote::agents_publish,
+            remote::peers_list,
+            remote::peer_add,
+            remote::peer_remove,
             remote::shared_get,
             remote::shared_set,
         ])

@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { setTauri } from '../../lib/tauri'
+import { consumeHash } from './deepLink'
 import { PairError, RemoteConnection, createRemoteTauri, pairDevice, remoteFetch, storeDeviceToken, storedDeviceToken } from '../../lib/tauri.remote'
 
 type Phase = 'connecting' | 'pair' | 'ready' | 'lost'
@@ -50,7 +51,24 @@ export function RemoteGate({ children, origin = window.location.origin }: { chil
   const [name, setName] = useState(defaultDeviceName)
   const everReady = useRef(false)
   // 토큰이 바뀌면(등록 직후) 다시 붙는다
-  const [token, setToken] = useState(storedDeviceToken)
+  const [token, setToken] = useState(() => {
+    // 다른 PC 의 minmo 앱이 이 화면을 자기 안에 열 때는 주소의 # 뒤에 기기 토큰을 붙여 준다 — 등록 화면을 건너뛴다
+    const given = consumeHash()
+    if (given) storeDeviceToken(given)
+    return given ?? storedDeviceToken()
+  })
+  // 떠 있는 동안 # 뒤가 바뀌면(다른 이슈를 열라는 요청) 다시 읽는다
+  useEffect(() => {
+    const onHash = () => {
+      const given = consumeHash()
+      if (given && given !== storedDeviceToken()) {
+        storeDeviceToken(given)
+        setToken(given)
+      }
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
   useEffect(() => {
     if (!token) {

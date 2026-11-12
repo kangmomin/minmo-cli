@@ -81,6 +81,7 @@ const ALLOWED: &[&str] = &[
     "appVersion",
     "sharedGet",
     "sharedSet",
+    "agentsSnapshot",
 ];
 /// 붙은 기기에 전달하는 앱 이벤트
 const FORWARDED_EVENTS: &[&str] = &[
@@ -89,6 +90,7 @@ const FORWARDED_EVENTS: &[&str] = &[
     "pty-resized",
     "script-log",
     "shared-changed",
+    "agents-changed",
 ];
 
 pub fn allowed(method: &str, args: &Value) -> bool {
@@ -197,6 +199,17 @@ impl Pairings {
             fails: 0,
         });
         Ok(code)
+    }
+
+    /// 개발 빌드의 격리 검증용: 정해 둔 코드로 등록을 열어 둔다(화면을 누르지 않고 등록 과정을 확인한다)
+    fn preset(&self, code: String) {
+        if let Ok(mut p) = self.0.lock() {
+            *p = Some(Pairing {
+                code,
+                expires: Instant::now() + Duration::from_secs(3600),
+                fails: 0,
+            });
+        }
     }
 
     pub fn cancel(&self) {
@@ -369,6 +382,9 @@ pub struct RemoteManager {
     /// 기기 id → 붙어 있는 연결 수
     connected: Mutex<HashMap<String, u32>>,
     http: reqwest::Client,
+    /// 이 PC 의 에이전트 현황(화면이 올려 둔 JSON 배열) — 이 PC 를 등록한 다른 PC 가 통합 현황·알림에 쓴다
+    agents: Mutex<String>,
+    peers_path: PathBuf,
 }
 
 impl RemoteManager {
@@ -390,6 +406,8 @@ impl RemoteManager {
             seq: AtomicU64::new(0),
             connected: Mutex::new(HashMap::new()),
             http: reqwest::Client::new(),
+            agents: Mutex::new("[]".to_string()),
+            peers_path: config_dir.join("peers.json"),
         }
     }
 
@@ -628,6 +646,11 @@ pub fn init(app: &AppHandle) {
         return;
     };
     app.manage(RemoteManager::new(&dirs.config));
+    if cfg!(debug_assertions) {
+        if let Ok(code) = std::env::var("MINMO_REMOTE_TEST_PAIR_CODE") {
+            app.state::<RemoteManager>().pairings.preset(code);
+        }
+    }
     for name in FORWARDED_EVENTS {
         let handle = app.clone();
         app.listen_any(*name, move |e| {
@@ -935,6 +958,10 @@ async fn call(ctx: &Ctx, method: &str, args: Value) -> Result<Value, String> {
             )
             .map(Value::from),
         "appVersion" => Ok(Value::String(app.package_info().version.to_string())),
+        "agentsSnapshot" => {
+            let raw = ctx.mgr().agents.lock().map_err(|e| e.to_string())?.clone();
+            serde_json::from_str(&raw).map_err(|e| e.to_string())
+        }
         _ => {
             // 원격 화면은 GitHub 토큰 대신 표식을 보낸다 — 명령을 실행하는 호출에서만 실제 토큰으로 바꾼다
             // (파일 쓰기 같은 호출에서는 바꾸지 않는다 — 써 놓고 읽으면 토큰이 그대로 나온다)
@@ -1185,7 +1212,7 @@ async fn asset(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
         // 같은 출처(이 서버)와만 통신한다. 다른 사이트의 틀 안에 넣지 못하게 한다
         h.insert(
             header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static("default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://avatars.githubusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors 'self'"),
+            HeaderValue::from_static("default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://avatars.githubusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors 'self' http://tauri.localhost https://tauri.localhost tauri://localhost"),
         );
     }
     resp
@@ -1273,6 +1300,202 @@ pub fn remote_device_remove(app: AppHandle, id: String) -> Result<Status, String
     Ok(mgr.status())
 }
 
+/// 이 PC 의 화면이 에이전트 현황(줄 목록)을 올린다 — 바뀌었을 때만 붙은 기기에 알린다
+#[tauri::command]
+pub fn agents_publish(app: AppHandle, rows: Value) -> Result<(), String> {
+    if !rows.is_array() {
+        return Err("에이전트 현황은 목록이어야 합니다".into());
+    }
+    let raw = rows.to_string();
+    {
+        let mgr = app.state::<RemoteManager>();
+        let mut cur = mgr.agents.lock().map_err(|e| e.to_string())?;
+        if *cur == raw {
+            return Ok(());
+        }
+        *cur = raw;
+    }
+    let _ = app.emit("agents-changed", rows);
+    Ok(())
+}
+
+// ── 다른 PC(이 PC 가 접속하는 호스트) ────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Peer {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerView {
+    id: String,
+    name: String,
+    url: String,
+    /// 그 PC 가 이 PC 에 발급한 기기 토큰(키체인에 둔다) — 이 PC 의 화면이 그 PC 에 붙을 때 쓴다
+    token: Option<String>,
+}
+
+fn peer_key(id: &str) -> String {
+    format!("minmo.peer.{id}")
+}
+
+fn load_peers(path: &Path) -> Vec<Peer> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn save_peers(path: &Path, peers: &[Peer]) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(peers).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| e.to_string())
+}
+
+fn peer_views(path: &Path) -> Vec<PeerView> {
+    load_peers(path)
+        .into_iter()
+        .map(|p| PeerView {
+            token: keychain::get(&peer_key(&p.id)).ok().flatten(),
+            id: p.id,
+            name: p.name,
+            url: p.url,
+        })
+        .collect()
+}
+
+/// 사용자가 적은 주소를 `http(s)://호스트[:포트]` 로 맞춘다. 적지 않으면 http 와 기본 포트로 본다
+pub fn normalize_peer_url(input: &str) -> Result<String, String> {
+    let t = input.trim();
+    let (scheme, rest) = match t.split_once("://") {
+        Some((s, r)) if s.eq_ignore_ascii_case("http") || s.eq_ignore_ascii_case("https") => {
+            (s.to_ascii_lowercase(), r)
+        }
+        Some(_) => return Err("주소는 http:// 또는 https:// 로 시작해야 합니다".into()),
+        None => ("http".to_string(), t),
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let ok = !host.is_empty()
+        && !host.ends_with(':')
+        && !host.contains('@')
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'));
+    if !ok {
+        return Err(format!("주소가 올바르지 않습니다: {input}"));
+    }
+    // 포트를 적지 않은 http 주소는 원격 접속의 기본 포트로 본다(https 는 tailscale serve 등 443)
+    let has_port = host
+        .rsplit_once(':')
+        .is_some_and(|(_, p)| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    if scheme == "http" && !has_port {
+        Ok(format!("http://{host}:{DEFAULT_PORT}"))
+    } else {
+        Ok(format!("{scheme}://{host}"))
+    }
+}
+
+fn this_device_name() -> String {
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_default();
+    if host.trim().is_empty() {
+        "minmo 데스크톱".to_string()
+    } else {
+        format!("{} (minmo)", host.trim())
+    }
+}
+
+#[tauri::command]
+pub fn peers_list(app: AppHandle) -> Vec<PeerView> {
+    peer_views(&app.state::<RemoteManager>().peers_path)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerInput {
+    url: String,
+    code: String,
+    #[serde(default)]
+    name: String,
+}
+
+/// 다른 PC 를 등록한다: 그 PC 의 화면에 뜬 6자리 코드로 이 PC 를 기기로 등록하고, 받은 토큰을 키체인에 둔다
+#[tauri::command]
+pub async fn peer_add(app: AppHandle, input: PeerInput) -> Result<Vec<PeerView>, String> {
+    let url = normalize_peer_url(&input.url)?;
+    let (http, path) = {
+        let mgr = app.state::<RemoteManager>();
+        (mgr.http.clone(), mgr.peers_path.clone())
+    };
+    let res = http
+        .post(format!("{url}/pair"))
+        .timeout(Duration::from_secs(10))
+        .json(&json!({ "code": input.code.trim(), "name": this_device_name() }))
+        .send()
+        .await
+        .map_err(|e| format!("{url} 에 연결할 수 없습니다 — 주소와 그 PC 의 원격 접속이 켜져 있는지 확인하세요 ({e})"))?;
+    let status = res.status();
+    let body = res.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+        return Err(match (body.as_str(), v.get("error").and_then(Value::as_str)) {
+            ("pair_not_open", _) => "등록 코드가 만료되었거나 이미 사용되었습니다 — 그 PC 의 [원격 접속] 에서 새 코드를 받으세요".into(),
+            ("not_enabled", _) => "그 PC 의 원격 접속이 꺼져 있습니다".into(),
+            (_, Some("pair_wrong_code")) => match v.get("left").and_then(Value::as_u64) {
+                Some(n) if n > 0 => format!("코드가 맞지 않습니다(남은 시도 {n}번)"),
+                _ => "코드를 여러 번 틀려 무효가 되었습니다 — 새 코드를 받으세요".into(),
+            },
+            _ => format!("등록하지 못했습니다({status})"),
+        });
+    }
+    let token = serde_json::from_str::<Value>(&body)
+        .ok()
+        .and_then(|v| v.get("token").and_then(Value::as_str).map(str::to_string))
+        .ok_or("그 PC 의 응답을 읽을 수 없습니다(minmo 가 아니거나 버전이 다릅니다)")?;
+    let id: String = random_bytes::<8>()?
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    keychain::set(&peer_key(&id), &token)?;
+    let name: String = input
+        .name
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(40)
+        .collect();
+    let mut peers = load_peers(&path);
+    // 같은 주소를 다시 등록하면 바꿔 넣는다(토큰이 새로 발급됐다)
+    for old in peers.iter().filter(|p| p.url == url) {
+        let _ = keychain::delete(&peer_key(&old.id));
+    }
+    peers.retain(|p| p.url != url);
+    peers.push(Peer {
+        id,
+        name: if name.is_empty() { url.clone() } else { name },
+        url,
+    });
+    save_peers(&path, &peers)?;
+    Ok(peer_views(&path))
+}
+
+#[tauri::command]
+pub fn peer_remove(app: AppHandle, id: String) -> Result<Vec<PeerView>, String> {
+    let path = app.state::<RemoteManager>().peers_path.clone();
+    let mut peers = load_peers(&path);
+    peers.retain(|p| p.id != id);
+    save_peers(&path, &peers)?;
+    let _ = keychain::delete(&peer_key(&id));
+    Ok(peer_views(&path))
+}
+
 /// 화면이 맡은 호출의 결과를 돌려준다
 #[tauri::command]
 pub fn remote_rpc_reply(app: AppHandle, id: u64, ok: bool, value: Value) {
@@ -1311,6 +1534,45 @@ pub fn shared_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peer_urls_are_normalized_to_scheme_host_port() {
+        let ok = |i: &str| normalize_peer_url(i).unwrap();
+        assert_eq!(ok("100.64.0.5"), "http://100.64.0.5:8790");
+        assert_eq!(ok(" http://my-pc:9000/ "), "http://my-pc:9000");
+        assert_eq!(
+            ok("HTTPS://my-pc.tail1234.ts.net/some/path?x=1"),
+            "https://my-pc.tail1234.ts.net"
+        );
+        assert_eq!(ok("my-pc"), "http://my-pc:8790");
+        for bad in [
+            "",
+            "ftp://x",
+            "http://",
+            "http://user@host",
+            "http://a b",
+            "javascript:alert(1)",
+        ] {
+            assert!(normalize_peer_url(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn peers_file_round_trips_without_tokens() {
+        let dir = std::env::temp_dir().join(format!("minmo-peers-test-{}", now_ms()));
+        let path = dir.join("peers.json");
+        assert!(load_peers(&path).is_empty());
+        let peers = vec![Peer {
+            id: "a1".into(),
+            name: "회사 PC".into(),
+            url: "http://100.64.0.5:8790".into(),
+        }];
+        save_peers(&path, &peers).unwrap();
+        assert_eq!(load_peers(&path), peers);
+        // 토큰은 키체인에만 둔다 — 파일에는 없다
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("token"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn pairing_code_is_single_use_and_locks_after_wrong_tries() {

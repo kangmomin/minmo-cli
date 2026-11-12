@@ -1,0 +1,176 @@
+// 여러 PC — 다른 PC 의 현황 받기·알림, 그 PC 의 화면 주소, 주소 # 뒤 처리, 등록 화면, 통합 현황의 묶기
+import { act, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { IssueTarget } from '@minmo/core'
+
+import type { Peer, Unlisten } from '../../lib/tauri'
+import type { RemoteConnection, RemoteLink } from '../../lib/tauri.remote'
+import { usePeersStore } from '../../store/peers'
+import { useUiStore } from '../../store/ui'
+import { createFakeTauri } from '../../test/fakes'
+import { makeDeps, renderHookWithDeps, renderWithDeps } from '../../test/render'
+import { groupRows, rowKey } from '../agents/overview'
+import type { AgentRow } from '../agents/overview'
+import { consumeHash, parseHash } from './deepLink'
+import { newlyUrgent, parsePeerRows, usePeerAgents, usePeerAgentsStore } from './peerAgents'
+import { peerSrc } from './PeerView'
+import { RemoteAccessDialog } from './RemoteAccessDialog'
+
+const PEER: Peer = { id: 'p1', name: '회사 PC', url: 'http://100.64.0.5:8790', token: 'tok' }
+const TARGET: IssueTarget = { owner: 'acme', repo: 'app', key: '42', number: 42, title: 'Add login' }
+const raw = (o: Record<string, unknown> = {}) => ({ paneId: 'acme/app#42::1', issueId: 'acme/app#42', host: null, hostLabel: '이 PC', repo: 'acme/app', issue: '#42 Add login', agent: 'claude', agentLabel: 'Claude Code', label: '', status: 'working', since: 1, lastOutputAt: 2, subagents: [], running: 0, target: TARGET, ...o })
+
+beforeEach(() => {
+  usePeersStore.setState({ peers: [], activeId: null, open: null })
+  usePeerAgentsStore.setState({ rows: {}, online: {} })
+  useUiStore.setState({ agentNotify: true })
+})
+
+describe('parsePeerRows · newlyUrgent', () => {
+  it('다른 PC 의 줄에는 그 PC 를 표시하고, 호스트 이름은 PC 이름(그 PC 의 SSH 호스트면 함께)으로 바꾼다', () => {
+    const rows = parsePeerRows([raw(), raw({ paneId: 'x', host: 'srv' })], PEER)
+    expect(rows[0]).toMatchObject({ hostLabel: '회사 PC', peer: { id: 'p1', name: '회사 PC' }, target: TARGET, status: 'working' })
+    expect(rows[1].hostLabel).toBe('회사 PC · srv')
+  })
+
+  it('모양이 맞지 않는 줄은 버린다(다른 PC 가 보낸 값을 그대로 믿지 않는다)', () => {
+    expect(parsePeerRows('nope', PEER)).toEqual([])
+    expect(parsePeerRows([null, 3, { paneId: 1 }, raw({ status: 'exploded' }), raw({ agent: 'weird', since: 'x' })], PEER)).toMatchObject([{ agent: 'other', since: 0 }])
+  })
+
+  it('방금 끝났거나 입력을 기다리게 된 줄만 알림 대상이다 — 처음 보는 줄·그대로인 줄·기타 프로그램은 아니다', () => {
+    const row = (paneId: string, status: string, agent = 'claude') => parsePeerRows([raw({ paneId, status, agent })], PEER)[0]
+    const prev = [row('a', 'working'), row('b', 'done'), row('c', 'working'), row('d', 'working', 'other')]
+    const next = [row('a', 'done'), row('b', 'done'), row('c', 'attention'), row('d', 'done', 'other'), row('new', 'done')]
+    expect(newlyUrgent(prev, next).map((r) => r.paneId)).toEqual(['a', 'c'])
+  })
+})
+
+describe('usePeerAgents: 등록한 PC 에 붙어 현황을 받는다', () => {
+  /** RemoteConnection 대신 — 붙기·이벤트·끊김을 테스트에서 직접 일으킨다 */
+  function fakeConn(snapshot: unknown) {
+    const handlers = new Map<string, (p: unknown) => void>()
+    let link: (l: RemoteLink) => void = () => {}
+    const conn = {
+      on: (event: string, cb: (p: unknown) => void): Unlisten => (handlers.set(event, cb), () => handlers.delete(event)),
+      onLink: (cb: (l: RemoteLink) => void): Unlisten => ((link = cb), () => {}),
+      connect: async () => {},
+      call: vi.fn(async () => snapshot),
+      close: vi.fn(),
+    }
+    return { conn: conn as unknown as RemoteConnection, emit: (e: string, p: unknown) => handlers.get(e)?.(p), setLink: (l: RemoteLink) => link(l), raw: conn }
+  }
+
+  it('붙으면 지금 현황을 받고(알리지 않는다), 그 뒤 끝난 에이전트를 PC 이름과 함께 알린다', async () => {
+    const fake = createFakeTauri({ runtime: 'native', peersList: async () => [PEER] })
+    const c = fakeConn([raw()])
+    const connect = vi.fn(() => c.conn)
+    renderHookWithDeps(() => usePeerAgents(fake.tauri, connect), makeDeps({ tauri: fake.tauri }))
+    await waitFor(() => expect(usePeerAgentsStore.getState().rows.p1).toHaveLength(1))
+    expect(connect).toHaveBeenCalledWith('http://100.64.0.5:8790', 'tok')
+    expect(usePeerAgentsStore.getState().online.p1).toBe(true)
+    expect(fake.tauri.notify).not.toHaveBeenCalled()
+
+    act(() => c.emit('agents-changed', [raw({ status: 'done' })]))
+    expect(usePeerAgentsStore.getState().rows.p1[0].status).toBe('done')
+    expect(fake.tauri.notify).toHaveBeenCalledWith('회사 PC: Claude Code — 끝남', 'acme/app #42 Add login')
+    // 알림을 꺼 두었으면 알리지 않는다
+    useUiStore.setState({ agentNotify: false })
+    act(() => c.emit('agents-changed', [raw({ status: 'working' })]))
+    act(() => c.emit('agents-changed', [raw({ status: 'attention' })]))
+    expect(fake.tauri.notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('끊기면 그 PC 의 줄을 비우고 연결 안 됨으로 표시한다 · 토큰이 없는 PC 는 붙지 않는다', async () => {
+    const fake = createFakeTauri({ runtime: 'native', peersList: async () => [PEER, { ...PEER, id: 'p2', token: null }] })
+    const c = fakeConn([raw()])
+    const connect = vi.fn(() => c.conn)
+    renderHookWithDeps(() => usePeerAgents(fake.tauri, connect), makeDeps({ tauri: fake.tauri }))
+    await waitFor(() => expect(usePeerAgentsStore.getState().rows.p1).toHaveLength(1))
+    expect(connect).toHaveBeenCalledTimes(1)
+    act(() => c.setLink('closed'))
+    expect(usePeerAgentsStore.getState()).toMatchObject({ online: { p1: false }, rows: { p1: [] } })
+  })
+
+  it('원격 화면(다른 기기의 브라우저)에서는 하지 않는다', async () => {
+    const fake = createFakeTauri({ runtime: 'remote', peersList: async () => [PEER] })
+    const connect = vi.fn()
+    usePeersStore.setState({ peers: [PEER] })
+    renderHookWithDeps(() => usePeerAgents(fake.tauri, connect), makeDeps({ tauri: fake.tauri }))
+    await Promise.resolve()
+    expect(connect).not.toHaveBeenCalled()
+    expect(fake.tauri.peersList).not.toHaveBeenCalled()
+  })
+})
+
+describe('그 PC 의 화면 열기(주소 # 뒤)', () => {
+  it('기기 토큰과 열 곳은 # 뒤에 붙인다(서버로 보내지지 않는다)', () => {
+    expect(peerSrc(PEER, null)).toBe('http://100.64.0.5:8790/#device=tok')
+    const src = peerSrc(PEER, { target: TARGET, paneId: 'acme/app#42::2', token: 3 })
+    expect(src.startsWith('http://100.64.0.5:8790/#')).toBe(true)
+    expect(parseHash(new URL(src).hash)).toEqual({ device: 'tok', open: { target: TARGET, paneId: 'acme/app#42::2' } })
+  })
+
+  it('모양이 맞지 않는 "열 곳"은 무시한다', () => {
+    expect(parseHash('#device=t&open=not-json')).toEqual({ device: 't', open: null })
+    expect(parseHash('#open=' + encodeURIComponent(JSON.stringify({ target: { owner: 'a' } })))).toEqual({ device: null, open: null })
+    expect(parseHash('')).toEqual({ device: null, open: null })
+  })
+
+  it('읽은 뒤 주소에서 지운다(토큰이 주소창·기록에 남지 않게)', () => {
+    const replaceState = vi.fn()
+    const win = { location: { hash: '#device=tok', pathname: '/', search: '' }, history: { replaceState }, dispatchEvent: vi.fn() } as unknown as Window
+    expect(consumeHash(win)).toBe('tok')
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/')
+    expect(consumeHash({ ...win, location: { hash: '', pathname: '/', search: '' } } as unknown as Window)).toBeNull()
+  })
+})
+
+describe('통합 현황: PC 로 묶기', () => {
+  it('이 PC 가 먼저, 다른 PC 는 PC 별로 묶이고 같은 패널 id 라도 줄이 섞이지 않는다', () => {
+    const mine = { ...parsePeerRows([raw()], PEER)[0], peer: undefined, hostLabel: '이 PC' } as AgentRow
+    const theirs = parsePeerRows([raw()], PEER)[0]
+    const other = parsePeerRows([raw()], { id: 'p2', name: '집 PC' })[0]
+    const groups = groupRows([theirs, mine, other], 'host')
+    expect(groups.map((g) => g.title)).toEqual(['이 PC', '집 PC', '회사 PC'])
+    expect(new Set([mine, theirs, other].map(rowKey)).size).toBe(3)
+  })
+})
+
+describe('다른 PC 등록 화면', () => {
+  it('주소·코드로 등록하면 목록에 나오고, 삭제할 수 있다 · 실패 사유를 보여 준다', async () => {
+    let peers: Peer[] = []
+    const fake = createFakeTauri({
+      peersList: async () => peers,
+      peerAdd: async (input) => {
+        if (input.code !== '482913') throw new Error('코드가 맞지 않습니다(남은 시도 4번)')
+        peers = [{ id: 'p1', name: input.name, url: input.url, token: 't' }]
+        return peers
+      },
+      peerRemove: async () => (peers = []),
+    })
+    renderWithDeps(<RemoteAccessDialog open onOpenChange={() => {}} />, makeDeps({ tauri: fake.tauri }))
+    const user = userEvent.setup()
+    const submit = await screen.findByRole('button', { name: 'PC 등록' })
+    expect(submit).toBeDisabled()
+    await user.type(screen.getByLabelText('그 PC 의 주소'), 'http://100.64.0.5:8790')
+    await user.type(screen.getByLabelText('등록 코드'), '111111')
+    await user.type(screen.getByLabelText('이름(선택)'), '회사 PC')
+    await user.click(submit)
+    expect(await screen.findByText('코드가 맞지 않습니다(남은 시도 4번)')).toBeInTheDocument()
+    await user.clear(screen.getByLabelText('등록 코드'))
+    await user.type(screen.getByLabelText('등록 코드'), '482 913')
+    await user.click(submit)
+    const item = await screen.findByTestId('peer')
+    expect(item).toHaveTextContent('회사 PC')
+    expect(item).toHaveTextContent('연결 안 됨')
+    expect(fake.tauri.peerAdd).toHaveBeenLastCalledWith({ url: 'http://100.64.0.5:8790', code: '482913', name: '회사 PC' })
+    expect(usePeersStore.getState().peers).toHaveLength(1)
+    // 등록한 뒤 입력란을 비운다
+    expect(screen.getByLabelText('그 PC 의 주소')).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: /삭제/ }))
+    await waitFor(() => expect(screen.queryByTestId('peer')).toBeNull())
+  })
+})

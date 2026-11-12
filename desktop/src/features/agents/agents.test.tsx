@@ -202,7 +202,7 @@ describe('derive: 신호 → 현황', () => {
 })
 
 describe('전체 현황: 줄·필터·정렬·그루핑', () => {
-  const row = (o: Partial<AgentRow>): AgentRow => ({ paneId: 'p', issueId: 'i', host: null, hostLabel: '이 PC', repo: 'acme/app', issue: '#1 A', agent: 'claude', agentLabel: 'Claude Code', label: '', status: 'idle', since: 0, lastOutputAt: 0, subagents: [], running: 0, ...o })
+  const row = (o: Partial<AgentRow>): AgentRow => ({ target: null, paneId: 'p', issueId: 'i', host: null, hostLabel: '이 PC', repo: 'acme/app', issue: '#1 A', agent: 'claude', agentLabel: 'Claude Code', label: '', status: 'idle', since: 0, lastOutputAt: 0, subagents: [], running: 0, ...o })
   const rows = [
     row({ paneId: 'p1', repo: 'acme/app', issue: '#10 Login', status: 'working', since: 300, lastOutputAt: 900 }),
     row({ paneId: 'p2', repo: 'acme/app', issue: '#2 Docs', agent: 'codex', agentLabel: 'Codex', status: 'done', since: 500 }),

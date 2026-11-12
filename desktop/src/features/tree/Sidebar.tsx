@@ -12,6 +12,7 @@ import { Button } from '../../components/ui/button'
 import { ScrollArea } from '../../components/ui/scroll-area'
 import { sshErrorText } from '../../lib/sshHost'
 import { useHostsStore } from '../../store/hosts'
+import { usePeersStore } from '../../store/peers'
 import { LOCAL_OWNER, splitFullName, useReposStore } from '../../store/repos'
 import { useUiStore } from '../../store/ui'
 import { HostsDialog } from '../hosts/HostsDialog'
@@ -36,8 +37,12 @@ export interface SidebarProps {
 }
 
 /** 좌측 트리: 개인 계정(첫 노드) → 조직 → 저장소 → ★기타 + 이슈 (AC-03) */
+/** 호스트 선택 값에서 다른 PC 를 가리는 접두어(SSH 호스트 별칭과 겹치지 않는다) */
+const PEER_PREFIX = 'peer:'
+
 export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: SidebarProps & { className?: string }) {
   const aliases = useHostsStore((s) => s.aliases)
+  const peers = usePeersStore((s) => s.peers)
   const [hostsOpen, setHostsOpen] = useState(false)
   const { selected } = connection
   const owners = useOwners()
@@ -88,7 +93,11 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
           data-testid="host-select"
           className="h-7 min-w-0 flex-1 rounded border bg-background px-1.5 text-sm"
           value={selected ?? ''}
-          onChange={(e) => void connection.connect(e.target.value === '' ? null : e.target.value)}
+          onChange={(e) => {
+            // 다른 PC(minmo 가 깔린 PC)는 그 PC 의 화면을 통째로 연다
+            if (e.target.value.startsWith(PEER_PREFIX)) return usePeersStore.getState().setActive(e.target.value.slice(PEER_PREFIX.length))
+            void connection.connect(e.target.value === '' ? null : e.target.value)
+          }}
         >
           <option value="">이 PC</option>
           {aliases.map((a) => (
@@ -96,6 +105,15 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
               {a}
             </option>
           ))}
+          {peers.length > 0 && (
+            <optgroup label="다른 PC">
+              {peers.map((p) => (
+                <option key={p.id} value={PEER_PREFIX + p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
           {/* 목록에서 뺀 호스트가 아직 선택돼 있어도 값이 비지 않게 */}
           {selected !== null && !aliases.includes(selected) && <option value={selected}>{selected}</option>}
         </select>

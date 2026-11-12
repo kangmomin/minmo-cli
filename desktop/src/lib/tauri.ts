@@ -52,6 +52,9 @@ export type RemoteRpcRequest = { id: number; method: string; args: unknown[] }
 export type SharedChangedEvent = { key: string; origin: string; rev?: number }
 /** rev: 판 번호 — 저장할 때마다 오른다 */
 export type SharedValue = { value: string | null; rev: number }
+/** 다른 PC(이 PC 가 접속하는 minmo 호스트). token 은 그 PC 가 이 PC 에 발급한 기기 토큰(키체인에 둔다) */
+export type Peer = { id: string; name: string; url: string; token: string | null }
+export type PeerInput = { url: string; code: string; name: string }
 /** native = Tauri 창, remote = 다른 기기의 브라우저(호스트에 붙음), mock = 개발·테스트 */
 export type RuntimeKind = 'native' | 'remote' | 'mock'
 
@@ -124,6 +127,12 @@ export interface TauriApi extends WorktreeHost, GhHost {
   /** 기기가 등록·접속·끊김 */
   onRemoteChanged(cb: () => void): Promise<Unlisten>
   onRemoteRpc(cb: (req: RemoteRpcRequest) => void): Promise<Unlisten>
+  /** 다른 PC 등록·삭제 — 그 PC 의 화면에 뜬 6자리 코드로 이 PC 를 기기로 등록한다. 전체 목록을 돌려준다 */
+  peersList(): Promise<Peer[]>
+  peerAdd(input: PeerInput): Promise<Peer[]>
+  peerRemove(id: string): Promise<Peer[]>
+  /** 이 PC 의 에이전트 현황(줄 목록)을 올려 둔다 — 이 PC 를 등록한 다른 PC 가 받아 간다 */
+  agentsPublish(rows: unknown[]): Promise<void>
   remoteRpcReply(id: number, ok: boolean, value: unknown): Promise<void>
 
   scriptRun(req: ScriptRunRequest): Promise<ScriptRunResult>
@@ -264,6 +273,10 @@ export const TAURI_COMMANDS = {
   remotePairCancel: 'remote_pair_cancel',
   remoteDeviceRemove: 'remote_device_remove',
   remoteRpcReply: 'remote_rpc_reply',
+  peersList: 'peers_list',
+  peerAdd: 'peer_add',
+  peerRemove: 'peer_remove',
+  agentsPublish: 'agents_publish',
 } as const
 
 export const TAURI_EVENTS = {
@@ -277,6 +290,7 @@ export const TAURI_EVENTS = {
   sharedChanged: 'shared-changed',
   remoteChanged: 'remote-changed',
   remoteRpc: 'remote-rpc',
+  agentsChanged: 'agents-changed',
 } as const
 
 /** @tauri-apps/api invoke 기반 실제 구현 */
@@ -309,6 +323,10 @@ export function createTauriApi(): TauriApi {
     onRemoteChanged: async (cb) => (await event()).listen(TAURI_EVENTS.remoteChanged, () => cb()),
     onRemoteRpc: async (cb) => (await event()).listen<RemoteRpcRequest>(TAURI_EVENTS.remoteRpc, (e) => cb(e.payload)),
     remoteRpcReply: (id, ok, value) => call(C.remoteRpcReply, { id, ok, value: value ?? null }),
+    peersList: () => call(C.peersList),
+    peerAdd: (input) => call(C.peerAdd, { input }),
+    peerRemove: (id) => call(C.peerRemove, { id }),
+    agentsPublish: (rows) => call(C.agentsPublish, { rows }),
     ptyWrite: (id, data) => call(C.ptyWrite, { id, data }),
     ptyResize: (id, cols, rows) => call(C.ptyResize, { id, cols, rows }),
     ptyKill: (id) => call(C.ptyKill, { id }),
