@@ -20,7 +20,7 @@ const (
 	DefaultGitHubAPIBase   = "https://api.github.com"
 	// DefaultGitHubClientID 는 minmo 용 GitHub OAuth App(Device Flow 사용)의 Client ID 다.
 	// 기기 코드 방식은 Secret 이 필요 없어, 공개 값인 Client ID 만 넣어 배포한다. 비어 있으면 로그인할 수 없다.
-	DefaultGitHubClientID = ""
+	DefaultGitHubClientID = "Ov23liLmWrDkfGxfGZUM"
 )
 
 // DefaultCORSOrigins 는 MINMO_CORS_ORIGINS 미설정 시 허용 Origin(A-P04)이다.
