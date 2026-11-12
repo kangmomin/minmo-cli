@@ -68,10 +68,12 @@ describe('CT-21 메서드별 method · URL · Authorization', () => {
     expect(calls[0].headers.authorization).toBe('Bearer tok')
   })
 
-  it('startLogin 은 토큰이 있어도 Authorization 을 보내지 않는다 (E1 무인증)', async () => {
-    const { api, calls } = setup(() => json(200, { authorizeUrl: 'https://github.com/login/oauth/authorize?x', state: 's' }))
-    await api.startLogin()
+  it('기기 코드 로그인(E1·E2)은 토큰이 있어도 Authorization 을 보내지 않는다 (무인증)', async () => {
+    const { api, calls } = setup(() => json(200, { status: 'pending', interval: 5 }))
+    await api.startDeviceLogin()
+    await api.pollDeviceLogin('dev-1')
     expect(calls[0].headers.authorization).toBeUndefined()
+    expect(calls[1].headers.authorization).toBeUndefined()
   })
 
   it('healthz 는 토큰이 있어도 Authorization 을 보내지 않는다 (E0 무인증)', async () => {
@@ -144,7 +146,7 @@ describe('CT-21 비2xx → ApiError 변환 세부', () => {
 
   it('503 github_oauth_not_configured (E1)', async () => {
     const { api } = setup(() => json(503, { error: 'github_oauth_not_configured' }))
-    const err = (await api.startLogin().catch((e: unknown) => e)) as ApiError
+    const err = (await api.startDeviceLogin().catch((e: unknown) => e)) as ApiError
     expect(err).toMatchObject({ status: 503, code: 'github_oauth_not_configured' })
   })
 

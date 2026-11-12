@@ -38,10 +38,10 @@ export type ErrorCode =
   | 'invalid_json'
   | 'invalid_path_param'
   | 'github_oauth_not_configured'
-  | 'invalid_state'
-  | 'missing_code'
   | 'access_denied'
-  | 'invalid_code'
+  | 'device_code_expired'
+  | 'login_failed'
+  | 'forbidden_origin'
   | 'github_unavailable'
   | 'global_requires_all_fields'
   | 'invalid_template'
@@ -55,14 +55,16 @@ export type ErrorCode =
   | 'invalid_base_updated_at'
   | 'conflict'
 export type ApiErrorCode = ErrorCode | 'network_error' | 'server_error' | 'http_error'
-export type DeepLinkError = 'invalid_state' | 'access_denied' | 'invalid_code' | 'missing_code' | 'github_unavailable' | 'internal'
 
 export type SettingsScope =
   | { kind: 'global' }
   | { kind: 'org'; owner: string }
   | { kind: 'project'; owner: string; repo: string }
 
-export type LoginStart = { authorizeUrl: string; state: string }
+/** 기기 코드 로그인 시작(E1). 사용자가 verificationUri 에서 userCode 를 입력해 승인한다. expiresIn·interval 은 초 */
+export type DeviceLoginStart = { deviceId: string; userCode: string; verificationUri: string; expiresIn: number; interval: number }
+/** 승인 확인(E2). pending 이면 interval 초 뒤에 다시 확인한다 */
+export type DeviceLoginPoll = { status: 'pending'; interval: number } | { status: 'ok'; session: string }
 export type GithubToken = { accessToken: string }
 export type Health = { status: 'ok' }
 /** me/getGithubToken/logout 전용: 로그인 확정 전 후보 세션 검증(CT-35) */

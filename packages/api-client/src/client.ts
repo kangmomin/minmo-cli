@@ -1,13 +1,14 @@
 import { ApiError } from './errors'
 import type {
   ApiErrorCode,
+  DeviceLoginPoll,
+  DeviceLoginStart,
   CliCode,
   CliExchange,
   Effective,
   ErrorCode,
   GithubToken,
   Health,
-  LoginStart,
   Me,
   Notes,
   NotesInput,
@@ -29,7 +30,10 @@ export type ApiClientOptions = {
 
 export interface ApiClient {
   healthz(): Promise<Health>
-  startLogin(): Promise<LoginStart>
+  /** GitHub 기기 코드 로그인을 시작한다(무인증) */
+  startDeviceLogin(): Promise<DeviceLoginStart>
+  /** 승인 여부를 확인한다(무인증). 만료·거부는 ApiError(device_code_expired·access_denied) */
+  pollDeviceLogin(deviceId: string): Promise<DeviceLoginPoll>
   me(opts?: TokenOverride): Promise<Me>
   getGithubToken(opts?: TokenOverride): Promise<GithubToken>
   /** 204·401 모두 resolve(undefined) */
@@ -60,10 +64,10 @@ const ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'invalid_json',
   'invalid_path_param',
   'github_oauth_not_configured',
-  'invalid_state',
-  'missing_code',
   'access_denied',
-  'invalid_code',
+  'device_code_expired',
+  'login_failed',
+  'forbidden_origin',
   'github_unavailable',
   'global_requires_all_fields',
   'invalid_template',
@@ -171,7 +175,8 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
 
   return {
     healthz: () => request<Health>('/healthz', { auth: false }),
-    startLogin: () => request<LoginStart>('/auth/github/start', { method: 'POST', auth: false }),
+    startDeviceLogin: () => request<DeviceLoginStart>('/auth/github/device/start', { method: 'POST', auth: false }),
+    pollDeviceLogin: (deviceId) => request<DeviceLoginPoll>('/auth/github/device/poll', { method: 'POST', auth: false, body: { deviceId } }),
     me: (o) => request<Me>('/me', { token: o?.token }),
     getGithubToken: (o) => request<GithubToken>('/me/github-token', { token: o?.token }),
     logout: async (o) => {

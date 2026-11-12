@@ -1,44 +1,28 @@
 // 실연결 스모크 (Phase 8.2, Shared Plan 통합 순서) — 실제 minmo 서버 + githubmock + vite dev(VITE_TAURI_MOCK=1)
-// 로그인(E1 실호출 → githubmock authorize 302 → 서버 콜백 302 의 딥링크 주입) → 트리 → 프로젝트 설정 저장(실 PUT)
+// 로그인(E1 실호출 → 기기 코드 표시 → githubmock 이 바로 승인 → 앱이 E2 로 확인) → 트리 → 프로젝트 설정 저장(실 PUT)
 // → 메모 저장 → 다른 기기(같은 세션 Node 요청) 수정 → 409 모달.
 // 기본 `npm run e2e` 에는 포함되지 않는다(playwright.config.ts testIgnore). 서버 기동은 호출자 몫.
 import { expect, test } from '@playwright/test'
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
 
 import { routeGitHub } from './fixtures'
 
 const LIVE_SERVER = (process.env.MINMO_LIVE_SERVER ?? 'http://127.0.0.1:8787').replace(/\/+$/, '')
 const NOTES_PATH = '/projects/my-org/widgets/issues/42/notes'
 
-/** 302 Location 을 따라가지 않고 그대로 읽는다 */
-async function location(request: APIRequestContext, url: string): Promise<string> {
-  const res = await request.get(url, { maxRedirects: 0 })
-  expect(res.status(), `${url} → 302 기대`).toBe(302)
-  const loc = res.headers()['location']
-  expect(loc, `${url} 응답에 Location 없음`).toBeTruthy()
-  return new URL(loc, url).toString()
-}
-
-/** E1 → (mock 브라우저) authorizeUrl → githubmock 302 → 서버 콜백 302 → minmo://auth?session&state 딥링크 주입 */
-async function liveLogin(page: Page, request: APIRequestContext): Promise<string> {
+/** E1 → 코드 표시 → (githubmock 이 바로 승인) → 앱이 E2 로 확인해 로그인. 세션 토큰은 앱이 키체인(mock)에 저장한 값을 읽는다 */
+async function liveLogin(page: Page): Promise<string> {
   await page.goto('/')
   await expect(page).toHaveURL(/\/login$/)
   await page.getByRole('button', { name: 'GitHub로 로그인' }).click()
-  await expect(page.getByText('브라우저에서 GitHub 승인 중')).toBeVisible()
-  await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__?.openedUrls.length ?? 0)).toBe(1)
-  const authorizeUrl = await page.evaluate(() => window.__MINMO_MOCK__?.openedUrls[0] ?? '')
-
-  const callback = await location(request, authorizeUrl)
-  expect(callback.startsWith(`${LIVE_SERVER}/auth/github/callback`), `콜백 주소가 서버가 아님: ${callback}`).toBe(true)
-  const deepLink = await location(request, callback)
-  expect(deepLink).toMatch(/^minmo:\/\/auth\?/)
-  const session = new URL(deepLink).searchParams.get('session')
-  expect(session, '딥링크에 session 없음').toBeTruthy()
-
-  await page.evaluate((url) => window.__MINMO_MOCK__?.emitDeepLink(url), deepLink)
-  await expect(page.getByRole('button', { name: '전역 설정' })).toBeVisible()
+  await expect(page.getByTestId('device-user-code')).toHaveText('MOCK-CODE')
+  // 승인 페이지 주소는 githubmock 의 것(loopback) — 앱은 이 주소를 브라우저로 연다
+  await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__?.openedUrls[0] ?? '')).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/login\/device$/)
+  await expect(page.getByRole('button', { name: '전역 설정' })).toBeVisible({ timeout: 15_000 })
   await expect(page).toHaveURL(/\/$/)
-  return session!
+  const session = await page.evaluate(() => window.__MINMO_MOCK__?.keychain['minmo.session'] ?? '')
+  expect(session, '키체인에 세션 없음').toBeTruthy()
+  return session
 }
 
 test.beforeAll(async ({ request }) => {
@@ -53,7 +37,7 @@ test('실서버: 로그인 → 트리 → 프로젝트 설정 저장 → 메모 
   await routeGitHub(page)
 
   // 1) 로그인
-  const session = await liveLogin(page, request)
+  const session = await liveLogin(page)
   const auth = { Authorization: `Bearer ${session}` }
 
   // 2) 트리

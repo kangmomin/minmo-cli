@@ -40,18 +40,15 @@ export type ServerState = 'starting' | 'running' | 'failed' | 'stopped' | 'exter
 export type ServerStatus = { state: ServerState; port: number; message: string | null }
 /** 창을 닫을 때: 매번 묻기 · 트레이로 숨기기(서버 유지) · 종료 */
 export type CloseAction = 'ask' | 'tray' | 'quit'
-/** 서버 설정 — Client Secret 은 돌려주지 않고 저장 여부만 */
+/** 서버 설정(포트·창 닫기 동작) */
 export type ServerSettings = {
   port: number
-  githubClientId: string
-  hasClientSecret: boolean
   closeAction: CloseAction
-  callbackUrl: string
   /** 설정 파일이 깨져 기본값으로 시작한 경우 등 */
   warning: string | null
 }
-/** 바꿀 값만. githubClientSecret 이 빈 문자열이면 지운다 */
-export type ServerSettingsInput = Partial<Pick<ServerSettings, 'port' | 'githubClientId' | 'closeAction'>> & { githubClientSecret?: string }
+/** 바꿀 값만 */
+export type ServerSettingsInput = Partial<Pick<ServerSettings, 'port' | 'closeAction'>>
 
 /** 새 버전 정보(src-tauri/src/update.rs UpdateInfo) */
 export type UpdateInfo = { version: string; currentVersion: string; notes: string | null; date: string | null }
@@ -62,7 +59,7 @@ export const KEYCHAIN_KEYS = {
   githubToken: 'minmo.github-token',
 } as const
 
-/** 데스크탑 전용 기능(PTY·키체인·딥링크 등)을 더한 Tauri 호스트 — worktree·GitHub 공용 인터페이스를 모두 만족한다 */
+/** 데스크탑 전용 기능(PTY·키체인 등)을 더한 Tauri 호스트 — worktree·GitHub 공용 인터페이스를 모두 만족한다 */
 export interface TauriApi extends WorktreeHost, GhHost {
   /** git <args> — non-zero 종료도 reject 하지 않고 code 로 돌려준다 */
   gitRun(args: string[], opts?: RunOptions): Promise<CmdResult>
@@ -126,14 +123,12 @@ export interface TauriApi extends WorktreeHost, GhHost {
   openUrl(url: string): Promise<void>
   /** 이 PC 의 폴더 선택 창. 취소하면 null (원격 호스트의 폴더는 고를 수 없다) */
   pickFolder(defaultPath?: string): Promise<string | null>
-  /** deep-link onOpenUrl (single-instance 재전달 포함) */
-  onDeepLink(cb: (urls: string[]) => void): Promise<Unlisten>
 
   /** 내장 서버 — 앱과 함께 실행되며 설정은 Rust 쪽(server.json·키체인)이 갖는다 */
   serverStatus(): Promise<ServerStatus>
   onServerStatus(cb: (s: ServerStatus) => void): Promise<Unlisten>
   serverSettingsGet(): Promise<ServerSettings>
-  /** 저장 후 서버 값(포트·OAuth)이 바뀌었으면 서버를 다시 시작한다 */
+  /** 저장 후 포트가 바뀌었으면 서버를 다시 시작한다 */
   serverSettingsSave(input: ServerSettingsInput): Promise<ServerSettings>
   serverRestart(): Promise<void>
   serverOpenLogDir(): Promise<void>
@@ -258,15 +253,6 @@ export function createTauriApi(): TauriApi {
       const picked = await (await import('@tauri-apps/plugin-dialog')).open({ directory: true, multiple: false, ...(defaultPath ? { defaultPath } : {}) })
       return typeof picked === 'string' ? picked : null
     },
-    onDeepLink: async (cb) => {
-      const dl = await import('@tauri-apps/plugin-deep-link')
-      const unlisten = await dl.onOpenUrl(cb)
-      // 콜드 스타트: 앱이 딥링크로 실행되었으면 그 URL 도 전달한다(pendingLogin 이 없으므로 안내만 뜬다)
-      const initial = await dl.getCurrent().catch(() => null)
-      if (initial && initial.length > 0) cb(initial)
-      return unlisten
-    },
-
     serverStatus: () => call(C.serverStatus),
     onServerStatus: async (cb) => (await event()).listen<ServerStatus>(TAURI_EVENTS.serverStatus, (e) => cb(e.payload)),
     serverSettingsGet: () => call(C.serverSettingsGet),

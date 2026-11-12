@@ -124,7 +124,7 @@ func noStore(next http.Handler) http.Handler {
 	})
 }
 
-// logRequests 는 요청 1건을 slog 로 남긴다. 쿼리(OAuth code·state)는 기록하지 않는다.
+// logRequests 는 요청 1건을 slog 로 남긴다. 쿼리는 기록하지 않는다.
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

@@ -1,6 +1,6 @@
 // 내장 서버 — 설치 파일에 함께 들어간 사이드카 minmo-server 를 앱과 함께 띄우고 끈다.
 // 서버 설정은 데스크탑이 갖고(server.json + OS 키체인) env 로 넘긴다. 토큰 암호화 키는 처음 실행할 때 만들어
-// 키체인에 두고, OAuth Client Secret 은 쓰기 전용(웹뷰에는 저장 여부만)이다.
+// 키체인에 둔다. GitHub 로그인(기기 코드 방식)의 Client ID 는 서버에 들어 있어 따로 넘기지 않는다.
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
@@ -21,11 +21,16 @@ pub const DEFAULT_PORT: u16 = 8787;
 pub const STATUS_EVENT: &str = "server-status";
 const SETTINGS_FILE: &str = "server.json";
 const TOKEN_KEY: &str = "minmo.server.token-key";
-const CLIENT_SECRET_KEY: &str = "minmo.server.github-client-secret";
+/// 예전 버전이 키체인에 넣어 둔 OAuth App Client Secret — 기기 코드 로그인에는 쓰지 않아 시작할 때 지운다
+const LEGACY_CLIENT_SECRET_KEY: &str = "minmo.server.github-client-secret";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const STOP_GRACE: Duration = Duration::from_secs(5);
 /// debug 빌드에서 상속을 허용하는 env — githubmock 으로 로그인 흐름을 E2E 할 때 쓴다
-const DEBUG_PASSTHROUGH: [&str; 2] = ["MINMO_GITHUB_OAUTH_BASE", "MINMO_GITHUB_API_BASE"];
+const DEBUG_PASSTHROUGH: [&str; 3] = [
+    "MINMO_GITHUB_OAUTH_BASE",
+    "MINMO_GITHUB_API_BASE",
+    "MINMO_GITHUB_CLIENT_ID",
+];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -43,7 +48,6 @@ pub enum CloseAction {
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub port: u16,
-    pub github_client_id: String,
     pub close_action: CloseAction,
 }
 
@@ -51,7 +55,6 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             port: DEFAULT_PORT,
-            github_client_id: String::new(),
             close_action: CloseAction::Ask,
         }
     }
@@ -80,19 +83,16 @@ pub fn load_settings(path: &Path) -> (Settings, Option<String>) {
         }
     };
     match serde_json::from_str::<Settings>(&text) {
-        Ok(mut s) => {
-            s.github_client_id = s.github_client_id.trim().to_string();
-            match validate_port(s.port) {
-                Ok(()) => (s, None),
-                Err(e) => {
-                    s.port = DEFAULT_PORT;
-                    (
-                        s,
-                        Some(format!("{e} — 기본 포트 {DEFAULT_PORT} 로 시작했습니다")),
-                    )
-                }
+        Ok(mut s) => match validate_port(s.port) {
+            Ok(()) => (s, None),
+            Err(e) => {
+                s.port = DEFAULT_PORT;
+                (
+                    s,
+                    Some(format!("{e} — 기본 포트 {DEFAULT_PORT} 로 시작했습니다")),
+                )
             }
-        }
+        },
         Err(e) => (
             Settings::default(),
             Some(format!(
@@ -118,8 +118,6 @@ pub struct Launch {
     pub port: u16,
     pub db_path: PathBuf,
     pub token_key: String,
-    pub client_id: String,
-    pub client_secret: Option<String>,
 }
 
 /// 서버 env — 상속된 MINMO_* 는 지우고(사용자 env 가 섞이지 않게) 필요한 값만 넣는다. (지울 키, 넣을 값)
@@ -135,7 +133,7 @@ pub fn server_env(
         })
         .collect();
     let addr = format!("127.0.0.1:{}", launch.port);
-    let mut set = vec![
+    let set = vec![
         ("MINMO_LISTEN".to_string(), addr.clone()),
         ("MINMO_PUBLIC_URL".to_string(), format!("http://{addr}")),
         (
@@ -145,20 +143,7 @@ pub fn server_env(
         ("MINMO_TOKEN_KEY".to_string(), launch.token_key.clone()),
         ("MINMO_STOP_ON_STDIN_CLOSE".to_string(), "1".to_string()),
     ];
-    if !launch.client_id.is_empty() {
-        set.push((
-            "MINMO_GITHUB_CLIENT_ID".to_string(),
-            launch.client_id.clone(),
-        ));
-    }
-    if let Some(secret) = &launch.client_secret {
-        set.push(("MINMO_GITHUB_CLIENT_SECRET".to_string(), secret.clone()));
-    }
     (remove, set)
-}
-
-pub fn callback_url(port: u16) -> String {
-    format!("http://127.0.0.1:{port}/auth/github/callback")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -295,9 +280,6 @@ pub struct ServerManager {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsInput {
     pub port: Option<u16>,
-    pub github_client_id: Option<String>,
-    /// 빈 문자열이면 지운다
-    pub github_client_secret: Option<String>,
     pub close_action: Option<CloseAction>,
 }
 
@@ -305,10 +287,7 @@ pub struct SettingsInput {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsView {
     pub port: u16,
-    pub github_client_id: String,
-    pub has_client_secret: bool,
     pub close_action: CloseAction,
-    pub callback_url: String,
     pub warning: Option<String>,
 }
 
@@ -505,10 +484,12 @@ impl ServerManager {
             db_path: dirs.data.join("minmo.db"),
             token_key: token_key()
                 .map_err(|e| format!("키체인에서 서버 키를 준비하지 못했습니다: {e}"))?,
-            client_id: settings.github_client_id.clone(),
-            // 읽지 못하면 OAuth 미설정과 같다(로그인 시 서버 설정 안내)
-            client_secret: keychain::get(CLIENT_SECRET_KEY).ok().flatten(),
         };
+        // 앱 실행당 한 번이면 된다(서버를 다시 시작할 때마다 할 필요는 없다). 실패해도(항목 없음 포함) 시작에는 지장이 없다
+        static LEGACY_CLEANUP: std::sync::Once = std::sync::Once::new();
+        LEGACY_CLEANUP.call_once(|| {
+            let _ = keychain::delete(LEGACY_CLIENT_SECRET_KEY);
+        });
         let exe = sidecar_path()?;
         if !exe.exists() {
             return Err(format!("서버 실행 파일이 없습니다: {}", exe.display()));
@@ -638,9 +619,6 @@ impl ServerManager {
         };
         SettingsView {
             port: settings.port,
-            callback_url: callback_url(settings.port),
-            github_client_id: settings.github_client_id,
-            has_client_secret: matches!(keychain::get(CLIENT_SECRET_KEY), Ok(Some(_))),
             close_action: settings.close_action,
             warning,
         }
@@ -655,7 +633,7 @@ impl ServerManager {
         Ok(())
     }
 
-    /// 설정을 저장하고, 서버 값(포트·OAuth)이 바뀌었으면 서버를 다시 시작한다
+    /// 설정을 저장하고, 포트가 바뀌었으면 서버를 다시 시작한다
     pub fn save(&self, app: &AppHandle, input: SettingsInput) -> Result<SettingsView, String> {
         let current = self.settings();
         let mut next = current.clone();
@@ -663,28 +641,11 @@ impl ServerManager {
             validate_port(port)?;
             next.port = port;
         }
-        if let Some(id) = input.github_client_id {
-            next.github_client_id = id.trim().to_string();
-        }
         if let Some(action) = input.close_action {
             next.close_action = action;
         }
-        let secret_changed = match input.github_client_secret.as_deref().map(str::trim) {
-            None => false,
-            Some("") => {
-                keychain::delete(CLIENT_SECRET_KEY)?;
-                true
-            }
-            Some(s) => {
-                keychain::set(CLIENT_SECRET_KEY, s)?;
-                true
-            }
-        };
         self.persist(app, next.clone())?;
-        if secret_changed
-            || next.port != current.port
-            || next.github_client_id != current.github_client_id
-        {
+        if next.port != current.port {
             Self::restart(app);
         }
         Ok(self.view())
@@ -765,16 +726,12 @@ mod tests {
 
         let s = Settings {
             port: 18787,
-            github_client_id: "Iv1.abc".into(),
             close_action: CloseAction::Tray,
         };
         save_settings(&path, &s).unwrap();
         assert_eq!(load_settings(&path), (s, None));
         let text = fs::read_to_string(&path).unwrap();
-        assert!(
-            text.contains("\"githubClientId\"") && text.contains("\"tray\""),
-            "{text}"
-        );
+        assert!(text.contains("\"tray\""), "{text}");
     }
 
     #[test]
@@ -788,8 +745,8 @@ mod tests {
 
         fs::write(&path, r#"{"port":80,"githubClientId":"  id  "}"#).unwrap();
         let (s, w) = load_settings(&path);
+        // 예전 버전이 남긴 값(githubClientId)은 무시한다
         assert_eq!(s.port, DEFAULT_PORT);
-        assert_eq!(s.github_client_id, "id");
         assert!(w.unwrap().contains("1024"));
 
         // 모르는 값·빠진 키는 기본값
@@ -808,13 +765,11 @@ mod tests {
         assert!(validate_port(65535).is_ok());
     }
 
-    fn launch(secret: Option<&str>) -> Launch {
+    fn launch() -> Launch {
         Launch {
             port: 18787,
             db_path: PathBuf::from("data").join("minmo.db"),
             token_key: "k".into(),
-            client_id: "cid".into(),
-            client_secret: secret.map(str::to_string),
         }
     }
 
@@ -825,15 +780,19 @@ mod tests {
             "MINMO_ALLOW_NON_LOOPBACK",
             "minmo_listen",
             "MINMO_GITHUB_API_BASE",
+            "MINMO_GITHUB_CLIENT_ID",
+            "MINMO_GITHUB_CLIENT_SECRET",
         ]
         .map(String::from);
-        let (remove, set) = server_env(&launch(Some("sec")), inherited.clone().into_iter(), false);
+        let (remove, set) = server_env(&launch(), inherited.clone().into_iter(), false);
         assert_eq!(
             remove,
             [
                 "MINMO_ALLOW_NON_LOOPBACK",
                 "minmo_listen",
-                "MINMO_GITHUB_API_BASE"
+                "MINMO_GITHUB_API_BASE",
+                "MINMO_GITHUB_CLIENT_ID",
+                "MINMO_GITHUB_CLIENT_SECRET"
             ]
         );
         let get = |k: &str| {
@@ -844,21 +803,20 @@ mod tests {
         assert_eq!(get("MINMO_LISTEN"), Some("127.0.0.1:18787"));
         assert_eq!(get("MINMO_PUBLIC_URL"), Some("http://127.0.0.1:18787"));
         assert_eq!(get("MINMO_STOP_ON_STDIN_CLOSE"), Some("1"));
-        assert_eq!(get("MINMO_GITHUB_CLIENT_ID"), Some("cid"));
-        assert_eq!(get("MINMO_GITHUB_CLIENT_SECRET"), Some("sec"));
+        // Client ID 는 서버에 들어 있는 값을 쓴다 — 앱이 넘기지 않는다
+        assert!(set.iter().all(|(k, _)| !k.starts_with("MINMO_GITHUB_")));
         assert!(get("MINMO_DB_PATH").unwrap().ends_with("minmo.db"));
 
-        // debug 빌드는 githubmock 용 base 만 통과
-        let (remove, _) = server_env(&launch(None), inherited.into_iter(), true);
-        assert_eq!(remove, ["MINMO_ALLOW_NON_LOOPBACK", "minmo_listen"]);
-    }
-
-    #[test]
-    fn env_omits_missing_oauth_values() {
-        let mut l = launch(None);
-        l.client_id = String::new();
-        let (_, set) = server_env(&l, std::iter::empty(), false);
-        assert!(set.iter().all(|(k, _)| !k.starts_with("MINMO_GITHUB_")));
+        // debug 빌드는 githubmock 용 주소·Client ID 만 통과(Secret 은 어디서도 쓰지 않는다)
+        let (remove, _) = server_env(&launch(), inherited.into_iter(), true);
+        assert_eq!(
+            remove,
+            [
+                "MINMO_ALLOW_NON_LOOPBACK",
+                "minmo_listen",
+                "MINMO_GITHUB_CLIENT_SECRET"
+            ]
+        );
     }
 
     #[test]

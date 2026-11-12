@@ -1,4 +1,4 @@
-// E2E 공용: 계약 fixture 기반 서버·GitHub 응답 + mock tauri 딥링크 로그인
+// E2E 공용: 계약 fixture 기반 서버·GitHub 응답 + 기기 코드 로그인
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,7 +20,9 @@ export function fixture<T = Record<string, unknown>>(name: string): T {
 
 export const SERVER = 'http://127.0.0.1:8787'
 export const GITHUB = 'https://api.github.com'
-export const STATE = 'e2e-state'
+/** 기기 코드 로그인에서 화면에 보이는 코드 */
+export const USER_CODE = 'E2E0-CODE'
+export const VERIFY_URL = 'https://github.com/login/device'
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -52,9 +54,11 @@ export async function routeServer(page: Page, override?: ServerHandler) {
     if (o) return o.status === 204 ? route.fulfill({ status: 204, headers: CORS }) : json(route, o.status, o.body)
 
     if (path === '/healthz') return json(route, 200, { status: 'ok' })
-    if (path === '/auth/github/start') {
-      return json(route, 200, { authorizeUrl: `https://github.com/login/oauth/authorize?client_id=e2e&state=${STATE}`, state: STATE })
+    // 기기 코드 로그인: 첫 확인에서 바로 승인된 것으로 답한다(다른 경우는 override 로)
+    if (path === '/auth/github/device/start') {
+      return json(route, 200, { deviceId: 'e2e-device', userCode: USER_CODE, verificationUri: VERIFY_URL, expiresIn: 900, interval: 1 })
     }
+    if (path === '/auth/github/device/poll') return json(route, 200, { status: 'ok', session: 'e2e-session' })
     if (path === '/me') return json(route, 200, fixture('me.json'))
     if (path === '/me/github-token') return json(route, 200, { accessToken: 'gho_e2e' })
     if (path === '/auth/session') return route.fulfill({ status: 204, headers: CORS })
@@ -91,14 +95,13 @@ export async function routeGitHub(page: Page) {
   })
 }
 
-/** 로그인 버튼 → (mock) 브라우저 열림 → 딥링크 수신 → 메인 화면 */
+/** 로그인 버튼 → 코드 표시 + (mock) 브라우저 열림 → 서버가 승인으로 답함 → 메인 화면 */
 export async function login(page: Page) {
   await page.goto('/')
   await expect(page).toHaveURL(/\/login$/)
   await page.getByRole('button', { name: 'GitHub로 로그인' }).click()
-  await expect(page.getByText('브라우저에서 GitHub 승인 중')).toBeVisible()
-  await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__?.openedUrls.length ?? 0)).toBe(1)
-  await page.evaluate((state) => window.__MINMO_MOCK__?.emitDeepLink(`minmo://auth?session=e2e-session&state=${state}`), STATE)
+  await expect(page.getByTestId('device-user-code')).toHaveText(USER_CODE)
+  await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__?.openedUrls ?? [])).toEqual([VERIFY_URL])
   await expect(page.getByText('octocat').first()).toBeVisible()
   await expect(page).toHaveURL(/\/$/)
 }

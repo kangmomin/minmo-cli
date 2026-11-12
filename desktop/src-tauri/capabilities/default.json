@@ -5,15 +5,13 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "deep-link:default",
     "dialog:allow-open",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
-        { "url": "https://github.com/login/oauth/*" },
+        { "url": "https://github.com/login/device" },
         { "url": "http://127.0.0.1:*" },
-        { "url": "https://github.com/*/*/pull/*" },
-        { "url": "https://github.com/settings/applications/new" }
+        { "url": "https://github.com/*/*/pull/*" }
       ]
     }
   ]

@@ -1,23 +1,25 @@
-// F-01 로그인·딥링크 — 근거: CT-04, CT-26, CT-35, 딥링크 계약, UI State Contract(로그인 대기·딥링크 error·E1 503·keyring 실패)
+// F-01 로그인(GitHub 기기 코드) — 코드 표시·브라우저 열기·승인 확인 주기·확정(E3·E4)·거부/만료/취소·세션 복원
 import { act, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ApiClient, Me } from '@minmo/api-client'
+import type { ApiClient, DeviceLoginPoll, Me } from '@minmo/api-client'
 
 import { KEYCHAIN_KEYS } from '../../lib/tauri'
 import type { TauriApi } from '../../lib/tauri'
 import { useSessionStore } from '../../store/session'
-import { apiError, createFakeApi, createFakeTauri, flush } from '../../test/fakes'
+import { apiError, createFakeApi, createFakeTauri } from '../../test/fakes'
 import { makeDeps, makeQueryClient, renderHookWithDeps } from '../../test/render'
-import { PENDING_LOGIN_TTL_MS, deepLinkErrorMessage, useAuth, useAuthController } from './useAuth'
+import { LOGIN_DENIED_MESSAGE, LOGIN_EXPIRED_MESSAGE, LOGIN_FAILED_MESSAGE, isAllowedVerificationUri, useAuth, useAuthController } from './useAuth'
 
 const ME: Me = { id: 'usr_00000000-0000-0000-0000-000000000001', githubLogin: 'octocat', avatarUrl: null }
-const AUTH_URL = 'https://github.com/login/oauth/authorize?client_id=x&state=s1'
+const VERIFY_URL = 'https://github.com/login/device'
+const START = { deviceId: 'dev-1', userCode: 'WDJB-MJHT', verificationUri: VERIFY_URL, expiresIn: 900, interval: 5 }
 
 function setup(apiOverrides: Partial<ApiClient> = {}, tauriOverrides: Partial<TauriApi> = {}, queryClient = makeQueryClient()) {
   const fake = createFakeTauri(tauriOverrides)
   const api = createFakeApi({
-    startLogin: async () => ({ authorizeUrl: AUTH_URL, state: 's1' }),
+    startDeviceLogin: async () => START,
+    pollDeviceLogin: async () => ({ status: 'pending', interval: 5 }),
     me: async () => ME,
     getGithubToken: async () => ({ accessToken: 'gho_x' }),
     logout: async () => undefined,
@@ -35,13 +37,25 @@ function setup(apiOverrides: Partial<ApiClient> = {}, tauriOverrides: Partial<Ta
   return { ...r, api, tauri: fake.tauri, fake }
 }
 
-/** 앱이 E1 을 호출해 pendingLogin{state:'s1'} 이 켜진 상태로 만든다 */
+/** 가짜 시계를 ms 만큼 돌리고 그 사이의 비동기 처리를 끝낸다 */
+const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
+
+/** [GitHub 로 로그인] 을 누른 상태(코드를 받아 승인을 기다리는 중)로 만든다 */
 async function startPending(t: ReturnType<typeof setup>) {
   await act(async () => {
     await t.result.current.startLogin()
   })
-  await waitFor(() => expect(t.result.current.phase).toBe('pending'))
-  await waitFor(() => expect(t.fake.deepLinkListenerCount()).toBeGreaterThan(0))
+  expect(t.result.current.phase).toBe('pending')
+}
+
+/** 차례로 돌려줄 확인 응답 */
+function polls(...results: (DeviceLoginPoll | Error)[]) {
+  let n = 0
+  return async () => {
+    const r = results[Math.min(n++, results.length - 1)]
+    if (r instanceof Error) throw r
+    return r
+  }
 }
 
 beforeEach(() => {
@@ -51,138 +65,255 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('E1 로그인 시작 (UI State "로그인 대기")', () => {
-  it('authorizeUrl 을 브라우저로 열고 pendingLogin{state} 를 켠다', async () => {
+describe('로그인 시작', () => {
+  it('코드·승인 주소를 받아 대기 상태가 되고 GitHub 의 기기 코드 페이지를 브라우저로 연다', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-12T00:00:00Z'))
     const t = setup()
     await startPending(t)
-    expect(t.api.startLogin).toHaveBeenCalledTimes(1)
-    expect(t.tauri.openUrl).toHaveBeenCalledWith(AUTH_URL)
-    expect(useSessionStore.getState().pendingLogin?.state).toBe('s1')
-  })
-
-  it('authorizeUrl 이 https 가 아니면(loopback http 제외) 열지 않는다', async () => {
-    const t = setup({ startLogin: async () => ({ authorizeUrl: 'http://evil.example/login', state: 's1' }) })
-    await act(async () => {
-      await t.result.current.startLogin().catch(() => undefined)
+    expect(t.tauri.openUrl).toHaveBeenCalledWith(VERIFY_URL)
+    expect(useSessionStore.getState().pendingLogin).toEqual({
+      deviceId: 'dev-1',
+      userCode: 'WDJB-MJHT',
+      verificationUri: VERIFY_URL,
+      interval: 5,
+      startedAt: Date.parse('2026-11-12T00:00:00Z'),
+      expiresAt: Date.parse('2026-11-12T00:15:00Z'),
     })
-    expect(t.tauri.openUrl).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().pendingLogin).toBeNull()
-    expect(t.result.current.error).not.toBeNull()
   })
 
-  it('loopback http(E2E githubmock) 는 예외로 허용', async () => {
-    const url = 'http://127.0.0.1:8790/login/oauth/authorize?state=s1'
-    const t = setup({ startLogin: async () => ({ authorizeUrl: url, state: 's1' }) })
+  it('승인 주소는 github.com 의 기기 코드 페이지만(loopback http 는 E2E 용 예외)', async () => {
+    expect(isAllowedVerificationUri('https://github.com/login/device')).toBe(true)
+    expect(isAllowedVerificationUri('http://127.0.0.1:8790/login/device')).toBe(true)
+    // 앱이 브라우저로 열 수 있게 허용한 loopback 은 127.0.0.1 뿐이다
+    for (const bad of ['http://localhost:8790/login/device', 'http://[::1]:8790/login/device', 'https://evil.example/login/device', 'https://github.com.evil.example/login/device', 'https://github.com/other', 'http://github.com/login/device', 'javascript:alert(1)', '']) {
+      expect(isAllowedVerificationUri(bad), bad).toBe(false)
+    }
+    const t = setup({ startDeviceLogin: async () => ({ ...START, verificationUri: 'https://evil.example/login/device' }) })
     await act(async () => {
       await t.result.current.startLogin()
     })
-    expect(t.tauri.openUrl).toHaveBeenCalledWith(url)
+    expect(t.tauri.openUrl).not.toHaveBeenCalled()
+    expect(t.result.current.phase).toBe('anonymous')
+    expect(t.result.current.error?.code).toBe('invalid_verification_uri')
   })
 
-  it('E1 503 github_oauth_not_configured → 설정 안내 문구', async () => {
-    const t = setup({
-      startLogin: async () => {
-        throw apiError(503, 'github_oauth_not_configured')
-      },
+  it('두 번 눌러도 로그인 흐름은 하나만 시작한다 — 시작 요청 중에는 busy', async () => {
+    let resolve!: (v: typeof START) => void
+    const t = setup({ startDeviceLogin: () => new Promise<typeof START>((r) => (resolve = r)) })
+    // 시작할 때의 세션 복원이 끝난 뒤에 누른다
+    await waitFor(() => expect(t.result.current.phase).toBe('anonymous'))
+    let first!: Promise<void>
+    act(() => {
+      first = t.result.current.startLogin()
     })
+    expect(t.result.current.phase).toBe('busy')
     await act(async () => {
-      await t.result.current.startLogin().catch(() => undefined)
+      await t.result.current.startLogin()
     })
-    await waitFor(() => expect(t.result.current.error?.message).toContain('서버 설정에서 Client ID·Secret'))
-    expect(t.tauri.openUrl).not.toHaveBeenCalled()
+    expect(t.api.startDeviceLogin).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolve(START)
+      await first
+    })
+    expect(t.result.current.phase).toBe('pending')
+    expect(t.tauri.openUrl).toHaveBeenCalledTimes(1)
+  })
+
+  it('브라우저를 열지 못해도 코드는 유효하다 — 대기를 유지하고 직접 열 주소를 알린다', async () => {
+    const t = setup(
+      {},
+      {
+        openUrl: async () => {
+          throw new Error('no browser')
+        },
+      },
+    )
+    await startPending(t)
+    expect(t.result.current.error?.message).toContain(VERIFY_URL)
   })
 })
 
-describe('CT-35 딥링크 처리', () => {
-  it('pendingLogin 중 state 일치 session= → E3·E4(후보 토큰) 후 확정, keychain 저장', async () => {
-    const t = setup()
+describe('승인 확인', () => {
+  it('서버가 알려 준 간격으로 확인하고, 승인되면 E3·E4(받은 세션) 후 확정해 키체인에 저장한다', async () => {
+    vi.useFakeTimers()
+    const t = setup({ pollDeviceLogin: polls({ status: 'pending', interval: 5 }, { status: 'pending', interval: 10 }, { status: 'ok', session: 'cand-token' }) })
     await startPending(t)
-    act(() => t.fake.emitDeepLink('minmo://auth?session=cand-token&state=s1'))
-    await waitFor(() => expect(t.result.current.phase).toBe('authenticated'))
+    await tick(4999)
+    expect(t.api.pollDeviceLogin).not.toHaveBeenCalled()
+    await tick(1)
+    expect(t.api.pollDeviceLogin).toHaveBeenCalledTimes(1)
+    expect(t.api.pollDeviceLogin).toHaveBeenCalledWith('dev-1')
+    await tick(5000)
+    expect(t.api.pollDeviceLogin).toHaveBeenCalledTimes(2)
+    // 간격이 10초로 늘었다(slow_down)
+    await tick(9999)
+    expect(t.api.pollDeviceLogin).toHaveBeenCalledTimes(2)
+    await tick(1)
+    expect(t.api.pollDeviceLogin).toHaveBeenCalledTimes(3)
     expect(t.api.me).toHaveBeenCalledWith({ token: 'cand-token' })
     expect(t.api.getGithubToken).toHaveBeenCalledWith({ token: 'cand-token' })
+    expect(t.result.current.phase).toBe('authenticated')
     expect(t.result.current.me).toEqual(ME)
-    expect(useSessionStore.getState().token).toBe('cand-token')
-    expect(useSessionStore.getState().pendingLogin).toBeNull()
     expect(t.tauri.keychainSet).toHaveBeenCalledWith(KEYCHAIN_KEYS.session, 'cand-token')
     expect(t.tauri.keychainSet).toHaveBeenCalledWith(KEYCHAIN_KEYS.githubToken, 'gho_x')
+    // 확정 뒤에는 더 확인하지 않는다
+    await tick(60_000)
+    expect(t.api.pollDeviceLogin).toHaveBeenCalledTimes(3)
   })
 
-  it('pendingLogin 없이 수신(콜드 스타트) → 무시하고 "앱이 꺼져 있었습니다" 안내', async () => {
-    const t = setup()
-    await waitFor(() => expect(t.fake.deepLinkListenerCount()).toBeGreaterThan(0))
-    act(() => t.fake.emitDeepLink('minmo://auth?session=cand-token&state=s1'))
-    await flush()
-    expect(t.api.me).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().token).toBeNull()
+  it('거부하면 대기를 끝내고 안내한다 · 코드가 만료돼도 같다', async () => {
+    vi.useFakeTimers()
+    const denied = setup({ pollDeviceLogin: polls(apiError(400, 'access_denied')) })
+    await startPending(denied)
+    await tick(5000)
+    expect(denied.result.current.phase).toBe('anonymous')
+    expect(denied.result.current.error?.message).toBe(LOGIN_DENIED_MESSAGE)
+    denied.unmount()
+
+    useSessionStore.setState(useSessionStore.getInitialState(), true)
+    const expired = setup({ pollDeviceLogin: polls(apiError(400, 'device_code_expired')) })
+    await startPending(expired)
+    await tick(5000)
+    expect(expired.result.current.phase).toBe('anonymous')
+    expect(expired.result.current.error?.message).toBe(LOGIN_EXPIRED_MESSAGE)
+  })
+
+  it('다시 확인해도 같은 오류(승인 뒤 저장 실패·설정 문제)는 바로 끝내고 사유를 보인다', async () => {
+    vi.useFakeTimers()
+    const failed = setup({ pollDeviceLogin: polls(apiError(502, 'login_failed')) })
+    await startPending(failed)
+    await tick(5000)
+    expect(failed.result.current.phase).toBe('anonymous')
+    expect(failed.result.current.error?.message).toBe(LOGIN_FAILED_MESSAGE)
+    await tick(60_000)
+    expect(failed.api.pollDeviceLogin).toHaveBeenCalledTimes(1)
+    failed.unmount()
+
+    useSessionStore.setState(useSessionStore.getInitialState(), true)
+    const misconfigured = setup({ pollDeviceLogin: polls(apiError(503, 'github_oauth_not_configured')) })
+    await startPending(misconfigured)
+    await tick(5000)
+    expect(misconfigured.result.current.phase).toBe('anonymous')
+    expect(misconfigured.result.current.error?.message).toContain('Device Flow')
+  })
+
+  it('승인 뒤 확정(E3·E4)하는 동안에는 busy — 로그인 버튼을 다시 누를 수 없다', async () => {
+    vi.useFakeTimers()
+    let resolveMe!: (m: Me) => void
+    const t = setup({ pollDeviceLogin: polls({ status: 'ok', session: 'cand-token' }), me: () => new Promise<Me>((r) => (resolveMe = r)) })
+    await startPending(t)
+    await tick(5000)
+    expect(t.result.current.phase).toBe('busy')
+    await act(async () => {
+      await t.result.current.startLogin()
+    })
+    expect(t.api.startDeviceLogin).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolveMe(ME)
+      await Promise.resolve()
+    })
+    await tick(0)
+    expect(t.result.current.phase).toBe('authenticated')
+  })
+
+  it('만료 시각(15분)이 지나면 서버에 묻지 않고 대기를 끝낸다', async () => {
+    vi.useFakeTimers()
+    const t = setup({ startDeviceLogin: async () => ({ ...START, expiresIn: 8 }) })
+    await startPending(t)
+    await tick(5000)
+    expect(t.api.pollDeviceLogin).toHaveBeenCalledTimes(1)
+    await tick(5000)
+    expect(t.api.pollDeviceLogin).toHaveBeenCalledTimes(1)
     expect(t.result.current.phase).toBe('anonymous')
-    await waitFor(() => expect(t.result.current.notice).toContain('앱이 꺼져 있었습니다'))
+    expect(t.result.current.error?.message).toBe(LOGIN_EXPIRED_MESSAGE)
   })
 
-  it('state 불일치 session= → 무시 (login-CSRF 방어)', async () => {
+  it('서버·GitHub 의 일시 오류는 대기를 유지하고 계속 확인한다', async () => {
+    vi.useFakeTimers()
+    const t = setup({ pollDeviceLogin: polls(apiError(502, 'github_unavailable'), apiError(0, 'network_error'), { status: 'ok', session: 'cand-token' }) })
+    await startPending(t)
+    await tick(5000)
+    await tick(5000)
+    expect(t.result.current.phase).toBe('pending')
+    await tick(5000)
+    expect(t.result.current.phase).toBe('authenticated')
+  })
+
+  it('취소하면 더 확인하지 않는다 · 확인 도중 취소했는데 승인이 돌아오면 그 세션을 지운다', async () => {
+    vi.useFakeTimers()
     const t = setup()
     await startPending(t)
-    act(() => t.fake.emitDeepLink('minmo://auth?session=evil-token&state=attacker'))
-    await flush()
-    expect(t.api.me).not.toHaveBeenCalled()
-    expect(t.api.getGithubToken).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().token).toBeNull()
-    expect(t.tauri.keychainSet).not.toHaveBeenCalled()
-  })
+    act(() => t.result.current.cancelLogin())
+    expect(t.result.current.phase).toBe('anonymous')
+    await tick(60_000)
+    expect(t.api.pollDeviceLogin).not.toHaveBeenCalled()
+    t.unmount()
 
-  it('pendingLogin 만료(10분 TTL) 후 수신 → 무시', async () => {
-    const t = setup()
-    await waitFor(() => expect(t.fake.deepLinkListenerCount()).toBeGreaterThan(0))
-    act(() => {
-      useSessionStore.setState({ pendingLogin: { state: 's1', startedAt: Date.now() - PENDING_LOGIN_TTL_MS - 1000 } })
+    useSessionStore.setState(useSessionStore.getInitialState(), true)
+    let resolve!: (v: DeviceLoginPoll) => void
+    const late = setup({ pollDeviceLogin: () => new Promise<DeviceLoginPoll>((r) => (resolve = r)) })
+    await startPending(late)
+    await tick(5000)
+    act(() => late.result.current.cancelLogin())
+    await act(async () => {
+      resolve({ status: 'ok', session: 'late-token' })
+      await Promise.resolve()
     })
-    act(() => t.fake.emitDeepLink('minmo://auth?session=cand-token&state=s1'))
-    await flush()
-    expect(t.api.me).not.toHaveBeenCalled()
+    await tick(0)
+    expect(late.api.logout).toHaveBeenCalledWith({ token: 'late-token' })
     expect(useSessionStore.getState().token).toBeNull()
+    expect(late.api.me).not.toHaveBeenCalled()
   })
 
-  it('중복 전달(deep-link + single-instance) → pendingLogin 즉시 소비, E3 1회', async () => {
+  it('[브라우저 다시 열기] 는 같은 승인 주소를 다시 연다', async () => {
     const t = setup()
     await startPending(t)
-    act(() => {
-      t.fake.emitDeepLink('minmo://auth?session=cand-token&state=s1')
-      t.fake.emitDeepLink('minmo://auth?session=cand-token&state=s1')
+    await act(async () => {
+      await t.result.current.openVerification()
     })
-    await waitFor(() => expect(t.result.current.phase).toBe('authenticated'))
-    await flush()
-    expect(t.api.me).toHaveBeenCalledTimes(1)
+    expect(t.tauri.openUrl).toHaveBeenCalledTimes(2)
+    expect(t.tauri.openUrl).toHaveBeenLastCalledWith(VERIFY_URL)
   })
+})
 
-  it('E3 실패 → E5(후보 토큰)로 세션 폐기, 로그인 미확정', async () => {
+describe('CT-35 로그인 확정', () => {
+  const approved = () => polls({ status: 'ok', session: 'cand-token' })
+
+  it('E3 실패 → E5(받은 세션)로 세션 폐기, 로그인 미확정', async () => {
+    vi.useFakeTimers()
     const t = setup({
+      pollDeviceLogin: approved(),
       me: async () => {
         throw apiError(500, 'internal')
       },
     })
     await startPending(t)
-    act(() => t.fake.emitDeepLink('minmo://auth?session=cand-token&state=s1'))
-    await waitFor(() => expect(t.api.logout).toHaveBeenCalledWith({ token: 'cand-token' }))
+    await tick(5000)
+    expect(t.api.logout).toHaveBeenCalledWith({ token: 'cand-token' })
     expect(useSessionStore.getState().token).toBeNull()
     expect(t.result.current.phase).not.toBe('authenticated')
     expect(t.tauri.keychainSet).not.toHaveBeenCalledWith(KEYCHAIN_KEYS.session, 'cand-token')
   })
 
   it('E4 실패 → E5 로 세션 폐기, 로그인 미확정', async () => {
+    vi.useFakeTimers()
     const t = setup({
+      pollDeviceLogin: approved(),
       getGithubToken: async () => {
         throw apiError(401, 'unauthorized')
       },
     })
     await startPending(t)
-    act(() => t.fake.emitDeepLink('minmo://auth?session=cand-token&state=s1'))
-    await waitFor(() => expect(t.api.logout).toHaveBeenCalledWith({ token: 'cand-token' }))
+    await tick(5000)
+    expect(t.api.logout).toHaveBeenCalledWith({ token: 'cand-token' })
     expect(useSessionStore.getState().token).toBeNull()
   })
 
   it('keyring 저장 실패 → 이번 실행 메모리에만 세션 보관 + "세션이 저장되지 않음" 배너', async () => {
+    vi.useFakeTimers()
     const t = setup(
-      {},
+      { pollDeviceLogin: approved() },
       {
         keychainSet: async () => {
           throw new Error('keyring unavailable')
@@ -190,42 +321,10 @@ describe('CT-35 딥링크 처리', () => {
       },
     )
     await startPending(t)
-    act(() => t.fake.emitDeepLink('minmo://auth?session=cand-token&state=s1'))
-    await waitFor(() => expect(t.result.current.phase).toBe('authenticated'))
+    await tick(5000)
+    expect(t.result.current.phase).toBe('authenticated')
     expect(useSessionStore.getState().token).toBe('cand-token')
-    await waitFor(() => expect(t.result.current.notice).toContain('세션이 저장되지 않음'))
-  })
-})
-
-describe('CT-26 딥링크 error=', () => {
-  it('pendingLogin 중 state 일치 error=access_denied → "승인 취소됨", API 호출 없음', async () => {
-    const t = setup()
-    await startPending(t)
-    act(() => t.fake.emitDeepLink('minmo://auth?error=access_denied&state=s1'))
-    await waitFor(() => expect(t.result.current.error?.code).toBe('access_denied'))
-    expect(t.result.current.error?.message).toContain('승인 취소됨')
-    expect(t.api.me).not.toHaveBeenCalled()
-    expect(t.result.current.phase).not.toBe('authenticated')
-  })
-
-  it('pendingLogin 중 state 없는 error= → 메시지만 표시', async () => {
-    const t = setup()
-    await startPending(t)
-    act(() => t.fake.emitDeepLink('minmo://auth?error=invalid_state'))
-    await waitFor(() => expect(t.result.current.error?.code).toBe('invalid_state'))
-    expect(t.api.me).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    ['access_denied', '승인 취소됨'],
-    ['invalid_state', '다시 시도'],
-    ['invalid_code', '다시 시도'],
-    ['github_unavailable', 'GitHub 연결 실패'],
-    ['missing_code', '로그인 실패(missing_code)'],
-    ['internal', '로그인 실패(internal)'],
-    ['something_else', '로그인 실패(something_else)'],
-  ])('deepLinkErrorMessage(%s) ⊃ "%s"', (code, text) => {
-    expect(deepLinkErrorMessage(code)).toContain(text)
+    expect(t.result.current.notice).toContain('세션이 저장되지 않음')
   })
 })
 
@@ -301,21 +400,21 @@ describe('CT-38(v2.5) E1 503 github_oauth_not_configured 는 offline 아님', ()
   it('전용 문구만 표시, status online 유지(배너 없음)', async () => {
     useSessionStore.setState({ status: 'online' })
     const t = setup({
-      startLogin: async () => {
+      startDeviceLogin: async () => {
         throw apiError(503, 'github_oauth_not_configured')
       },
     })
     await act(async () => {
       await t.result.current.startLogin().catch(() => undefined)
     })
-    await waitFor(() => expect(t.result.current.error?.message).toBe('GitHub OAuth App 이 설정되지 않았습니다 — 서버 설정에서 Client ID·Secret 을 입력하세요'))
+    await waitFor(() => expect(t.result.current.error?.message).toBe('이 앱의 GitHub 로그인 설정(Client ID·Device Flow)이 올바르지 않습니다 — 최신 버전으로 업데이트하세요'))
     expect(useSessionStore.getState().status).toBe('online')
   })
 
   it('E1 의 다른 503(server_error) 은 offline', async () => {
     useSessionStore.setState({ status: 'online' })
     const t = setup({
-      startLogin: async () => {
+      startDeviceLogin: async () => {
         throw apiError(503, 'server_error')
       },
     })
@@ -328,7 +427,7 @@ describe('CT-38(v2.5) E1 503 github_oauth_not_configured 는 offline 아님', ()
   it('E1 미지 4xx(http_error) → online 유지 + 로그인 실패 문구', async () => {
     useSessionStore.setState({ status: 'online' })
     const t = setup({
-      startLogin: async () => {
+      startDeviceLogin: async () => {
         throw apiError(429, 'http_error')
       },
     })
@@ -337,39 +436,5 @@ describe('CT-38(v2.5) E1 503 github_oauth_not_configured 는 offline 아님', ()
     })
     await waitFor(() => expect(t.result.current.error?.message).toContain('로그인 실패(http_error)'))
     expect(useSessionStore.getState().status).toBe('online')
-  })
-})
-
-describe('CT-39(v2.5) 딥링크는 minmo://auth (path 없음 또는 /) 만 처리', () => {
-  it.each([
-    'minmo://evil?session=cand-token&state=s1',
-    'minmo://auth/x?session=cand-token&state=s1',
-    'minmo://AUTHX?session=cand-token&state=s1',
-    'other://auth?session=cand-token&state=s1',
-  ])('%s → 무시(state 가 맞아도), pendingLogin 유지', async (link) => {
-    const t = setup()
-    await startPending(t)
-    act(() => t.fake.emitDeepLink(link))
-    await flush()
-    expect(t.api.me).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().token).toBeNull()
-    expect(useSessionStore.getState().pendingLogin?.state).toBe('s1')
-  })
-
-  it('다른 host 의 error= 도 무시', async () => {
-    const t = setup()
-    await startPending(t)
-    act(() => t.fake.emitDeepLink('minmo://evil?error=access_denied&state=s1'))
-    await flush()
-    expect(t.result.current.error).toBeNull()
-    expect(useSessionStore.getState().pendingLogin?.state).toBe('s1')
-  })
-
-  it('minmo://auth/?session=… (path "/") 는 처리', async () => {
-    const t = setup()
-    await startPending(t)
-    act(() => t.fake.emitDeepLink('minmo://auth/?session=cand-token&state=s1'))
-    await waitFor(() => expect(t.result.current.phase).toBe('authenticated'))
-    expect(t.api.me).toHaveBeenCalledWith({ token: 'cand-token' })
   })
 })

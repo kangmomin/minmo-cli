@@ -1,4 +1,3 @@
-import { CopyIcon, ExternalLinkIcon } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
 import type { FormEvent } from 'react'
 
@@ -12,7 +11,7 @@ import type { CloseAction, ServerSettings, ServerSettingsInput, TauriApi } from 
 import { useServerStore } from '../../store/server'
 import { FONT_SIZE, useUiStore } from '../../store/ui'
 import { AppUpdateSection } from '../update/AppUpdateSection'
-import { CLOSE_OPTIONS, OAUTH_APP_NEW_URL, parsePort, statusText } from './serverSettings'
+import { CLOSE_OPTIONS, parsePort, statusText } from './serverSettings'
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -44,8 +43,6 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
   const [loaded, setLoaded] = useState<ServerSettings | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [port, setPort] = useState('')
-  const [clientId, setClientId] = useState('')
-  const [secret, setSecret] = useState('')
   const [closeAction, setCloseAction] = useState<CloseAction>('ask')
   const fontSize = useUiStore((s) => s.fontSize)
   const setFontSize = useUiStore((s) => s.setFontSize)
@@ -53,7 +50,6 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
   const [fontDraft, setFontDraft] = useState(String(fontSize))
   useEffect(() => setFontDraft(String(fontSize)), [fontSize])
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -64,7 +60,6 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
         if (!alive) return
         setLoaded(s)
         setPort(String(s.port))
-        setClientId(s.githubClientId)
         setCloseAction(s.closeAction)
       })
       .catch((e: unknown) => alive && setLoadError(errorText(e)))
@@ -83,17 +78,6 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
   if (!loaded) return <p className="text-sm text-muted-foreground">불러오는 중…</p>
 
   const parsedPort = parsePort(port)
-  const callbackUrl = `http://127.0.0.1:${parsedPort ?? loaded.port}/auth/github/callback`
-
-  async function copy(text: string, done: string) {
-    try {
-      await navigator.clipboard.writeText(text)
-      setNotice(done)
-    } catch {
-      setNotice('복사하지 못했습니다 — 직접 선택해 복사하세요')
-    }
-  }
-
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!loaded) return
@@ -104,8 +88,6 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
     }
     const input: ServerSettingsInput = {}
     if (parsedPort !== loaded.port) input.port = parsedPort
-    if (clientId.trim() !== loaded.githubClientId) input.githubClientId = clientId.trim()
-    if (secret.trim()) input.githubClientSecret = secret.trim()
     if (closeAction !== loaded.closeAction) input.closeAction = closeAction
     if (Object.keys(input).length === 0) {
       onDone()
@@ -157,45 +139,6 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
             ? '저장하면 서버를 새 포트로 다시 시작하고 다시 연결합니다(열린 터미널은 닫힙니다). OAuth App 의 callback URL 과 원격 CLI 의 SSH RemoteForward 도 새 포트로 바꾸세요.'
             : '이 PC 에서만 접속할 수 있습니다(127.0.0.1).'}
         </p>
-      </section>
-
-      <section className="grid gap-2" aria-labelledby={fid('oauth')}>
-        <h3 id={fid('oauth')} className="text-sm font-semibold">
-          GitHub OAuth App
-        </h3>
-        <p className="text-xs text-muted-foreground">
-          GitHub 로그인에 쓸 OAuth App 을 등록하고 값을 넣으세요. 등록할 때 Authorization callback URL 에 아래 주소를 넣고, Homepage URL 은 아무 주소나(예:
-          http://127.0.0.1:{parsedPort ?? loaded.port}) 써도 됩니다. 조직 저장소가 보이지 않으면 그 조직의 Third-party access 에서 앱을 승인하세요.
-        </p>
-        <div className="flex items-center gap-2">
-          <code className="flex-1 truncate rounded bg-muted px-2 py-1 text-xs" data-testid="callback-url">
-            {callbackUrl}
-          </code>
-          <Button type="button" size="sm" variant="outline" onClick={() => void copy(callbackUrl, 'callback URL 을 복사했습니다')}>
-            <CopyIcon /> 복사
-          </Button>
-        </div>
-        <div>
-          <Button type="button" size="sm" variant="ghost" onClick={() => void tauri.openUrl(OAUTH_APP_NEW_URL).catch(() => setNotice('브라우저를 열 수 없습니다'))}>
-            <ExternalLinkIcon /> GitHub 에서 OAuth App 등록
-          </Button>
-        </div>
-        <div className="grid gap-1">
-          <Label htmlFor={fid('client-id')}>Client ID</Label>
-          <Input id={fid('client-id')} value={clientId} onChange={(e) => setClientId(e.target.value)} autoComplete="off" spellCheck={false} />
-        </div>
-        <div className="grid gap-1">
-          <Label htmlFor={fid('client-secret')}>Client Secret</Label>
-          <Input
-            id={fid('client-secret')}
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder={loaded.hasClientSecret ? '저장됨 — 바꾸려면 새 값을 입력' : '아직 없음'}
-            autoComplete="off"
-          />
-          <p className="text-xs text-muted-foreground">Secret 은 OS 키체인에 저장하며 다시 보여 주지 않습니다.</p>
-        </div>
       </section>
 
       <AppUpdateSection tauri={tauri} headingId={fid('app')} />
@@ -257,10 +200,6 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
           {error}
         </p>
       )}
-      <p className="sr-only" role="status">
-        {notice}
-      </p>
-      {notice && <p className="text-xs text-muted-foreground">{notice}</p>}
 
       <DialogFooter>
         <Button type="button" variant="ghost" onClick={onDone}>

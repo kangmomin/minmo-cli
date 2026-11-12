@@ -24,7 +24,7 @@ fn profile_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// 격리 프로필로 실행 중인지 — 이때는 minmo:// 스킴을 시스템에 등록하지 않는다(설치된 앱의 딥링크를 가로채지 않게)
+/// 격리 프로필로 실행 중인지 — 이때는 키체인 서비스 이름을 따로 쓴다(설치된 앱의 값과 섞이지 않게)
 pub fn isolated() -> bool {
     profile_dir().is_some()
 }

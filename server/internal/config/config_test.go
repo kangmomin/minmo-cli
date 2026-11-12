@@ -104,7 +104,6 @@ func TestLoad_Defaults(t *testing.T) {
 	checks := []struct{ name, got, want string }{
 		{"Listen", cfg.Listen, "127.0.0.1:8787"},
 		{"PublicURL", cfg.API.PublicURL, "http://127.0.0.1:8787"},
-		{"DeepLink", cfg.API.DeepLink, "minmo://auth"},
 		{"GitHubOAuthBase", cfg.API.GitHubOAuthBase, "https://github.com"},
 		{"GitHubAPIBase", cfg.API.GitHubAPIBase, "https://api.github.com"},
 	}
@@ -113,7 +112,12 @@ func TestLoad_Defaults(t *testing.T) {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
 		}
 	}
-	if cfg.OAuthConfigured() {
-		t.Error("client id/secret 미설정인데 OAuthConfigured=true")
+	// Client ID 는 앱에 넣은 기본값을 쓰고(없으면 로그인 불가), 환경 변수로 바꿀 수 있다
+	if cfg.API.GitHubClientID != config.DefaultGitHubClientID || cfg.OAuthConfigured() != (config.DefaultGitHubClientID != "") {
+		t.Errorf("GitHubClientID = %q, OAuthConfigured = %v", cfg.API.GitHubClientID, cfg.OAuthConfigured())
+	}
+	over, err := loadWith(map[string]string{"MINMO_TOKEN_KEY": validKey(), "MINMO_GITHUB_CLIENT_ID": "Ov23custom"})
+	if err != nil || over.API.GitHubClientID != "Ov23custom" || !over.OAuthConfigured() {
+		t.Errorf("override: %q %v %v", over.API.GitHubClientID, over.OAuthConfigured(), err)
 	}
 }

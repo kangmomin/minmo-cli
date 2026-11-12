@@ -1,6 +1,6 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
-// - 딥링크·브라우저 열기는 window.__MINMO_MOCK__ 로 노출해 E2E 가 조작한다.
+// - 브라우저 열기 등은 window.__MINMO_MOCK__ 로 노출해 E2E 가 확인한다.
 import type { CloseAction, CmdResult, DirEntry, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, TauriApi, UpdateInfo, UpdateProgress } from './tauri'
 
 export type TauriMockOptions = {
@@ -9,9 +9,8 @@ export type TauriMockOptions = {
 }
 
 export interface MinmoMockHandle {
-  /** openUrl 로 연 URL 목록 (로그인 authorizeUrl 확인용) */
+  /** openUrl 로 연 URL 목록 (로그인 승인 주소 확인용) */
   openedUrls: string[]
-  emitDeepLink(...urls: string[]): void
   readonly keychain: Record<string, string>
   /** 창 닫기 버튼을 누른 것처럼 close-requested 를 보낸다 */
   emitCloseRequested(): void
@@ -19,7 +18,7 @@ export interface MinmoMockHandle {
   closeCalls: { action: Exclude<CloseAction, 'ask'>; remember: boolean }[]
   /** 내장 서버 상태를 바꾸고 server-status 를 보낸다 */
   setServerStatus(s: ServerStatus): void
-  readonly serverSettings: ServerSettings & { clientSecret: string }
+  readonly serverSettings: ServerSettings
   /** 다음 업데이트 확인 결과(null = 최신) */
   setAvailableUpdate(u: UpdateInfo | null): void
   /** appUpdateInstall 호출 횟수 */
@@ -114,7 +113,6 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   /** worktree path → 그 worktree 를 만든 저장소 */
   const worktreeRepo = new Map<string, string>()
   const trustedHosts = new Set<string>()
-  const deepLinkListeners = new Set<(urls: string[]) => void>()
   const ptyListeners = new Set<(e: PtyDataEvent) => void>()
   const scriptListeners = new Set<(e: ScriptLogEvent) => void>()
   const ptyCwd = new Map<string, string>()
@@ -123,13 +121,10 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   const closeListeners = new Set<() => void>()
   const serverListeners = new Set<(s: ServerStatus) => void>()
   let serverStatus: ServerStatus = { state: 'running', port: mockServerPort(), message: null }
-  const server = { port: serverStatus.port, githubClientId: '', clientSecret: '', closeAction: 'ask' as CloseAction }
+  const server = { port: serverStatus.port, closeAction: 'ask' as CloseAction }
   const serverView = (): ServerSettings => ({
     port: server.port,
-    githubClientId: server.githubClientId,
-    hasClientSecret: server.clientSecret !== '',
     closeAction: server.closeAction,
-    callbackUrl: `http://127.0.0.1:${server.port}/auth/github/callback`,
     warning: null,
   })
   let availableUpdate: UpdateInfo | null = null
@@ -141,9 +136,6 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
 
   const handle: MinmoMockHandle = {
     openedUrls: [],
-    emitDeepLink: (...urls) => {
-      for (const l of [...deepLinkListeners]) l(urls)
-    },
     get keychain() {
       return Object.fromEntries(keychain)
     },
@@ -153,7 +145,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     closeCalls: [],
     setServerStatus: emitServer,
     get serverSettings() {
-      return { ...serverView(), clientSecret: server.clientSecret }
+      return serverView()
     },
     setAvailableUpdate: (u) => {
       availableUpdate = u
@@ -437,12 +429,6 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       handle.openedUrls.push(url)
     },
     pickFolder: async () => handle.pickedFolder,
-    onDeepLink: async (cb) => {
-      deepLinkListeners.add(cb)
-      return () => {
-        deepLinkListeners.delete(cb)
-      }
-    },
 
     serverStatus: async () => serverStatus,
     onServerStatus: async (cb) => {
@@ -454,8 +440,6 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     serverSettingsGet: async () => serverView(),
     serverSettingsSave: async (input) => {
       if (input.port !== undefined) server.port = input.port
-      if (input.githubClientId !== undefined) server.githubClientId = input.githubClientId.trim()
-      if (input.githubClientSecret !== undefined) server.clientSecret = input.githubClientSecret.trim()
       if (input.closeAction !== undefined) server.closeAction = input.closeAction
       return serverView()
     },

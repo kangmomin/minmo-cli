@@ -38,7 +38,7 @@ func run() error {
 		return err
 	}
 	if !cfg.OAuthConfigured() {
-		slog.Warn("MINMO_GITHUB_CLIENT_ID/SECRET 미설정 — POST /auth/github/start 는 503 github_oauth_not_configured")
+		slog.Warn("GitHub Client ID 없음 — POST /auth/github/device/start 는 503 github_oauth_not_configured")
 	}
 
 	conn, err := db.Open(cfg.DBPath)

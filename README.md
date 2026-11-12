@@ -29,17 +29,14 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 ### 처음 실행
 
 1. 설치 파일을 실행하고 minmo 를 켠다. 서버(`minmo-server`)가 앱과 함께 `127.0.0.1:8787` 에서 시작된다.
-2. **GitHub로 로그인** 을 누르면 OAuth App 이 아직 없어서 **서버 설정** 이 열린다.
-   - **GitHub 에서 OAuth App 등록** 버튼으로 등록 페이지를 연다. Authorization callback URL 에는 화면의 주소(`http://127.0.0.1:<포트>/auth/github/callback`, 복사 버튼)를, Homepage URL 에는 아무 주소(예: `http://127.0.0.1:8787`)를 넣는다.
-   - 등록한 앱의 **Client ID** 와 **Generate a new client secret** 으로 만든 Secret 을 넣고 저장하면 서버가 다시 시작된다.
-3. 다시 **GitHub로 로그인** 한다. 조직 저장소가 보이지 않으면 그 조직의 **Third-party access** 에서 앱을 승인한다.
+2. **GitHub로 로그인** 을 누르면 화면에 8자리 코드가 보이고 브라우저에 `github.com/login/device` 가 열린다.
+3. 브라우저에서 그 코드를 입력하고 승인하면 앱이 자동으로 로그인된다. OAuth App 을 따로 등록할 필요가 없다. 조직 저장소가 보이지 않으면 그 조직의 **Third-party access** 에서 minmo 앱을 승인한다.
 
 서버 설정은 로그인 화면과 상단 바의 서버 아이콘에서 연다.
 
 | 항목 | 내용 |
 |------|------|
-| 포트 | 기본 `8787`. 바꾸면 서버가 새 포트로 다시 시작되고 앱이 다시 연결한다(열린 터미널은 닫힌다). OAuth App 의 callback URL 과 원격 CLI 의 `RemoteForward` 도 함께 바꾼다 |
-| GitHub OAuth App | Client ID 는 설정 파일에, Client Secret 은 OS 키체인(Windows 자격 증명 관리자)에 저장하며 다시 보여 주지 않는다 |
+| 포트 | 기본 `8787`. 바꾸면 서버가 새 포트로 다시 시작되고 앱이 다시 연결한다(열린 터미널은 닫힌다). 원격 CLI 의 `RemoteForward` 도 함께 바꾼다 |
 | 창을 닫을 때 | 매번 묻기(기본) · 트레이로 최소화 · 종료. 트레이로 최소화하면 창을 닫아도 서버가 계속 실행되어 원격 CLI 를 쓸 수 있다. 트레이 아이콘 클릭이나 앱을 다시 실행하면 창이 나타나고, 트레이 메뉴의 [종료]로 앱과 서버를 함께 끝낸다. 매번 묻기에서 3초 안에 X 를 다시 누르면 바로 종료한다(화면이 응답하지 않을 때) |
 
 - 서버의 토큰 암호화 키는 처음 실행할 때 만들어 OS 키체인에 둔다(입력할 필요 없음).
@@ -52,7 +49,7 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 |------|------|
 | `server/` | Go API 서버(`net/http` + SQLite). 단일 Go 모듈 `github.com/kangmomin/minmo-cli/server` — 루트에 `go.mod` 가 없으므로 Go 명령은 `cd server` 후 실행 |
 | `server/cmd/minmo-server` | API 서버 진입점 |
-| `server/cmd/githubmock` | E2E 전용 GitHub OAuth/API mock 서버 |
+| `server/cmd/githubmock` | E2E 전용 GitHub OAuth(기기 코드)/API mock 서버 |
 | `desktop/` | Tauri 2 + React/TS 데스크탑 앱 |
 | `packages/api-client/` | 공유 TS 타입·API 클라이언트·템플릿 치환(`@minmo/api-client`) |
 | `packages/core/` | 데스크탑·원격 CLI 공용 도메인 로직 — worktree 서비스·GitHub 클라이언트·보일 저장소 판정(`@minmo/core`) |
@@ -75,12 +72,11 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 |------|------|------|
 | `MINMO_LISTEN` | `127.0.0.1:8787` | 비loopback 바인딩은 `MINMO_ALLOW_NON_LOOPBACK=1` 없으면 기동 거부 |
 | `MINMO_ALLOW_NON_LOOPBACK` | (없음) | `1` 이면 `0.0.0.0` 등 외부 바인딩 허용 |
-| `MINMO_PUBLIC_URL` | `http://127.0.0.1:8787` | OAuth `redirect_uri = {PUBLIC_URL}/auth/github/callback` |
+| `MINMO_PUBLIC_URL` | `http://127.0.0.1:8787` | 서버가 자신을 가리키는 주소(시작 로그에 표시) |
 | `MINMO_DB_PATH` | `./minmo.db` | SQLite 파일 경로(WAL). 시작 시 마이그레이션 자동 적용 |
 | `MINMO_TOKEN_KEY` | **(필수)** | base64 32바이트, GitHub access token AES-256-GCM 암호화 키. 없으면 기동 실패 |
-| `MINMO_GITHUB_CLIENT_ID` / `MINMO_GITHUB_CLIENT_SECRET` | (없음) | 없으면 `POST /auth/github/start` → 503 `github_oauth_not_configured` |
+| `MINMO_GITHUB_CLIENT_ID` | 서버에 들어 있는 minmo OAuth App 의 Client ID(`config.DefaultGitHubClientID`) | 기기 코드 로그인에 쓴다(Secret 없음). 비어 있으면 `POST /auth/github/device/start` → 503 `github_oauth_not_configured` |
 | `MINMO_GITHUB_OAUTH_BASE` / `MINMO_GITHUB_API_BASE` | `https://github.com` / `https://api.github.com` | E2E 는 githubmock 주소로 치환 |
-| `MINMO_DEEP_LINK` | `minmo://auth` | 로그인 성공·실패 딥링크 접두 |
 | `MINMO_CORS_ORIGINS` | `http://localhost:1420,tauri://localhost,http://tauri.localhost,https://tauri.localhost` | 쉼표 구분 |
 | `MINMO_STOP_ON_STDIN_CLOSE` | (없음) | `1` 이면 stdin 이 닫힐 때 정상 종료(데스크탑이 사이드카를 끌 때) |
 
@@ -100,26 +96,23 @@ $b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create
 
 표준·URL-safe base64 모두(패딩 유무 무관) 허용하며, 디코딩 결과는 정확히 32바이트여야 한다.
 
-### GitHub OAuth App 등록
+### GitHub 로그인(기기 코드 방식)
 
-1. GitHub → **Settings → Developer settings → OAuth Apps → New OAuth App**
-2. 입력
-   - Application name: `minmo (local)` 등 임의
-   - Homepage URL: `http://127.0.0.1:8787`
-   - **Authorization callback URL: `http://127.0.0.1:8787/auth/github/callback`**
-     (`MINMO_PUBLIC_URL` 을 바꿨다면 `{MINMO_PUBLIC_URL}/auth/github/callback`)
-3. 등록 후 **Client ID** 와 **Generate a new client secret** 으로 만든 값을 데스크탑 **서버 설정** 에 넣는다
-   (서버를 직접 실행할 때는 `MINMO_GITHUB_CLIENT_ID` / `MINMO_GITHUB_CLIENT_SECRET`).
-4. 로그인은 PKCE(S256)를 쓰며 요청 scope 는 `repo read:org read:user` 다. 조직 저장소가 보이지 않으면
-   GitHub 의 해당 조직 **Third-party access** 에서 이 OAuth App 을 승인한다.
+로그인은 GitHub 의 [Device Flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow) 를 쓴다. Client Secret 이 필요 없어서, minmo 용 OAuth App 하나의 Client ID 만 서버에 넣어 배포한다 — 사용자가 OAuth App 을 등록할 필요가 없다.
+
+1. `POST /auth/github/device/start` → `{deviceId, userCode, verificationUri, expiresIn, interval}`. 서버가 GitHub 에서 기기 코드를 받아 두고(`device_code` 는 서버 메모리에만), 사용자에게 보일 코드와 승인 주소를 돌려준다.
+2. 사용자가 `verificationUri`(`https://github.com/login/device`)에서 `userCode` 를 입력해 승인한다.
+3. `POST /auth/github/device/poll {deviceId}` 를 `interval` 초마다 호출한다 → `{status:"pending", interval}` 또는 `{status:"ok", session}`. 거부는 400 `access_denied`, 만료는 400 `device_code_expired`. 확인 간격은 서버가 지킨다(너무 이른 요청은 GitHub 에 묻지 않는다).
+
+요청 scope 는 `repo read:org read:user` 다. 조직 저장소가 보이지 않으면 GitHub 의 해당 조직 **Third-party access** 에서 minmo OAuth App 을 승인한다.
+
+다른 OAuth App 을 쓰려면(직접 빌드 등) OAuth App 설정에서 **Enable Device Flow** 를 켜고 그 Client ID 를 `MINMO_GITHUB_CLIENT_ID` 로 준다.
 
 ### 로컬 실행
 
 ```bash
 cd server
 export MINMO_TOKEN_KEY="$(openssl rand -base64 32)"   # 재시작해도 같은 값을 쓰도록 보관
-export MINMO_GITHUB_CLIENT_ID=<client id>
-export MINMO_GITHUB_CLIENT_SECRET=<client secret>
 go run ./cmd/minmo-server
 curl http://127.0.0.1:8787/healthz   # {"status":"ok"}
 ```
@@ -127,8 +120,6 @@ curl http://127.0.0.1:8787/healthz   # {"status":"ok"}
 ```powershell
 cd server
 $env:MINMO_TOKEN_KEY = "<생성한 키>"
-$env:MINMO_GITHUB_CLIENT_ID = "<client id>"
-$env:MINMO_GITHUB_CLIENT_SECRET = "<client secret>"
 go run ./cmd/minmo-server
 ```
 
@@ -143,30 +134,31 @@ go build ./... && go vet ./... && go test ./...
 
 ### E2E (githubmock)
 
-실제 GitHub 대신 `cmd/githubmock`(기본 `127.0.0.1:8790`, env `GITHUBMOCK_LISTEN`)을 띄워 OAuth 흐름을 재현한다.
+실제 GitHub 대신 `cmd/githubmock`(기본 `127.0.0.1:8790`, env `GITHUBMOCK_LISTEN`)을 띄워 기기 코드 로그인을 재현한다. 발급한 기기 코드는 기본으로 바로 승인된다(`gho_mock_token` → 사용자 `octocat`).
 
-| mock code | 결과 |
-|-----------|------|
-| `mock-code-ok` | `gho_mock_token` → 사용자 `octocat`(id 583231) |
-| `mock-code-user2` | `gho_mock_token2` → 사용자 `hubot`(id 480938, avatar 없음) |
-| `mock-code-5xx` | 토큰 교환 HTTP 500 → 콜백 502 `github_unavailable` |
-| 그 외 | `bad_verification_code` → 콜백 400 `invalid_code` |
-| authorize 로 발급된 code | `code_verifier` 의 S256 이 `code_challenge` 와 같을 때만 `gho_mock_token`(1회용) |
+다음에 발급할 기기 코드의 결과는 `POST /mock/device/next {"result": …}` 로 정한다(GitHub 에는 없는 테스트용 경로).
+
+| result | 결과 |
+|--------|------|
+| `mock-code-ok`(기본) | 바로 승인 — `gho_mock_token` → 사용자 `octocat`(id 583231) |
+| `mock-code-user2` | 바로 승인 — `gho_mock_token2` → 사용자 `hubot`(id 480938, avatar 없음) |
+| `mock-code-pending` | `authorization_pending` 2번 뒤 승인 |
+| `mock-code-slow` | `slow_down`(interval 10) 1번 뒤 승인 |
+| `mock-code-denied` / `mock-code-expired` | `access_denied` / `expired_token` |
+| `mock-code-5xx` | 토큰 확인 HTTP 500 → 502 `github_unavailable` |
 
 ```bash
 # 1) mock → 2) 서버 순서로 기동
 (cd server && go run ./cmd/githubmock) &
-(cd server && MINMO_TOKEN_KEY="$(openssl rand -base64 32)" \
-  MINMO_GITHUB_CLIENT_ID=e2e MINMO_GITHUB_CLIENT_SECRET=e2e \
+(cd server && MINMO_TOKEN_KEY="$(openssl rand -base64 32)" MINMO_GITHUB_CLIENT_ID=e2e \
   MINMO_GITHUB_OAUTH_BASE=http://127.0.0.1:8790 MINMO_GITHUB_API_BASE=http://127.0.0.1:8790 \
   MINMO_DB_PATH=/tmp/minmo-e2e.db go run ./cmd/minmo-server) &
 
-# 3) 로그인: start → callback(302 minmo://auth?session=…&state=…)
-STATE=$(curl -s -X POST http://127.0.0.1:8787/auth/github/start | sed -E 's/.*"state":"([^"]+)".*/\1/')
-curl -s -D - -o /dev/null "http://127.0.0.1:8787/auth/github/callback?code=mock-code-ok&state=$STATE" | grep -i '^location'
+# 3) 로그인: device/start → device/poll({"status":"ok","session":…})
+ID=$(curl -s -X POST http://127.0.0.1:8787/auth/github/device/start | sed -E 's/.*"deviceId":"([^"]+)".*/\1/')
+curl -s -X POST http://127.0.0.1:8787/auth/github/device/poll -H 'Content-Type: application/json' -d "{\"deviceId\":\"$ID\"}"
 ```
 
-`curl -w '%{redirect_url}'` 은 커스텀 스킴 URL 을 `minmo://auth/?…` 로 정규화해 보여 주므로, 정확한 `Location` 은 `-D -` 로 확인한다.
 `go run` 은 자식 프로세스를 따로 띄우므로 종료 시 해당 프로세스(`minmo-server`, `githubmock`)까지 정리한다.
 
 ## 데스크탑
@@ -182,9 +174,9 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 - `npm run build:server --workspace desktop` 이 `desktop/src-tauri/binaries/minmo-server-<host triple>[.exe]` 를 빌드한다. `tauri dev`·`tauri build` 는 먼저 이것을 실행한다. `cargo test`·`clippy` 를 직접 돌릴 때도 먼저 한 번 실행해 둔다(없으면 Tauri 빌드 스크립트가 실패).
 - 앱은 시작할 때 서버를 띄우고 그 포트로 붙는다. `VITE_MINMO_SERVER` 를 주면(개발·Playwright) 그 주소를 대신 쓴다.
 - debug 빌드 전용 env
-  - `MINMO_DESKTOP_PROFILE=<폴더>`: 설정·DB·로그를 그 폴더에 두고 키체인 서비스를 `com.minmo.desktop.dev` 로 분리한다. 이때는 `minmo://` 스킴을 시스템에 등록하지 않는다(설치된 앱의 딥링크를 가로채지 않게).
+  - `MINMO_DESKTOP_PROFILE=<폴더>`: 설정·DB·로그를 그 폴더에 두고 키체인 서비스를 `com.minmo.desktop.dev` 로 분리한다.
   - `MINMO_EXTERNAL_SERVER=1`: 사이드카를 띄우지 않는다(따로 띄운 서버 + `VITE_MINMO_SERVER`).
-  - `MINMO_GITHUB_OAUTH_BASE` / `MINMO_GITHUB_API_BASE`: 사이드카에 넘긴다(githubmock 로그인 E2E). 그 밖의 `MINMO_*` env 는 사이드카에 넘기지 않는다.
+  - `MINMO_GITHUB_OAUTH_BASE` / `MINMO_GITHUB_API_BASE` / `MINMO_GITHUB_CLIENT_ID`: 사이드카에 넘긴다(githubmock 로그인 E2E). 그 밖의 `MINMO_*` env 는 사이드카에 넘기지 않는다.
 - 설치된 앱이 켜져 있는 PC 에서 debug 앱을 함께 띄우려면 identifier 를 바꿔 빌드한다(같으면 single-instance 로 설치된 앱에 넘어간다): `TAURI_CONFIG='{"identifier":"com.minmo.desktop.e2e"}' cargo build`. 키체인 서비스 이름도 identifier 를 따라 분리된다.
 - 자동 업데이트: debug 빌드는 `MINMO_UPDATER_ENDPOINT`(latest.json URL, http 가능)·`MINMO_UPDATER_PUBKEY`(시험 키 공개키)가 있을 때만 확인한다.
 

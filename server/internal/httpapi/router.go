@@ -13,26 +13,26 @@ import (
 
 // Config 는 서버 env 를 해석한 값이다. contract_test.go 가 이 필드 집합에 의존한다.
 type Config struct {
-	PublicURL          string
-	DeepLink           string
-	GitHubOAuthBase    string
-	GitHubAPIBase      string
-	GitHubClientID     string
-	GitHubClientSecret string
-	TokenKey           []byte
-	CORSOrigins        []string
-	HTTPClient         *http.Client
+	PublicURL       string
+	GitHubOAuthBase string
+	GitHubAPIBase   string
+	// GitHubClientID 는 기기 코드 로그인에 쓰는 OAuth App 의 Client ID 다(Secret 은 쓰지 않는다)
+	GitHubClientID string
+	TokenKey       []byte
+	CORSOrigins    []string
+	HTTPClient     *http.Client
 }
 
 // defaultGitHubTimeout 은 cfg.HTTPClient 가 없을 때 GitHub 호출 제한 시간이다.
-// 계약에 값이 없어 15초로 둔다 — 콜백 응답이 GitHub 지연에 무기한 묶이지 않게 하려는 상한.
+// 계약에 값이 없어 15초로 둔다 — 로그인 확인 응답이 GitHub 지연에 무기한 묶이지 않게 하려는 상한.
 const defaultGitHubTimeout = 15 * time.Second
 
 type api struct {
-	cfg    Config
-	db     *sql.DB
-	now    func() time.Time
-	states *auth.StateStore
+	cfg Config
+	db  *sql.DB
+	now func() time.Time
+	// devices 는 진행 중인 기기 코드 로그인이다
+	devices *auth.DeviceStore
 	// cliCodes 는 데스크탑이 발급한 원격 CLI 1회용 로그인 코드다
 	cliCodes *auth.CLICodeStore
 	gh       *auth.GitHubClient
@@ -53,23 +53,21 @@ func NewHandler(cfg Config, db *sql.DB, now func() time.Time) http.Handler {
 		cfg:      cfg,
 		db:       db,
 		now:      now,
-		states:   auth.NewStateStore(now),
+		devices:  auth.NewDeviceStore(now),
 		cliCodes: auth.NewCLICodeStore(now),
 		gh: &auth.GitHubClient{
-			OAuthBase:    strings.TrimRight(cfg.GitHubOAuthBase, "/"),
-			APIBase:      strings.TrimRight(cfg.GitHubAPIBase, "/"),
-			ClientID:     cfg.GitHubClientID,
-			ClientSecret: cfg.GitHubClientSecret,
-			RedirectURI:  strings.TrimRight(cfg.PublicURL, "/") + "/auth/github/callback",
-			HTTP:         httpClient,
+			OAuthBase: strings.TrimRight(cfg.GitHubOAuthBase, "/"),
+			APIBase:   strings.TrimRight(cfg.GitHubAPIBase, "/"),
+			ClientID:  cfg.GitHubClientID,
+			HTTP:      httpClient,
 		},
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.healthz)
 
-	mux.HandleFunc("POST /auth/github/start", a.startLogin)
-	mux.HandleFunc("GET /auth/github/callback", a.callback)
+	mux.HandleFunc("POST /auth/github/device/start", a.startDeviceLogin)
+	mux.HandleFunc("POST /auth/github/device/poll", a.pollDeviceLogin)
 	mux.HandleFunc("GET /me", a.authed(a.me))
 	mux.HandleFunc("GET /me/github-token", a.authed(a.githubToken))
 	mux.HandleFunc("DELETE /auth/session", a.authed(a.logout))
