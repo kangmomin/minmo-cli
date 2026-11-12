@@ -611,6 +611,52 @@ describe('원격 호스트 터미널', () => {
   })
 })
 
+describe('편집 키 (Ctrl+Backspace 단어 지우기 · Shift+Enter 줄바꿈)', () => {
+  const key = (init: KeyboardEventInit, type = 'keydown') => new KeyboardEvent(type, { cancelable: true, ...init })
+  function handler() {
+    const sent: string[] = []
+    return { sent, h: createTerminalKeyHandler(vi.fn(), undefined, undefined, (d) => void sent.push(d)) }
+  }
+
+  it('Ctrl+Backspace 는 ^W, Shift+Enter 는 ESC+\\r 을 보내고 xterm 의 원래 글자(^H·\\r)는 막는다', () => {
+    const { h, sent } = handler()
+    const bs = key({ key: 'Backspace', code: 'Backspace', ctrlKey: true })
+    expect(h(bs)).toBe(false)
+    expect(bs.defaultPrevented).toBe(true)
+    expect(h(key({ key: 'Enter', code: 'Enter', shiftKey: true }))).toBe(false)
+    expect(sent).toEqual(['\x17', '\x1b\r'])
+    // 누르고 있으면 반복되고, keypress·keyup 은 보내지 않고 막기만 한다
+    expect(h(key({ key: 'Backspace', ctrlKey: true, repeat: true }))).toBe(false)
+    expect(h(key({ key: 'Backspace', ctrlKey: true }, 'keyup'))).toBe(false)
+    expect(h(key({ key: 'Enter', shiftKey: true }, 'keypress'))).toBe(false)
+    expect(sent).toEqual(['\x17', '\x1b\r', '\x17'])
+  })
+
+  it('그냥 Backspace·Enter 와 다른 수정 키 조합, 한글 조합 중에는 건드리지 않는다', () => {
+    const { h, sent } = handler()
+    for (const init of [
+      { key: 'Backspace' },
+      { key: 'Enter' },
+      { key: 'Backspace', ctrlKey: true, shiftKey: true },
+      { key: 'Enter', ctrlKey: true, shiftKey: true },
+      { key: 'Backspace', ctrlKey: true, altKey: true },
+      { key: 'Enter', shiftKey: true, altKey: true },
+      { key: 'Enter', shiftKey: true, metaKey: true },
+      { key: 'Enter', shiftKey: true, isComposing: true },
+      { key: 'Backspace', ctrlKey: true, isComposing: true },
+    ]) {
+      expect(h(key(init))).toBe(true)
+    }
+    expect(sent).toEqual([])
+  })
+
+  it('보내는 함수가 없으면(send 생략) 가로채지 않는다', () => {
+    const h = createTerminalKeyHandler(vi.fn())
+    expect(h(key({ key: 'Backspace', ctrlKey: true }))).toBe(true)
+    expect(h(key({ key: 'Enter', shiftKey: true }))).toBe(true)
+  })
+})
+
 describe('복사·붙여넣기 (Ctrl+C / Ctrl+V — Windows Terminal 방식)', () => {
   const key = (init: KeyboardEventInit, type = 'keydown') => new KeyboardEvent(type, { ctrlKey: true, cancelable: true, ...init })
   function handler(selected = '') {

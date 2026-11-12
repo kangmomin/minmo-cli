@@ -13,7 +13,7 @@ import { useUiStore } from '../../store/ui'
 import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
 import { noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
-import { CLIPBOARD_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
+import { CLIPBOARD_KEYS, EDIT_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 import { layoutPanes, leafIds } from './panes'
 
 /** remote 가 있으면 그 호스트(SSH 프로필)의 cwd 에서 터미널을 연다 */
@@ -73,7 +73,7 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
         <div className="flex shrink-0 flex-wrap gap-x-4 px-3 pt-1.5 text-xs text-neutral-400">
           <p id={hintId}>{TERMINAL_EXIT_HINT}: 터미널 밖으로 이동</p>
           <p>
-            {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기 · {CLIPBOARD_KEYS.copy}: 복사(선택했을 때) · {CLIPBOARD_KEYS.paste}: 붙여넣기
+            {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기 · {CLIPBOARD_KEYS.copy}: 복사(선택했을 때) · {CLIPBOARD_KEYS.paste}: 붙여넣기 · {EDIT_KEYS.deleteWord}: 단어 지우기 · {EDIT_KEYS.newline}: 줄바꿈
           </p>
         </div>
       )}
@@ -206,6 +206,8 @@ function TerminalSession({
           copy: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
           clearSelection: () => t.clearSelection(),
         },
+        // 사용자가 친 글자처럼 넣는다 — onData 를 거쳐 PTY 로 간다
+        (data) => t.input(data),
       ),
     )
     const fit = new FitAddon()

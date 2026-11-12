@@ -82,3 +82,13 @@ test('Ctrl + / Ctrl - / Ctrl 0 으로 터미널과 파일 편집기의 글자 �
   await page.keyboard.press('Control+0')
   await expect.poll(termSize).toBe('13px')
 })
+
+test('Ctrl+Backspace 는 단어 지우기(^W), Shift+Enter 는 줄바꿈(ESC+\\r)을 보낸다 — 그냥 Backspace·Enter 는 그대로', async ({ page }) => {
+  await page.getByLabel('터미널 입력').focus()
+  await page.keyboard.press('Control+Backspace')
+  await page.keyboard.press('Shift+Enter')
+  await page.keyboard.press('Backspace')
+  await page.keyboard.press('Enter')
+  // xterm 의 원래 글자(^H, \r)가 덧붙지 않고 한 번씩만 간다
+  await expect.poll(() => sent(page)).toEqual(['\x17', '\x1b\r', '\x7f', '\r'])
+})
