@@ -14,6 +14,7 @@ import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/laun
 import { noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, EDIT_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
+import { TerminalKeyBar, registerTerminalInput, useNarrow, useTouch } from './TerminalKeyBar'
 import { layoutPanes, leafIds } from './panes'
 
 /** remote 가 있으면 그 호스트(SSH 프로필)의 cwd 에서 터미널을 연다 */
@@ -81,6 +82,12 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
   }, [sessionIds])
 
   const theme = useUiStore((s) => s.theme)
+  // 화면 키보드를 쓰는 기기에는 Esc·Tab·방향키 줄을 둔다 — 지금 이슈의 포커스한(없으면 첫) 패널로 보낸다
+  const touch = useTouch()
+  const activePane = useUiStore((s) => {
+    const p = activeId ? s.panes[activeId] : undefined
+    return p ? (p.focused ?? leafIds(p.tree)[0] ?? null) : null
+  })
 
   // region 이름은 짧게 두고 탈출 안내는 보이는 한 줄 + aria-describedby 로 연결한다 — 이름·설명 중복 낭독 방지(AX-18)
   return (
@@ -94,7 +101,7 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
         aria-describedby={activeHasSession ? hintId : undefined}
       >
         {activeHasSession && (
-          <div className="flex shrink-0 flex-wrap gap-x-4 px-3 pt-1.5 text-xs text-neutral-400">
+          <div className="flex shrink-0 flex-wrap gap-x-4 px-3 pt-1.5 text-xs text-neutral-400 max-md:hidden">
             <p id={hintId}>{TERMINAL_EXIT_HINT}: 터미널 밖으로 이동</p>
             <p>
               {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기 · {CLIPBOARD_KEYS.copy}:
@@ -102,6 +109,7 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
             </p>
           </div>
         )}
+        {touch && activeHasSession && <TerminalKeyBar paneId={activePane} />}
         <div className="relative min-h-0 flex-1">
           {sessions
             .filter((s) => started.has(s.issueId))
@@ -122,6 +130,8 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
   const panes = useUiStore((s) => s.panes[spec.issueId])
   const ensurePanes = useUiStore((s) => s.ensurePanes)
   const newPane = useUiStore((s) => s.newPane)
+  const focusPane = useUiStore((s) => s.focusPane)
+  const narrow = useNarrow()
   // panes 가 사라지면(worktree 기록 삭제 등) 마운트된 채로도 다시 만든다 — 빈 화면에 갇히지 않게
   useEffect(() => {
     if (!panes) ensurePanes(spec.issueId)
@@ -129,13 +139,35 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
   if (!panes) return null
   const rects = layoutPanes(panes.tree)
   const multiple = rects.length > 1
+  // 좁은 화면(휴대폰)에서는 한 번에 한 패널만 크게 보이고, 위의 번호 버튼으로 바꾼다. 가려진 패널의 터미널도 그대로 살아 있다
+  const shownId = narrow ? (rects.find((r) => r.id === panes.focused) ?? rects[0])?.id : undefined
   return (
     <div className={active ? 'absolute inset-0' : 'hidden'}>
+      {narrow && multiple && (
+        <div role="tablist" aria-label="터미널 패널" className="absolute inset-x-0 top-0 z-10 flex h-7 gap-1 px-2">
+          {rects.map((r, i) => (
+            <button
+              key={r.id}
+              type="button"
+              role="tab"
+              aria-selected={r.id === shownId}
+              onClick={() => focusPane(spec.issueId, r.id)}
+              className={`rounded px-2.5 text-xs ${r.id === shownId ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-400'}`}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+      )}
       {rects.map((r) => (
         <div
           key={r.id}
-          className={`absolute flex flex-col ${multiple && panes.focused === r.id ? 'outline outline-1 -outline-offset-1 outline-ring' : ''}`}
-          style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
+          className={`absolute flex flex-col ${narrow && r.id !== shownId ? 'invisible' : ''} ${!narrow && multiple && panes.focused === r.id ? 'outline outline-1 -outline-offset-1 outline-ring' : ''}`}
+          style={
+            narrow
+              ? { left: 0, right: 0, bottom: 0, top: multiple ? '1.75rem' : 0 }
+              : { left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }
+          }
           data-testid="terminal-pane"
         >
           <PaneAgentStrip paneId={r.id} />
@@ -300,6 +332,11 @@ function TerminalSession({
     }
     t.textarea?.addEventListener('compositionend', onCompositionEnd)
     t.textarea?.addEventListener('paste', onUserInput)
+    // 화면의 키 줄(휴대폰)이 이 터미널에 키를 넣을 수 있게 등록한다
+    const unregisterInput = registerTerminalInput(paneId, (data) => {
+      onUserInput()
+      t.input(data)
+    })
     // [다시 시작] 버튼이 사라지며 포커스를 잃으므로, 사용자가 시작한 재시작에 한해 새 터미널로 포커스를 옮긴다(자동 포커스 금지 AX-02 의 예외)
     if (focusAfterRestart.current) {
       focusAfterRestart.current = false
@@ -420,6 +457,7 @@ function TerminalSession({
       t.textarea?.removeEventListener('keydown', onUserInput)
       t.textarea?.removeEventListener('compositionend', onCompositionEnd)
       t.textarea?.removeEventListener('paste', onUserInput)
+      unregisterInput()
       for (const c of cleanups) c()
       // 패널이 없어졌거나(닫기), 세션이 목록에서 빠졌거나(작업 폴더 삭제), 끝난 터미널을 다시 시작할 때만 끝낸다. 패널이 그대로면(호스트 전환 등으로
       // 화면만 내려간 경우) 터미널은 남겨 둔다 — 다른 기기가 보고 있을 수 있고, 돌아오면 다시 붙는다.

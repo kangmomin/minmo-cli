@@ -827,6 +827,16 @@ async fn github_token(ctx: &Ctx) -> Option<String> {
         .map(str::to_string)
 }
 
+/// GitHub API 주소. 개발 빌드에서는 서버와 같은 환경 변수로 바꿀 수 있다(격리 E2E 의 가짜 GitHub)
+fn github_api_base() -> String {
+    if cfg!(debug_assertions) {
+        if let Ok(v) = std::env::var("MINMO_GITHUB_API_BASE") {
+            return v.trim_end_matches('/').to_string();
+        }
+    }
+    "https://api.github.com".to_string()
+}
+
 /// 원격 화면이 부를 수 없는 서버 경로 — 로그인(이 PC 에서 한다)과 토큰을 그대로 돌려주는 것
 pub fn api_path_allowed(path: &str) -> bool {
     let p = path.trim_start_matches('/');
@@ -925,7 +935,7 @@ async fn proxy_github(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
     let Some(token) = github_token(&ctx).await else {
         return text(StatusCode::UNAUTHORIZED, "host_not_logged_in");
     };
-    let url = format!("https://api.github.com{}", path_and_query(&req, "/gh"));
+    let url = format!("{}{}", github_api_base(), path_and_query(&req, "/gh"));
     forward(&ctx, req, url, token, true).await
 }
 
