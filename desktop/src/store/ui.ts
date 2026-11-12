@@ -34,6 +34,11 @@ export interface UiState {
   setWorktree(id: string, e: WorktreeEntry): void
   removeWorktree(id: string): void
   setTheme(t: Theme): void
+  /**
+   * 저장소 식별이 바뀔 때(로컬 저장소를 GitHub 에 올림) 이슈 id 와 트리 노드 id 를 옮긴다.
+   * 패널 id 에는 이슈 id 가 들어 있어 옮길 수 없다 — 그 이슈의 터미널 패널은 닫고 다시 열 때 새로 만든다.
+   */
+  rekey(issues: Record<string, string>, nodes: Record<string, string>): void
   ensurePanes(issueId: string): void
   splitPane(issueId: string, paneId: string, dir: SplitDir): void
   closePane(issueId: string, paneId: string): void
@@ -70,6 +75,31 @@ export const useUiStore = create<UiState>()(
           return { worktreePathMap, terminalIds, panes, focusRequest }
         }),
       setTheme: (theme) => set({ theme }),
+      rekey: (issues, nodes) =>
+        set((s) => {
+          const worktreePathMap = { ...s.worktreePathMap }
+          const terminalIds = { ...s.terminalIds }
+          const panes = { ...s.panes }
+          for (const [from, to] of Object.entries(issues)) {
+            if (worktreePathMap[from]) {
+              worktreePathMap[to] = worktreePathMap[from]
+              delete worktreePathMap[from]
+            }
+            for (const pane of leafIds(panes[from]?.tree ?? null)) delete terminalIds[pane]
+            delete panes[from]
+          }
+          const expanded = { ...s.expanded }
+          for (const [from, to] of Object.entries(nodes)) {
+            if (from in expanded) {
+              expanded[to] = expanded[from]
+              delete expanded[from]
+            }
+          }
+          const moved = s.selectedIssueId !== null && s.selectedIssueId in issues
+          const focusRequest = Object.keys(issues).some((id) => s.focusRequest?.paneId.startsWith(`${id}::`)) ? null : s.focusRequest
+          // 열려 있던 이슈는 선택을 풀어 둔다 — 옛 id 로 잡힌 열기 상태(터미널 등)를 새 id 로 다시 열게
+          return { worktreePathMap, terminalIds, panes, expanded, focusRequest, selectedIssueId: moved ? null : s.selectedIssueId }
+        }),
       ensurePanes: (issueId) =>
         set((s) => (s.panes[issueId] ? s : { panes: { ...s.panes, [issueId]: { tree: leaf(paneIdOf(issueId, 1)), focused: null, seq: 1 } } })),
       splitPane: (issueId, paneId, dir) =>

@@ -252,3 +252,46 @@ describe('getRepo · getIssue (원격 CLI 의 이슈 지정용)', () => {
     await expect(t.gh.getIssue('acme', 'widgets', 8)).rejects.toMatchObject({ code: 'not_found' })
   })
 })
+
+describe('저장소·이슈 만들기(로컬 저장소를 GitHub 에 올릴 때)', () => {
+  const repoJson = (owner: string, name: string) => ({ name, owner: { login: owner }, default_branch: 'main' })
+
+  it('createRepo: 내 계정은 user/repos, 조직은 orgs/{org}/repos — 빈 저장소(auto_init 없음)', async () => {
+    const stdin: string[] = []
+    const t = setup({
+      ghAvailable: true,
+      ghRun: async (args, opts) => {
+        stdin.push(opts?.stdin ?? '')
+        return ok(JSON.stringify(args.includes('user/repos') ? repoJson('me', 'app') : repoJson('my-org', 'app')))
+      },
+    })
+    await expect(t.gh.createRepo({ org: null, name: 'app', private: true })).resolves.toEqual({ owner: 'me', name: 'app', defaultBranch: 'main' })
+    await expect(t.gh.createRepo({ org: 'my-org', name: 'app', private: false })).resolves.toMatchObject({ owner: 'my-org' })
+    const calls = t.tauri.ghRun.mock.calls.map(([args]) => args)
+    expect(calls[0]).toEqual(['api', '-X', 'POST', 'user/repos', '--input', '-'])
+    expect(calls[1]).toEqual(['api', '-X', 'POST', 'orgs/my-org/repos', '--input', '-'])
+    expect(JSON.parse(stdin[0])).toEqual({ name: 'app', private: true, auto_init: false })
+    expect(JSON.parse(stdin[1])).toMatchObject({ private: false })
+  })
+
+  it('createIssue · closeIssue: REST 는 POST issues, PATCH issues/{n}', async () => {
+    const t = setup({ route: (u, c) => (c.method === 'POST' ? json(issue(1), { status: 201 }) : json(issue(1, 'closed'))) })
+    await expect(t.gh.createIssue('o', 'r', 'Issue 1')).resolves.toMatchObject({ number: 1, state: 'open' })
+    await t.gh.closeIssue('o', 'r', 1)
+    expect(t.rest.calls.map((c) => [c.method, new URL(c.url).pathname])).toEqual([
+      ['POST', '/repos/o/r/issues'],
+      ['PATCH', '/repos/o/r/issues/1'],
+    ])
+  })
+
+  it('closeIssue: gh 는 -X PATCH', async () => {
+    const t = setup({ ghAvailable: true, ghRun: async () => ok(JSON.stringify(issue(3, 'closed'))) })
+    await t.gh.closeIssue('o', 'r', 3)
+    expect(t.tauri.ghRun.mock.calls[0][0]).toEqual(['api', '-X', 'PATCH', 'repos/o/r/issues/3', '--input', '-'])
+  })
+
+  it('빈 저장소처럼 default_branch 가 없으면 main 으로 본다', async () => {
+    const t = setup({ route: () => json({ name: 'app', owner: { login: 'me' }, default_branch: null }) })
+    await expect(t.gh.getRepo('me', 'app')).resolves.toEqual({ owner: 'me', name: 'app', defaultBranch: 'main' })
+  })
+})

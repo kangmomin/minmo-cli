@@ -5,6 +5,7 @@ import { useHost } from '../../app/host'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import type { IssueTarget } from '@minmo/core'
+import { useRepoLabel } from '../../store/repos'
 import type { IssueOpenState } from '../../store/setup'
 import { LocalFilesDialog } from './LocalFilesDialog'
 import { useIssueActions } from './useWorktree'
@@ -19,6 +20,7 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
   const actions = useIssueActions()
   const host = useHost()
   const [localOpen, setLocalOpen] = useState(false)
+  const repoLabel = useRepoLabel(target.owner, target.repo)
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2" data-testid="issue-header">
       {host.alias !== null && (
@@ -27,9 +29,7 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
           {host.label}
         </Badge>
       )}
-      <span className="text-sm text-muted-foreground">
-        {target.owner}/{target.repo}
-      </span>
+      <span className="text-sm text-muted-foreground">{repoLabel}</span>
       {target.number === null ? (
         <span className="flex items-center gap-1 font-medium">
           <StarIcon className="size-4 fill-amber-400 text-amber-500" />

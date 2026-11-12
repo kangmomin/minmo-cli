@@ -9,6 +9,7 @@ import { coreIdOf, useHost } from '../../app/host'
 import { GitHubError, worktreeId as coreWorktreeId } from '@minmo/core'
 import type { GitHubIssue, GitHubOwner } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
+import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 
@@ -47,27 +48,30 @@ function worktreeNumbers(owner: string, repo: string): number[] {
     .filter((n) => Number.isInteger(n) && n > 0)
 }
 
-/** AC-03: ★기타 + open 이슈 + closed 중 로컬 worktree 가 있는 것(A-10) */
+/** AC-03: ★기타 + open 이슈 + closed 중 로컬 worktree 가 있는 것(A-10). 로컬 저장소(GitHub 아님)는 이슈 대신 앱 안의 작업 */
 export function useIssues(owner: string, repo: string, enabled: boolean) {
   const { github } = useDeps()
   const worktreeId = useHost().issueId
   const map = useUiStore((s) => s.worktreePathMap)
+  const local = isLocalOwner(owner)
+  const tasks = useReposStore((s) => (local ? s.local[repo]?.tasks : undefined))
   const query = useQuery({
     queryKey: queryKeys.githubIssues(owner, repo),
     queryFn: () => github.listIssues(owner, repo, { ensureNumbers: worktreeNumbers(owner, repo) }),
-    enabled,
+    enabled: enabled && !local,
     ...GITHUB_QUERY,
   })
   // 렌더마다 새 배열을 만들면 RepoNode 의 경로 비교 memo 가 매번 다시 돈다
   const data = query.data
   const issues = useMemo(() => {
     const hasWorktree = (key: string) => map[worktreeId(owner, repo, key)] !== undefined
-    const rows: TreeIssue[] = (data ?? [])
-      .filter((i: GitHubIssue) => i.state === 'open' || hasWorktree(String(i.number)))
+    const source: Pick<GitHubIssue, 'number' | 'title' | 'state'>[] = local ? (tasks ?? []) : (data ?? [])
+    const rows: TreeIssue[] = source
+      .filter((i) => i.state === 'open' || hasWorktree(String(i.number)))
       .sort((a, b) => b.number - a.number)
-      .map((i) => ({ key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: i.htmlUrl }))
+      .map((i) => ({ key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: 'htmlUrl' in i ? (i as GitHubIssue).htmlUrl : null }))
     return [ETC_ISSUE as TreeIssue, ...rows]
-  }, [data, map, owner, repo, worktreeId])
+  }, [data, local, tasks, map, owner, repo, worktreeId])
   return { ...query, issues }
 }
 

@@ -25,4 +25,6 @@ export const queryKeys = {
   gitAll: ['git'] as const,
   gitStatus: (cwd: string) => ['git', 'status', cwd] as const,
   gitUnpushed: (cwd: string) => ['git', 'unpushed', cwd] as const,
+  /** 저장소에 origin 원격이 없는가(같은 경로라도 호스트마다 다르다) */
+  gitOrigin: (hostId: string, cwd: string) => ['git', 'origin', hostId, cwd] as const,
 }

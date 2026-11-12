@@ -24,6 +24,10 @@ export interface MinmoMockHandle {
   setAvailableUpdate(u: UpdateInfo | null): void
   /** appUpdateInstall 호출 횟수 */
   installCalls: number
+  /** 다음 pickFolder 가 돌려줄 폴더(null = 취소) */
+  pickedFolder: string | null
+  /** 실행한 git 명령(인자 목록) */
+  gitCalls: string[][]
 }
 
 /** mock 서버 포트 — VITE_MINMO_SERVER(Playwright) 주소를 따른다 */
@@ -103,6 +107,10 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   /** worktree path → branch */
   const worktrees = new Map<string, string>()
   const branches = new Set<string>()
+  /** `git init` 으로 만든 저장소 → origin 주소(없으면 null). clone 한 저장소는 여기 없다(origin 있음) */
+  const origins = new Map<string, string | null>()
+  /** worktree path → 그 worktree 를 만든 저장소 */
+  const worktreeRepo = new Map<string, string>()
   const trustedHosts = new Set<string>()
   const deepLinkListeners = new Set<(urls: string[]) => void>()
   const ptyListeners = new Set<(e: PtyDataEvent) => void>()
@@ -149,6 +157,8 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       availableUpdate = u
     },
     installCalls: 0,
+    pickedFolder: null,
+    gitCalls: [],
   }
   if (typeof window !== 'undefined') window.__MINMO_MOCK__ = handle
 
@@ -165,7 +175,29 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       a.splice(ci, 2)
     }
     const positional = (from: number) => a.slice(from).filter((x) => !x.startsWith('-'))
+    handle.gitCalls.push([...args])
     switch (a[0]) {
+      case 'init': {
+        const target = a[a.length - 1]
+        paths.add(target)
+        repos.add(target)
+        branches.add('main')
+        origins.set(target, null)
+        return ok()
+      }
+      case 'remote': {
+        // worktree 에서 물어도 그 저장소의 원격을 답한다
+        const repo = cwd && (origins.has(cwd) ? cwd : worktreeRepo.get(cwd))
+        if (!repo || !origins.has(repo)) return ok()
+        if (a[1] === 'add') {
+          origins.set(repo, a[3] ?? '')
+          return ok()
+        }
+        const url = origins.get(repo)
+        return url ? ok(`${url}\n`) : fail("error: No such remote 'origin'", 2)
+      }
+      case 'push':
+        return ok()
       case 'clone': {
         const target = a[a.length - 1]
         paths.add(target)
@@ -177,7 +209,8 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
         if (a.includes('--git-dir')) {
           return cwd && (repos.has(cwd) || worktrees.has(cwd)) ? ok('.git\n') : fail('fatal: not a git repository', 128)
         }
-        if (a.includes('--git-common-dir')) return ok(`${[...repos][0] ?? cwd}/.git\n`)
+        if (a.includes('--show-toplevel')) return cwd && repos.has(cwd) ? ok(`${cwd}\n${cwd}/.git\n`) : fail('fatal: not a git repository', 128)
+        if (a.includes('--git-common-dir')) return ok(`${(cwd && worktreeRepo.get(cwd)) ?? [...repos][0] ?? cwd}/.git\n`)
         for (const x of a) {
           const m = /^refs\/heads\/(.+)$/.exec(x)
           if (m) return branches.has(m[1]) ? ok(HASH + '\n') : fail('', 1)
@@ -199,6 +232,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
           const [path, commitish] = pos
           paths.add(path)
           worktrees.set(path, nb ?? commitish)
+          if (cwd) worktreeRepo.set(path, cwd)
           if (nb) branches.add(nb)
           return ok()
         }
@@ -224,7 +258,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       case 'commit':
         return ok(`[mock ${HASH.slice(0, 7)}] commit`)
       case 'symbolic-ref':
-        return ok('origin/main\n')
+        return ok(a.includes('HEAD') ? 'main\n' : 'origin/main\n')
       default:
         return ok()
     }
@@ -398,6 +432,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     openUrl: async (url) => {
       handle.openedUrls.push(url)
     },
+    pickFolder: async () => handle.pickedFolder,
     onDeepLink: async (cb) => {
       deepLinkListeners.add(cb)
       return () => {

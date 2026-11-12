@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import type { IssueTarget } from '@minmo/core'
+import { useRepoLabel } from '../../store/repos'
 import { useIssueActions } from './useWorktree'
 
 export interface LocalFilesDialogProps {
@@ -23,13 +24,12 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /** 레포별 로컬 파일(.env 등) 보관 폴더 관리. 보관한 파일은 새 worktree 를 만들 때 자동 복사된다 */
 export function LocalFilesDialog({ target, worktreePath, open, onOpenChange }: LocalFilesDialogProps) {
+  const repoLabel = useRepoLabel(target.owner, target.repo)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>
-            로컬 파일 — {target.owner}/{target.repo}
-          </DialogTitle>
+          <DialogTitle>로컬 파일 — {repoLabel}</DialogTitle>
           <DialogDescription>
             git 에 올리지 않는 파일(.env 등)을 저장소별로 보관합니다. 새 worktree 를 만들 때 같은 위치로 복사되며, 이미 있는 파일은 덮어쓰지 않습니다.
           </DialogDescription>

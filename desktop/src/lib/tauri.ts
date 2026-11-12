@@ -124,6 +124,8 @@ export interface TauriApi extends WorktreeHost, GhHost {
 
   /** opener: 외부 브라우저로 URL 열기 */
   openUrl(url: string): Promise<void>
+  /** 이 PC 의 폴더 선택 창. 취소하면 null (원격 호스트의 폴더는 고를 수 없다) */
+  pickFolder(defaultPath?: string): Promise<string | null>
   /** deep-link onOpenUrl (single-instance 재전달 포함) */
   onDeepLink(cb: (urls: string[]) => void): Promise<Unlisten>
 
@@ -252,6 +254,10 @@ export function createTauriApi(): TauriApi {
     removePath: (root, rel) => call(C.removePath, { root, rel }),
 
     openUrl: async (url) => (await import('@tauri-apps/plugin-opener')).openUrl(url),
+    pickFolder: async (defaultPath) => {
+      const picked = await (await import('@tauri-apps/plugin-dialog')).open({ directory: true, multiple: false, ...(defaultPath ? { defaultPath } : {}) })
+      return typeof picked === 'string' ? picked : null
+    },
     onDeepLink: async (cb) => {
       const dl = await import('@tauri-apps/plugin-deep-link')
       const unlisten = await dl.onOpenUrl(cb)

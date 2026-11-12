@@ -1,6 +1,12 @@
 export type GitHubOwner = { login: string; kind: 'user' | 'org'; avatarUrl: string | null }
 export type GitHubRepo = { owner: string; name: string; defaultBranch: string }
 export type GitHubIssue = { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string }
+export type CreateRepoInput = {
+  /** 내 계정이면 null, 조직이면 그 login */
+  org: string | null
+  name: string
+  private: boolean
+}
 export type GitHubPr = { number: number; url: string }
 export type CreatePrInput = {
   owner: string

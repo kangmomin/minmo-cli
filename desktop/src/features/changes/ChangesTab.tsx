@@ -1,17 +1,19 @@
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ExternalLinkIcon, GitCommitIcon, GitPullRequestIcon, RefreshCwIcon, UploadIcon } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
 
 import { useDeps } from '../../app/deps'
+import { useHost } from '../../app/host'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { Textarea } from '../../components/ui/textarea'
-import { GitHubError } from '@minmo/core'
+import { GitHubError, lacksOrigin } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
 import { cn } from '../../lib/utils'
+import { isLocalOwner } from '../../store/repos'
 import { GitError, buildPrDraft, useGit } from './useGit'
 import type { FileChange, GitErrorCode, PrResult, UseGitTarget } from './useGit'
 
@@ -56,6 +58,11 @@ export function ChangesTab({ target }: ChangesTabProps) {
   const [prOpen, setPrOpen] = useState(false)
   const [pr, setPr] = useState<PrResult | null>(null)
   const msgId = useId()
+  // 로컬 저장소(GitHub 아님)에는 PR 이 없고, origin 이 없으면 push 할 곳도 없다
+  const local = isLocalOwner(target.owner)
+  const host = useHost()
+  const noOrigin =
+    useQuery({ queryKey: queryKeys.gitOrigin(host.id, target.cwd), queryFn: () => lacksOrigin(tauri.gitRun, target.cwd), enabled: local }).data === true
 
   // 사라진 파일은 선택에서 뺀다
   const paths = git.changes.map((c) => c.path).join('\n')
@@ -133,19 +140,23 @@ export function ChangesTab({ target }: ChangesTabProps) {
     <div className="flex h-full min-h-0 flex-col gap-2 p-3" data-testid="changes-tab">
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium">변경 {git.changes.length}개</span>
-        <Badge variant={git.unpushed > 0 ? 'default' : 'secondary'} title="origin 에 없는 커밋 수">
+        <Badge variant={git.unpushed > 0 ? 'default' : 'secondary'} title={noOrigin ? '다른 브랜치에 없는 커밋 수(origin 원격 없음)' : 'origin 에 없는 커밋 수'}>
           미push {git.unpushed}
         </Badge>
         <span className="flex-1" />
         <Button size="sm" variant="ghost" aria-label="변경 새로고침" onClick={() => void git.refresh()}>
           <RefreshCwIcon />
         </Button>
-        <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void push()}>
-          <UploadIcon /> push
-        </Button>
-        <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setPrOpen(true)}>
-          <GitPullRequestIcon /> PR
-        </Button>
+        {!noOrigin && (
+          <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void push()}>
+            <UploadIcon /> push
+          </Button>
+        )}
+        {!local && (
+          <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setPrOpen(true)}>
+            <GitPullRequestIcon /> PR
+          </Button>
+        )}
       </div>
 
       {/* 성공은 polite(status) — 컨테이너를 항상 두어야 스크린 리더가 내용 변화를 읽는다. 실패는 즉시(alert) */}

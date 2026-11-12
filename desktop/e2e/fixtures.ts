@@ -25,7 +25,7 @@ export const STATE = 'e2e-state'
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-headers': 'Authorization, Content-Type, Accept, X-GitHub-Api-Version',
-  'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
+  'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
   'access-control-expose-headers': 'Link, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After',
 }
 

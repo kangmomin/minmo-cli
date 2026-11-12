@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderInputIcon, SettingsIcon } from 'lucide-react'
+import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderInputIcon, MoreHorizontalIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
 
 import { normalizePath, renderPath } from '@minmo/api-client'
@@ -9,16 +9,23 @@ import { useDeps } from '../../app/deps'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../../components/ui/context-menu'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../components/ui/dropdown-menu'
 import type { GitHubRepo } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
-import { issueBranchContext } from '@minmo/core'
+import { issueBranchContext, lacksOrigin } from '@minmo/core'
 import { useHost } from '../../app/host'
 import { baseRepoOf, useHostsStore } from '../../store/hosts'
+import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
 import { BaseRepoDialog } from './BaseRepoDialog'
 import { IssueRow } from './IssueRow'
+import { NewTaskDialog } from './LocalRepoDialogs'
+import { useOpenPublish } from './publishContext'
+import { isPublishing } from './publishRepo'
+import { unregisterLocalRepo } from './localRepos'
 import { githubErrorMessage, useIssues } from './useTree'
 
 export interface RepoNodeProps {
@@ -29,11 +36,18 @@ export interface RepoNodeProps {
 }
 
 export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps) {
-  const { api, home, platform } = useDeps()
+  const { api, tauri, home, platform } = useDeps()
   const host = useHost()
   const worktreeId = host.issueId
   const baseRepo = useHostsStore((s) => baseRepoOf(s, host.id, repo.owner, repo.name))
   const [baseOpen, setBaseOpen] = useState(false)
+  // 로컬 저장소(GitHub 아님): 이슈 대신 앱 안의 작업을 쓰고, 폴더 자체가 기준 저장소다
+  const local = isLocalOwner(repo.owner)
+  const localRepo = useReposStore((s) => (local ? s.local[repo.name] : undefined))
+  const added = useReposStore((s) => !local && s.added.some((a) => a.toLowerCase() === `${repo.owner}/${repo.name}`.toLowerCase()))
+  const label = localRepo?.displayName ?? repo.name
+  const [dialog, setDialog] = useState<null | 'task' | 'remove'>(null)
+  const openPublish = useOpenPublish()
   const nodeId = `repo:${repo.owner}/${repo.name}`
   const expanded = useUiStore((s) => !!s.expanded[nodeId])
   const setExpanded = useUiStore((s) => s.setExpanded)
@@ -78,6 +92,15 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
     return out
   }, [effective.data, entries, repo.owner, repo.name, home, platform])
 
+  // origin 이 없는 로컬 저장소만 GitHub 에 올릴 수 있다
+  const noOrigin = useQuery({
+    queryKey: queryKeys.gitOrigin(host.id, localRepo?.path ?? ''),
+    queryFn: () => lacksOrigin(tauri.gitRun, localRepo!.path),
+    enabled: localRepo !== undefined,
+  })
+  const canPublish = localRepo !== undefined && (noOrigin.data === true || localRepo.publish !== undefined)
+  const remove = () => (local ? setDialog('remove') : useReposStore.getState().removeGitHub(repo.owner, repo.name))
+
   const etcPreview: PreviewIssue = { owner: repo.owner, repo: repo.name, key: 'etc', number: null, title: '' }
   const firstIssue = issues.issues.find((i) => i.number !== null)
   const preview: PreviewIssue = firstIssue
@@ -100,13 +123,15 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
             >
               {expanded ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
               <FolderGit2Icon className="size-3.5 text-muted-foreground" />
-              <span className="truncate">{repo.name}</span>
+              <span className="truncate" title={localRepo?.path}>
+                {label}
+              </span>
               {hidden && (
                 <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]" title="표시 목록에서 뺐지만 로컬 worktree 가 있어 보입니다">
                   숨김
                 </Badge>
               )}
-              {baseRepo && (
+              {baseRepo && !local && (
                 <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]" title={`기준 저장소(${host.label}): ${baseRepo}`} data-testid="base-repo-badge">
                   기준 저장소
                 </Badge>
@@ -115,32 +140,97 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
           </ContextMenuTrigger>
           <ContextMenuContent>
             <ContextMenuItem onSelect={openSettings}>프로젝트 설정</ContextMenuItem>
-            <ContextMenuItem onSelect={() => setBaseOpen(true)}>기준 저장소 폴더…</ContextMenuItem>
+            {!local && <ContextMenuItem onSelect={() => setBaseOpen(true)}>기준 저장소 폴더…</ContextMenuItem>}
+            {local && <ContextMenuItem onSelect={() => setDialog('task')}>작업 추가…</ContextMenuItem>}
+            {canPublish && <ContextMenuItem onSelect={() => openPublish(repo.name)}>GitHub 에 올리기…</ContextMenuItem>}
+            {(local || added) && <ContextMenuItem onSelect={remove}>목록에서 제거</ContextMenuItem>}
           </ContextMenuContent>
         </ContextMenu>
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label={`${repo.name} 기준 저장소 폴더`}
-          title={`${repo.name} 기준 저장소 폴더(기존 폴더 가져오기)`}
-          onClick={() => setBaseOpen(true)}
-          className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-        >
-          <FolderInputIcon className="size-3.5" />
-        </Button>
+        {local ? (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`${label} 작업 추가`}
+            title={`${label} 작업 추가`}
+            onClick={() => setDialog('task')}
+            className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+          >
+            <PlusIcon className="size-3.5" />
+          </Button>
+        ) : (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`${repo.name} 기준 저장소 폴더`}
+            title={`${repo.name} 기준 저장소 폴더(기존 폴더 가져오기)`}
+            onClick={() => setBaseOpen(true)}
+            className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+          >
+            <FolderInputIcon className="size-3.5" />
+          </Button>
+        )}
+        {(local || added) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`${label} 저장소 메뉴`}
+                title={`${label} 저장소 메뉴`}
+                className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+              >
+                <MoreHorizontalIcon className="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canPublish && <DropdownMenuItem onSelect={() => openPublish(repo.name)}>GitHub 에 올리기…</DropdownMenuItem>}
+              <DropdownMenuItem onSelect={remove}>목록에서 제거</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {/* 우클릭 메뉴는 키보드로 열 수 없다 → 같은 동작의 버튼을 둔다(AX-01, WCAG 2.1.1). 이름에 대상을 넣어 여러 개를 구분한다(AX-21) */}
         <Button
           size="icon-sm"
           variant="ghost"
-          aria-label={`${repo.name} 프로젝트 설정`}
-          title={`${repo.name} 프로젝트 설정`}
+          aria-label={`${label} 프로젝트 설정`}
+          title={`${label} 프로젝트 설정`}
           onClick={openSettings}
           className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
         >
           <SettingsIcon className="size-3.5" />
         </Button>
       </div>
-      <BaseRepoDialog owner={repo.owner} repo={repo.name} open={baseOpen} onOpenChange={setBaseOpen} />
+      {!local && <BaseRepoDialog owner={repo.owner} repo={repo.name} open={baseOpen} onOpenChange={setBaseOpen} />}
+      {local && (
+        <>
+          <NewTaskDialog id={repo.name} open={dialog === 'task'} onOpenChange={(o) => setDialog(o ? 'task' : null)} />
+          <Dialog open={dialog === 'remove'} onOpenChange={(o) => setDialog(o ? 'remove' : null)}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>목록에서 제거 — {label}</DialogTitle>
+                <DialogDescription>
+                  이 앱의 목록에서만 뺍니다. 폴더({localRepo?.path})와 브랜치·작업 폴더는 지우지 않습니다. 앱 안의 작업 목록(번호·제목)은 사라지며, 폴더를 다시 열어도 돌아오지 않습니다.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setDialog(null)}>
+                  취소
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={isPublishing(repo.name)}
+                  onClick={() => {
+                    setDialog(null)
+                    unregisterLocalRepo(repo.name, tauri.ptyKill)
+                  }}
+                >
+                  제거
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
       <div id={childrenId} hidden={!expanded}>
         {expanded && (
           <div className="ml-4 border-l pl-1">
@@ -164,6 +254,16 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
                 selected={selectedId === worktreeId(repo.owner, repo.name, issue.key)}
               />
             ))}
+            {local && (
+              <button
+                type="button"
+                data-testid="add-task"
+                onClick={() => setDialog('task')}
+                className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-sm text-muted-foreground hover:bg-accent"
+              >
+                <PlusIcon className="size-3.5" /> 작업 추가
+              </button>
+            )}
           </div>
         )}
       </div>

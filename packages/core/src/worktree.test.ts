@@ -49,6 +49,12 @@ type Sim = {
   failWorktreeAdd?: string
   failSparse?: string
   holdFetch?: Promise<void>
+  /** origin 원격이 없는 저장소(새 로컬 프로젝트) */
+  noOrigin?: boolean
+  /** 메인 저장소가 체크아웃한 브랜치 */
+  head?: string
+  /** origin/HEAD 가 없는 저장소 */
+  noOriginHead?: boolean
 }
 
 const HASH = 'abc1234def5678abc1234def5678abc1234def56'
@@ -167,6 +173,11 @@ async function simGit(sim: Sim, args: string[], opts?: RunOptions): Promise<CmdR
       }
       return ok()
     }
+    case 'remote':
+      return sim.noOrigin ? fail("error: No such remote 'origin'", 2) : ok('https://github.com/MyOrg/Repo-A.git\n')
+    case 'symbolic-ref':
+      if (a.includes('HEAD')) return ok(`${sim.head ?? 'main'}\n`)
+      return sim.noOrigin || sim.noOriginHead ? fail('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref', 128) : ok('origin/main\n')
     case 'sparse-checkout':
       return sim.failSparse ? fail(sim.failSparse, 128) : ok()
     case 'status': {
@@ -196,6 +207,7 @@ type SetupOpts = {
   entries?: [string, WorktreeEntry][]
   copyTree?: (src: string, dst: string) => Promise<number>
   localDirFor?: (main: string) => string | undefined
+  defaultBranch?: (owner: string, repo: string) => Promise<string>
 }
 
 function setup(o: SetupOpts = {}) {
@@ -234,7 +246,7 @@ function setup(o: SetupOpts = {}) {
     }),
   }
   const getEffective = vi.fn(async (_o: string, _r: string) => effective(o.values))
-  const defaultBranch = vi.fn(async (_o: string, _r: string) => 'main')
+  const defaultBranch = vi.fn(o.defaultBranch ?? (async (_o: string, _r: string) => 'main'))
   const logs: SetupLogEvent[] = []
   let n = 0
   const svc = createWorktreeService({
@@ -823,5 +835,59 @@ describe('openIssue — 설정 경로가 이 OS 의 절대 경로가 아니면 �
     expect(isAbsoluteFor('/x', 'win32')).toBe(false)
     expect(isAbsoluteFor('/home/u/x', 'linux')).toBe(true)
     expect(isAbsoluteFor('C:/x', 'darwin')).toBe(false)
+  })
+})
+
+describe('origin 원격이 없는 저장소(새 로컬 프로젝트)', () => {
+  const noGitHub = async () => {
+    throw new Error('GitHub 저장소가 아닙니다')
+  }
+
+  it('fetch 를 건너뛰고, 새 브랜치는 저장소의 현재 브랜치(로컬)에서 만든다', async () => {
+    const t = setup({ mainExists: true, sim: { noOrigin: true, head: 'trunk', local: new Set(['trunk']), remote: new Set() }, defaultBranch: noGitHub })
+    const res = await t.svc.openIssue(ISSUE42)
+    expect(res).toMatchObject({ created: true, branch: BR42 })
+    expect(t.find((a) => a[0] === 'fetch')).toHaveLength(0)
+    expect(t.find((a) => a[0] === 'clone')).toHaveLength(0)
+    expect(t.creation(BR42)?.start).toBe('refs/heads/trunk')
+    // origin 의 같은 이름 브랜치를 찾지 않는다
+    expect(t.find((a) => a.includes(`refs/remotes/origin/${BR42}`))).toHaveLength(0)
+  })
+
+  it('이미 있는 로컬 브랜치는 그대로 다시 쓴다', async () => {
+    const t = setup({ mainExists: true, sim: { noOrigin: true, local: new Set(['main', BR42]), remote: new Set() }, defaultBranch: noGitHub })
+    await t.svc.openIssue(ISSUE42)
+    expect(t.find(t.isAdd)[0]).toEqual(['worktree', 'add', WT42, BR42])
+  })
+
+  it('origin 이 있으면(GitHub 아닌 원격 포함) 지금처럼 fetch 하고 origin/HEAD 의 브랜치에서 만든다', async () => {
+    const t = setup({ mainExists: true, defaultBranch: noGitHub })
+    await t.svc.openIssue(ISSUE42)
+    expect(t.find((a) => a[0] === 'fetch')).toHaveLength(1)
+    expect(t.creation(BR42)?.start).toBe('origin/main')
+  })
+
+  it('origin 은 있지만 origin/HEAD 가 없으면(직접 remote 를 붙인 저장소) 현재 브랜치 이름으로 origin 에서 만든다', async () => {
+    const t = setup({ mainExists: true, sim: { head: 'develop', remote: new Set(['develop']), noOriginHead: true }, defaultBranch: noGitHub })
+    await t.svc.openIssue(ISSUE42)
+    expect(t.creation(BR42)?.start).toBe('origin/develop')
+  })
+
+  it('미push 수: origin 이 없으면 다른 로컬 브랜치에 없는 커밋만 센다', async () => {
+    const P = '/home/u/wt/42'
+    const t = setup({
+      mainExists: true,
+      sim: { noOrigin: true, head: BR42, unpushed: 2, worktrees: new Map([[P, BR42]]), local: new Set(['main', BR42]) },
+      entries: [[ID42, { path: P, branch: BR42 }]],
+    })
+    await expect(t.svc.inspect(ISSUE42)).resolves.toEqual({ uncommitted: 0, unpushed: 2 })
+    expect(t.find((a) => a[0] === 'rev-list')[0]).toEqual(['rev-list', '--count', 'HEAD', '--not', `--exclude=${BR42}`, '--branches'])
+  })
+
+  it('미push 수: origin 이 있으면 origin 에 없는 커밋(기존 동작)', async () => {
+    const P = '/home/u/wt/42'
+    const t = setup({ mainExists: true, sim: { unpushed: 1, worktrees: new Map([[P, BR42]]), local: new Set([BR42]) }, entries: [[ID42, { path: P, branch: BR42 }]] })
+    await t.svc.inspect(ISSUE42)
+    expect(t.find((a) => a[0] === 'rev-list')[0]).toEqual(['rev-list', '--count', 'HEAD', '--not', '--remotes=origin'])
   })
 })

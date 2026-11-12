@@ -49,9 +49,26 @@ export function issueBranchContext(
   return { branch, ctx }
 }
 
-/** origin 어느 브랜치에도 없는 HEAD 커밋 수. git 실패 시 null(개수 불명) */
+/**
+ * origin 원격이 없는 저장소인가(새로 만든 로컬 프로젝트 등). git 은 없는 원격에 종료 코드 2 를 준다 —
+ * 그 밖의 실패(ssh 끊김 등)는 "없음"으로 보지 않는다(잘못 판단하면 fetch 를 건너뛴다)
+ */
+export async function lacksOrigin(gitRun: GitHost['gitRun'], cwd: string): Promise<boolean> {
+  return (await gitRun(['-C', cwd, 'remote', 'get-url', 'origin'])).code === 2
+}
+
+/**
+ * 다른 곳에 없는 HEAD 커밋 수 — origin 이 있으면 origin 어느 브랜치에도 없는 커밋,
+ * 없으면 다른 로컬 브랜치에 없는 커밋(브랜치를 지우면 사라지는 것). git 실패 시 null(개수 불명)
+ */
 async function tryCountUnpushed(gitRun: GitHost['gitRun'], cwd: string): Promise<number | null> {
-  const r = await gitRun(['-C', cwd, 'rev-list', '--count', 'HEAD', '--not', '--remotes=origin'])
+  let not = ['--remotes=origin']
+  if (await lacksOrigin(gitRun, cwd)) {
+    const head = await gitRun(['-C', cwd, 'symbolic-ref', '--short', 'HEAD'])
+    const branch = head.code === 0 ? head.stdout.trim() : ''
+    not = branch ? [`--exclude=${branch}`, '--branches'] : ['--branches']
+  }
+  const r = await gitRun(['-C', cwd, 'rev-list', '--count', 'HEAD', '--not', ...not])
   if (r.code !== 0) return null
   const n = Number.parseInt(r.stdout.trim(), 10)
   return Number.isNaN(n) ? null : n
@@ -306,14 +323,17 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     return { issueId, values, branch, path, main, local }
   }
 
-  async function resolveDefaultBranch(t: IssueTarget, main: string): Promise<string> {
+  async function resolveDefaultBranch(t: IssueTarget, main: string, noOrigin = false): Promise<string> {
     try {
       return await deps.defaultBranch(t.owner, t.repo)
     } catch {
-      // GitHub 조회 실패 시 로컬 origin/HEAD 로 추정
-      const r = await tauri.gitRun(['-C', main, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
-      const b = r.code === 0 ? r.stdout.trim().replace(/^origin\//, '') : ''
-      return b || 'main'
+      // GitHub 조회 실패(또는 GitHub 저장소가 아님) → origin/HEAD, origin 이 없으면 메인 저장소의 현재 브랜치로 추정
+      const ref = async (name: string) => {
+        const r = await tauri.gitRun(['-C', main, 'symbolic-ref', '--short', name])
+        return r.code === 0 ? r.stdout.trim().replace(/^origin\//, '') : ''
+      }
+      // origin/HEAD 는 clone 할 때만 생긴다(직접 remote 를 붙인 저장소에는 없다) → 그때도 현재 브랜치로
+      return (noOrigin ? '' : await ref('refs/remotes/origin/HEAD')) || (await ref('HEAD')) || 'main'
     }
   }
 
@@ -412,9 +432,15 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
         log(issueId, 'clone', 'ok')
       }
 
-      log(issueId, 'fetch', 'start')
-      await gitOrThrow(issueId, 'fetch', ['-C', p.main, 'fetch', 'origin', '--prune'])
-      log(issueId, 'fetch', 'ok')
+      // origin 이 없는 로컬 저장소는 받아 올 곳이 없다 — 로컬 브랜치만으로 진행한다
+      const noOrigin = await lacksOrigin(tauri.gitRun, p.main)
+      if (noOrigin) {
+        log(issueId, 'fetch', 'ok', 'origin 원격이 없어 건너뜁니다')
+      } else {
+        log(issueId, 'fetch', 'start')
+        await gitOrThrow(issueId, 'fetch', ['-C', p.main, 'fetch', 'origin', '--prune'])
+        log(issueId, 'fetch', 'ok')
+      }
 
       log(issueId, 'prune', 'start')
       await gitOrThrow(issueId, 'prune', ['-C', p.main, 'worktree', 'prune'])
@@ -445,14 +471,15 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
         addArgs = ['worktree', 'add', p.path, b]
       } else {
         const hasRemote =
+          !noOrigin &&
           (await tauri.gitRun(['-C', p.main, 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${b}`])).code === 0
         if (hasRemote) {
           // EC-08: 원격 브랜치를 새로 만들지 않고 추적
           addArgs = ['worktree', 'add', '--track', '-b', b, p.path, `origin/${b}`]
         } else {
-          defaultBranch = await resolveDefaultBranch(t, p.main)
+          defaultBranch = await resolveDefaultBranch(t, p.main, noOrigin)
           // upstream 이 default 브랜치로 잡히지 않도록 --no-track (push -u 에서 설정)
-          addArgs = ['worktree', 'add', '--no-track', '-b', b, p.path, `origin/${defaultBranch}`]
+          addArgs = ['worktree', 'add', '--no-track', '-b', b, p.path, noOrigin ? `refs/heads/${defaultBranch}` : `origin/${defaultBranch}`]
         }
       }
       log(issueId, 'branch', 'ok', b)
@@ -504,7 +531,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     let script = SKIPPED
     const postCreate = scriptFor(p.values, platform)
     if (postCreate.trim() !== '') {
-      defaultBranch ??= await resolveDefaultBranch(t, p.main)
+      defaultBranch ??= await resolveDefaultBranch(t, p.main, await lacksOrigin(tauri.gitRun, p.main))
       script = await runScript(issueId, t, { cwd: p.path, branch: outcome.branch, main: p.main, defaultBranch }, postCreate)
     }
     return { issueId, path: p.path, branch: outcome.branch, created: true, pathChanged: false, script }
@@ -553,7 +580,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       const entry = deps.pathStore.get(issueId)
       if (!entry) throw new WorktreeError('not_found', { message: 'worktree 가 없습니다' })
       const p = await plan(t)
-      const defaultBranch = await resolveDefaultBranch(t, p.main)
+      const defaultBranch = await resolveDefaultBranch(t, p.main, await lacksOrigin(tauri.gitRun, p.main))
       return runScript(issueId, t, { cwd: entry.path, branch: entry.branch, main: p.main, defaultBranch }, scriptFor(p.values, platform))
     },
 
