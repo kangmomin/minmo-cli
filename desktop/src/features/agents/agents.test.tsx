@@ -18,7 +18,7 @@ import { guessProgram, parseTitle, titleSignal } from './detect'
 import { ago, filterRows, groupRows, sortRows, toRows } from './overview'
 import type { AgentRow } from './overview'
 import { PtyStreamParser } from './ptyStream'
-import { REMOTE_SUBAGENTS_SCRIPT, claudeProjectSlug, parseRemoteSubagents, parseSubagentFiles, runningCount } from './subagents'
+import { REMOTE_SUBAGENTS_SCRIPT, SUBAGENT_STALE_MS, claudeProjectSlug, parseRemoteSubagents, parseSubagentFiles, runningCount } from './subagents'
 import type { Subagent } from './subagents'
 import { DONE_BELL_MS, ECHO_MS, noteTerminalInput, useAgentTracker } from './useAgentTracker'
 
@@ -287,14 +287,17 @@ describe('하위 에이전트(Claude Code 세션 기록)', () => {
   })
 
   it('parseSubagentFiles: 종류·설명·끝났는지를 읽고 실행 중인 것 먼저(그 안에서는 최근 활동순), 깨진 파일은 건너뛴다', () => {
-    const subs = parseSubagentFiles([
+    const subs = parseSubagentFiles(
+      [
       { id: 'agent-done', meta: meta({ finished: true, description: '끝난 일' }), updatedMs: 900 },
       { id: 'agent-old', meta: meta({ agentType: 'Explore', description: '오래된 탐색' }), updatedMs: 100 },
       { id: 'agent-new', meta: meta({ description: '새 리뷰' }), updatedMs: 500 },
       { id: 'agent-broken', meta: '{not json', updatedMs: 1 },
       { id: 'agent-array', meta: '[]', updatedMs: 1 },
       { id: 'agent-bare', meta: '{}', updatedMs: 50 },
-    ])
+      ],
+      1000,
+    )
     expect(subs.map((x) => [x.id, x.type, x.finished])).toEqual([
       ['agent-new', 'general-purpose', false],
       ['agent-old', 'Explore', false],
@@ -305,6 +308,17 @@ describe('하위 에이전트(Claude Code 세션 기록)', () => {
     expect(subs[0]).toEqual({ id: 'agent-new', type: 'general-purpose', description: '새 리뷰', finished: false, updatedAt: 500 })
     expect(runningCount(subs)).toBe(4)
     expect(runningCount(undefined)).toBe(0)
+  })
+
+  it('끝남 판정: 실행 중인 메타에는 finished 가 없다 — finished:true · 사용자가 멈춤 · 30분 넘게 조용하면 끝난 것', () => {
+    const now = 10 * SUBAGENT_STALE_MS
+    const f = (id: string, o: Record<string, unknown>, updatedMs: number) => ({ id, meta: JSON.stringify({ agentType: 'Explore', description: id, ...o }), updatedMs })
+    const subs = parseSubagentFiles(
+      [f('agent-running', {}, now - 5000), f('agent-finished', { finished: true }, now - 5000), f('agent-stopped', { stoppedByUser: true }, now - 5000), f('agent-edge', {}, now - SUBAGENT_STALE_MS), f('agent-stale', {}, now - SUBAGENT_STALE_MS - 1)],
+      now,
+    )
+    expect(Object.fromEntries(subs.map((x) => [x.id, x.finished]))).toEqual({ 'agent-running': false, 'agent-edge': false, 'agent-finished': true, 'agent-stopped': true, 'agent-stale': true })
+    expect(runningCount(subs)).toBe(2)
   })
 
   it('parseRemoteSubagents: 원격 스크립트의 출력(탭 구분, 시각은 초) → 메타 파일 목록', () => {
@@ -318,6 +332,9 @@ describe('하위 에이전트(Claude Code 세션 기록)', () => {
     // 스크립트는 작업 폴더의 slug 를 인자로 받고, 설정 폴더는 CLAUDE_CONFIG_DIR 을 따른다
     expect(REMOTE_SUBAGENTS_SCRIPT).toContain('${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects')
     expect(REMOTE_SUBAGENTS_SCRIPT).toContain('[ "$n" = "$1" ]')
+    // 정확한 이름의 폴더가 먼저, 이전 실행의 세션은 시각으로 거른다
+    expect(REMOTE_SUBAGENTS_SCRIPT).toContain('if [ -d "$d/$1" ]')
+    expect(REMOTE_SUBAGENTS_SCRIPT).toContain('-ge "${2:-0}"')
   })
 })
 
@@ -458,7 +475,7 @@ describe('추적기(useAgentTracker)', () => {
 
   it('Claude Code 가 떠 있는 패널은 그 작업 폴더의 하위 에이전트를 주기적으로 읽는다 — 끝나면 목록도 지운다', async () => {
     let procs = ['claude.exe']
-    const files = [{ id: 'agent-a1', meta: JSON.stringify({ agentType: 'Explore', description: '코드 찾기', finished: false }), updatedMs: 1000 }]
+    const files = [{ id: 'agent-a1', meta: JSON.stringify({ agentType: 'Explore', description: '코드 찾기' }), updatedMs: Date.parse('2026-11-12T00:00:00Z') }]
     const t = setup()
     t.tauri.ptyProcesses.mockImplementation(async () => procs)
     t.tauri.claudeSubagents.mockImplementation(async () => files)
@@ -466,8 +483,12 @@ describe('추적기(useAgentTracker)', () => {
     await t.tick(1000)
     t.out(osc('◐ 작업'))
     await t.tick(1000)
-    expect(t.tauri.claudeSubagents).toHaveBeenCalledWith('/w/app/issue-1')
-    expect(useAgentStore.getState().subagents[PANE]).toEqual([{ id: 'agent-a1', type: 'Explore', description: '코드 찾기', finished: false, updatedAt: 1000 }])
+    // 에이전트가 뜬 시각(여유 1분) 이후의 세션만 본다
+    const since = t.tauri.claudeSubagents.mock.calls[0][1]
+    expect(t.tauri.claudeSubagents).toHaveBeenCalledWith('/w/app/issue-1', since)
+    expect(Date.now() - since).toBeGreaterThanOrEqual(60_000)
+    expect(Date.now() - since).toBeLessThan(70_000)
+    expect(useAgentStore.getState().subagents[PANE]).toEqual([{ id: 'agent-a1', type: 'Explore', description: '코드 찾기', finished: false, updatedAt: Date.parse('2026-11-12T00:00:00Z') }])
     // 5초마다 다시 읽는다
     const calls = t.tauri.claudeSubagents.mock.calls.length
     await t.tick(4000)
@@ -479,6 +500,29 @@ describe('추적기(useAgentTracker)', () => {
     await t.tick(4000)
     expect(t.pane()).toBeUndefined()
     expect(useAgentStore.getState().subagents[PANE]).toBeUndefined()
+  })
+
+  it('같은 작업 폴더의 Claude 가 두 패널에 있으면 앞 패널에만 보인다 · 원격인데 연결 정보가 없으면 이 PC 의 파일을 읽지 않는다', async () => {
+    const files = [{ id: 'agent-a1', meta: '{}', updatedMs: Date.parse('2026-11-12T00:00:00Z') }]
+    const t = setup({ processes: ['claude.exe'] })
+    t.tauri.claudeSubagents.mockImplementation(async () => files)
+    const second = `${ISSUE}::2`
+    useUiStore.setState({ terminalIds: { [PANE]: 'pty-1', [second]: 'pty-2' }, worktreePathMap: { [ISSUE]: { path: '/w/app/issue-1', branch: 'b' } } })
+    await t.tick(8000)
+    expect(useAgentStore.getState().panes[second]).toMatchObject({ agent: 'claude' })
+    expect(useAgentStore.getState().subagents[PANE]).toHaveLength(1)
+    expect(useAgentStore.getState().subagents[second]).toBeUndefined()
+    t.unmount()
+
+    const remote = 'ssh:srv|acme/app#1::1'
+    const u = setup()
+    u.tauri.claudeSubagents.mockImplementation(async () => files)
+    useUiStore.setState({ terminalIds: { [remote]: 'pty-1' }, worktreePathMap: { 'ssh:srv|acme/app#1': { path: '/w/app/issue-1', branch: 'b' } } })
+    await u.tick(1000)
+    u.out(osc('minmo:claude:◐ x'))
+    await u.tick(8000)
+    expect(useAgentStore.getState().panes[remote]).toMatchObject({ agent: 'claude' })
+    expect(u.tauri.claudeSubagents).not.toHaveBeenCalled()
   })
 
   it('Codex 처럼 Claude 가 아닌 에이전트는 하위 에이전트를 읽지 않는다 · 작업 폴더를 모르면 읽지 않는다', async () => {

@@ -285,8 +285,8 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
       throw new Error('원격 폴더는 이 PC 의 탐색기로 열 수 없습니다')
     },
     // 원격의 Claude Code 세션 기록에서 하위 에이전트를 읽는다. 읽지 못하면 빈 목록(상태 표시는 그대로 동작)
-    claudeSubagents: async (cwd) => {
-      const r = await script(REMOTE_SUBAGENTS_SCRIPT, [claudeProjectSlug(cwd)])
+    claudeSubagents: async (cwd, sinceMs) => {
+      const r = await script(REMOTE_SUBAGENTS_SCRIPT, [claudeProjectSlug(cwd), String(Math.max(0, Math.floor(sinceMs / 1000)))])
       return r.code === 0 ? parseRemoteSubagents(r.stdout) : []
     },
     listDir: async (root, rel) => {

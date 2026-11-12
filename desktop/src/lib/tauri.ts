@@ -124,8 +124,11 @@ export interface TauriApi extends WorktreeHost, GhHost {
 
   /** 이 터미널의 셸 아래에서 도는 프로세스 이름들(원격 세션은 빈 목록) — 에이전트 감지용 */
   ptyProcesses(id: string): Promise<string[]>
-  /** cwd(작업 폴더)에서 도는 Claude Code 의 가장 최근 세션의 하위 에이전트 메타 파일들(없으면 빈 목록) */
-  claudeSubagents(cwd: string): Promise<SubagentFile[]>
+  /**
+   * cwd(작업 폴더)에서 도는 Claude Code 의 가장 최근 세션의 하위 에이전트 메타 파일들(없으면 빈 목록).
+   * sinceMs 이전에 마지막으로 바뀐 세션은 보지 않는다 — 이전 실행의 기록을 지금 것으로 보이지 않게
+   */
+  claudeSubagents(cwd: string, sinceMs: number): Promise<SubagentFile[]>
   /** OS 알림을 띄운다(권한이 없으면 조용히 넘어간다) */
   notify(title: string, body: string): Promise<void>
   /** opener: 외부 브라우저로 URL 열기 */
@@ -260,7 +263,7 @@ export function createTauriApi(): TauriApi {
     removePath: (root, rel) => call(C.removePath, { root, rel }),
 
     ptyProcesses: (id) => call(C.ptyProcesses, { id }),
-    claudeSubagents: (cwd) => call(C.claudeSubagents, { cwd }),
+    claudeSubagents: (cwd, sinceMs) => call(C.claudeSubagents, { cwd, sinceMs: Math.max(0, Math.floor(sinceMs)) }),
     notify: async (title, body) => {
       const n = await import('@tauri-apps/plugin-notification')
       let granted = await n.isPermissionGranted()
