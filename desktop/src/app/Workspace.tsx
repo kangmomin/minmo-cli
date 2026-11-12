@@ -8,6 +8,8 @@ import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { AgentsButton, AgentsOverview } from '../features/agents/AgentsOverview'
 import { useAgentTracker } from '../features/agents/useAgentTracker'
+import { useSharedTerminals } from '../features/remote/useRemoteHost'
+import { useBaseDeps } from './deps'
 import { useAuth } from '../features/auth/useAuth'
 import { CliAccessDialog } from '../features/cli/CliAccessDialog'
 import { IssueHeader } from '../features/issue/IssueHeader'
@@ -38,6 +40,7 @@ export function Workspace() {
   const [cliOpen, setCliOpen] = useState(false)
   const [agentsOpen, setAgentsOpen] = useState(false)
   useFontSizeShortcuts()
+  useSharedTerminals(useBaseDeps().tauri)
   // 열어 둔 모든 터미널의 에이전트 상태를 추적한다(이슈 행·패널·현황·알림)
   useAgentTracker()
   const connection = useHostConnection()

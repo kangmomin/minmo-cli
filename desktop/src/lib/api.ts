@@ -2,12 +2,15 @@ import { createApiClient } from '@minmo/api-client'
 import type { ApiClient } from '@minmo/api-client'
 
 import { useSessionStore } from '../store/session'
+import { runtimeKind } from './tauri'
 
 export const DEFAULT_PORT = 8787
 export const DEFAULT_SERVER = `http://127.0.0.1:${DEFAULT_PORT}`
 
 /** API 주소: VITE_MINMO_SERVER(개발·E2E 의 외부 서버)가 있으면 그것, 없으면 내장 서버 포트 */
 export function serverBaseUrl(port: number = DEFAULT_PORT): string {
+  // 원격 화면: 호스트가 /api 로 받은 요청을 자기 서버에 대신 보낸다
+  if (runtimeKind() === 'remote') return `${window.location.origin}/api`
   return import.meta.env.VITE_MINMO_SERVER || `http://127.0.0.1:${port}`
 }
 

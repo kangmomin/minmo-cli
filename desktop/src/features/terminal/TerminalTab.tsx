@@ -3,7 +3,7 @@
 // 이슈 안에서는 패널을 나눌 수 있고(Ctrl+D / Ctrl+Shift+D), 패널마다 PTY 하나를 가진다(Ctrl+W 로 닫으면 프로세스 트리 종료).
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
-import { useEffect, useId, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 
 import { useBaseDeps } from '../../app/deps'
 import { Button } from '../../components/ui/button'
@@ -25,6 +25,11 @@ function paneRole(issueId: string, paneId: string) {
   return { primary: first === undefined || first === paneId, seq: Number(paneId.slice(paneId.lastIndexOf('::') + 2)) || 1 }
 }
 
+/** 패널이 아직 화면 구성에 있는가 — 없어진 패널의 터미널만 끝낸다 */
+function paneExists(issueId: string, paneId: string): boolean {
+  return leafIds(useUiStore.getState().panes[issueId]?.tree ?? null).includes(paneId)
+}
+
 /** ptySpawn 응답 전에 도착한 pty-data 를 id 별로 보관하는 상한(문자 수) */
 export const MAX_PENDING_PTY_CHARS = 256 * 1024
 
@@ -38,8 +43,26 @@ export interface TerminalTabProps {
   onExit?: () => void
 }
 
+/**
+ * 지금 유지하는 세션들 — 세션이 목록에서 빠져(작업 폴더 삭제 등) 내려가는 터미널은 끝내고,
+ * 터미널 탭 전체가 내려가는 경우(호스트 전환 등)에는 남겨 두기 위해 구분한다.
+ */
+type LiveSessions = { mounted: boolean; keys: Set<string> }
+const LiveSessionsContext = createContext<{ current: LiveSessions }>({ current: { mounted: false, keys: new Set() } })
+const sessionKey = (s: Pick<TerminalSessionSpec, 'issueId' | 'cwd'>) => `${s.issueId}|${s.cwd}`
+
 export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTabProps) {
   const activeHasSession = sessions.some((s) => s.issueId === activeId)
+  const live = useRef<LiveSessions>({ mounted: true, keys: new Set() })
+  live.current.keys = new Set(sessions.map(sessionKey))
+  // 내려갈 때는 부모의 정리가 자식보다 먼저 돈다 — 자식(터미널)이 "탭 전체가 내려가는 중"임을 알 수 있다
+  useEffect(() => {
+    const l = live.current
+    l.mounted = true
+    return () => {
+      l.mounted = false
+    }
+  }, [])
   const hintId = useId()
   // PTY 는 터미널 탭에서 처음 볼 때 만들고, 이후에는 이슈를 전환해도 유지한다
   const [started, setStarted] = useState<ReadonlySet<string>>(() => new Set())
@@ -61,31 +84,36 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
 
   // region 이름은 짧게 두고 탈출 안내는 보이는 한 줄 + aria-describedby 로 연결한다 — 이름·설명 중복 낭독 방지(AX-18)
   return (
-    <div
-      className={visible ? 'absolute inset-0 flex flex-col' : 'hidden'}
-      style={{ background: terminalBackground(theme) }}
-      data-testid="terminal-tab"
-      role="region"
-      aria-label="터미널"
-      aria-describedby={activeHasSession ? hintId : undefined}
-    >
-      {activeHasSession && (
-        <div className="flex shrink-0 flex-wrap gap-x-4 px-3 pt-1.5 text-xs text-neutral-400">
-          <p id={hintId}>{TERMINAL_EXIT_HINT}: 터미널 밖으로 이동</p>
-          <p>
-            {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기 · {CLIPBOARD_KEYS.copy}: 복사(선택했을 때) · {CLIPBOARD_KEYS.paste}: 붙여넣기 · {EDIT_KEYS.deleteWord}: 단어 지우기 · {EDIT_KEYS.newline}: 줄바꿈
-          </p>
-        </div>
-      )}
-      <div className="relative min-h-0 flex-1">
-        {sessions.filter((s) => started.has(s.issueId)).map((s) => (
-          <IssuePanes key={`${s.issueId}|${s.cwd}`} spec={s} active={visible && s.issueId === activeId} hintId={hintId} onExit={onExit} />
-        ))}
-        {visible && !activeHasSession && (
-          <p className="p-4 text-sm text-neutral-400">worktree 가 준비되면 터미널을 사용할 수 있습니다.</p>
+    <LiveSessionsContext.Provider value={live}>
+      <div
+        className={visible ? 'absolute inset-0 flex flex-col' : 'hidden'}
+        style={{ background: terminalBackground(theme) }}
+        data-testid="terminal-tab"
+        role="region"
+        aria-label="터미널"
+        aria-describedby={activeHasSession ? hintId : undefined}
+      >
+        {activeHasSession && (
+          <div className="flex shrink-0 flex-wrap gap-x-4 px-3 pt-1.5 text-xs text-neutral-400">
+            <p id={hintId}>{TERMINAL_EXIT_HINT}: 터미널 밖으로 이동</p>
+            <p>
+              {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기 · {CLIPBOARD_KEYS.copy}:
+              복사(선택했을 때) · {CLIPBOARD_KEYS.paste}: 붙여넣기 · {EDIT_KEYS.deleteWord}: 단어 지우기 · {EDIT_KEYS.newline}: 줄바꿈
+            </p>
+          </div>
         )}
+        <div className="relative min-h-0 flex-1">
+          {sessions
+            .filter((s) => started.has(s.issueId))
+            .map((s) => (
+              <IssuePanes key={sessionKey(s)} spec={s} active={visible && s.issueId === activeId} hintId={hintId} onExit={onExit} />
+            ))}
+          {visible && !activeHasSession && (
+            <p className="p-4 text-sm text-neutral-400">worktree 가 준비되면 터미널을 사용할 수 있습니다.</p>
+          )}
+        </div>
       </div>
-    </div>
+    </LiveSessionsContext.Provider>
   )
 }
 
@@ -134,6 +162,11 @@ type TermState = {
   ptyId: string | null
   ended: boolean
   end(): void
+  /**
+   * 이 화면이 터미널의 크기를 정하는가. 같은 터미널을 여러 화면(이 PC 의 창·원격으로 붙은 기기)이 보면 크기는 하나여야 하므로,
+   * 마지막으로 입력한 화면에 맞춘다. 혼자 쓸 때는 항상 true 다.
+   */
+  owner: boolean
   /** 이 xterm 이 처리한 마지막 포커스 요청 — 인스턴스마다 둬야 StrictMode 재마운트로 새로 만든 xterm 도 포커스를 받는다 */
   focusToken?: number
 }
@@ -153,6 +186,7 @@ function TerminalSession({
 }) {
   // PTY 입출력은 원격 터미널도 이 PC 의 ssh 프로세스를 거친다 — 화면의 호스트가 바뀌어도 세션을 다시 만들지 않게 고정한다
   const { tauri } = useBaseDeps()
+  const live = useContext(LiveSessionsContext)
   // 객체가 아니라 값으로 비교해야 세션 목록이 다시 만들어질 때 터미널을 새로 띄우지 않는다
   const remoteHost = spec.remote?.host
   const remoteTmux = spec.remote?.tmux ?? false
@@ -198,7 +232,7 @@ function TerminalSession({
         {
           splitRight: () => ui().splitPane(spec.issueId, paneId, 'row'),
           splitDown: () => ui().splitPane(spec.issueId, paneId, 'col'),
-          // 패널이 언마운트되면 아래 cleanup 이 PTY(와 그 자손 프로세스)를 종료한다
+          // 패널이 없어지면 아래 cleanup 이 PTY(와 그 자손 프로세스)를 종료한다
           close: () => ui().closePane(spec.issueId, paneId),
         },
         {
@@ -226,12 +260,38 @@ function TerminalSession({
     t.open(el)
     // 입력 textarea 에도 탈출 안내를 연결한다 — region 에만 있으면 입력에 포커스를 둔 사용자는 듣지 못한다(AX-39)
     t.textarea?.setAttribute('aria-describedby', hintId)
+    const state: TermState = {
+      t,
+      fit,
+      ptyId: null,
+      ended: false,
+      owner: true,
+      end: () => {
+        if (disposed || state.ended) return
+        state.ended = true
+        focusRestartButton.current = el.contains(document.activeElement)
+        setEnded(true)
+      },
+    }
+    term.current = state
     // 클릭·Tab 으로 들어온 패널을 "현재 패널" 로 표시한다(분할·닫기 대상)
     const onFocus = () => useUiStore.getState().focusPane(spec.issueId, paneId)
     t.textarea?.addEventListener('focus', onFocus)
     // 사용자가 직접 넣은 입력(키·붙여넣기)의 에코를 에이전트의 출력으로 세지 않게 알린다.
     // xterm 이 프로그램의 질의에 자동으로 답하는 것(포커스·마우스·커서 위치 보고)은 입력으로 치지 않는다
-    const onUserInput = () => noteTerminalInput(paneId)
+    const onUserInput = () => {
+      noteTerminalInput(paneId)
+      // 다른 화면의 크기에 맞춰 보던 중이면, 입력하는 이 화면의 크기로 되돌린다
+      if (!state.owner && state.ptyId && !state.ended) {
+        state.owner = true
+        try {
+          fit.fit()
+        } catch {
+          return
+        }
+        tauri.ptyResize(state.ptyId, t.cols, t.rows).catch(() => undefined)
+      }
+    }
     t.textarea?.addEventListener('keydown', onUserInput)
     // xterm 의 compositionend 처리(위 open 때 등록) 뒤에 실행되므로, 이 타이머는 xterm 이 조합 글자를 보내는 타이머 다음에 돈다
     const onCompositionEnd = () => {
@@ -245,19 +305,6 @@ function TerminalSession({
       focusAfterRestart.current = false
       t.focus()
     }
-    const state: TermState = {
-      t,
-      fit,
-      ptyId: null,
-      ended: false,
-      end: () => {
-        if (disposed || state.ended) return
-        state.ended = true
-        focusRestartButton.current = el.contains(document.activeElement)
-        setEnded(true)
-      },
-    }
-    term.current = state
     const cleanups: (() => void)[] = []
 
     void (async () => {
@@ -311,20 +358,49 @@ function TerminalSession({
           // 숨김 상태에서는 크기를 잴 수 없다 — 표시될 때 다시 맞춘다
         }
         const remote = remoteHost === undefined ? undefined : remotePty(remoteHost, remoteTmux, spec.cwd, paneRole(spec.issueId, paneId))
-        const id = await tauri.ptySpawn({ cwd: spec.cwd, cols: Math.max(t.cols, 20), rows: Math.max(t.rows, 5), remote })
+        // 이 패널의 터미널이 이미 떠 있으면(다른 화면이 열었거나, 이 화면이 잠시 내려갔다 돌아온 경우) 새로 만들지 않고 붙는다
+        const found = await tauri.ptyFind(paneId)
+        const id = found
+          ? found.id
+          : await tauri.ptySpawn({ cwd: spec.cwd, cols: Math.max(t.cols, 20), rows: Math.max(t.rows, 5), remote, key: paneId })
         settled = true
         if (disposed) {
           pending.clear()
-          tauri.ptyKill(id).catch(() => undefined)
+          // 방금 이 화면이 만든 터미널만 정리한다 — 붙기만 한 터미널은 다른 화면이 쓰고 있다
+          if (!found && !paneExists(spec.issueId, paneId)) tauri.ptyKill(id).catch(() => undefined)
           return
         }
         state.ptyId = id
+        if (found) {
+          // 지금까지의 출력을 그 터미널의 크기로 그린다(크기가 다르면 줄바꿈 위치가 어긋난다). 크기는 이 화면에서 입력할 때 가져온다
+          state.owner = false
+          if (found.cols > 0 && found.rows > 0) t.resize(found.cols, found.rows)
+          t.write(found.scrollback)
+          // 붙기 전에 받은 조각은 scrollback 에 이미 들어 있다
+          pending.clear()
+          launchWhenReady()
+        }
         const early = pending.get(id)
         pending.clear()
         if (early) {
           t.write(early)
           launchWhenReady()
         }
+        const unExit = await tauri.onPtyExit((ended) => {
+          if (ended === id) state.end()
+        })
+        const unResized = await tauri.onPtyResized((e) => {
+          if (disposed || e.id !== id || (e.cols === t.cols && e.rows === t.rows)) return
+          // 다른 화면이 크기를 바꿨다 — 같은 크기로 그린다
+          state.owner = false
+          t.resize(e.cols, e.rows)
+        })
+        if (disposed) {
+          unExit()
+          unResized()
+          return
+        }
+        cleanups.push(unExit, unResized)
         useUiStore.setState((s) => ({ terminalIds: { ...s.terminalIds, [paneId]: id } }))
         const sub = t.onData((d) => {
           if (state.ended) return
@@ -345,8 +421,12 @@ function TerminalSession({
       t.textarea?.removeEventListener('compositionend', onCompositionEnd)
       t.textarea?.removeEventListener('paste', onUserInput)
       for (const c of cleanups) c()
+      // 패널이 없어졌거나(닫기), 세션이 목록에서 빠졌거나(작업 폴더 삭제), 끝난 터미널을 다시 시작할 때만 끝낸다. 패널이 그대로면(호스트 전환 등으로
+      // 화면만 내려간 경우) 터미널은 남겨 둔다 — 다른 기기가 보고 있을 수 있고, 돌아오면 다시 붙는다.
       // kill 의 reject(이미 종료된 PTY 등)는 무시한다
-      if (state.ptyId) tauri.ptyKill(state.ptyId).catch(() => undefined)
+      const sessionGone = live.current.mounted && !live.current.keys.has(sessionKey(spec))
+      if (state.ptyId && (state.ended || sessionGone || !paneExists(spec.issueId, paneId)))
+        tauri.ptyKill(state.ptyId).catch(() => undefined)
       useUiStore.setState((s) => {
         const terminalIds = { ...s.terminalIds }
         delete terminalIds[paneId]
@@ -355,6 +435,7 @@ function TerminalSession({
       t.dispose()
       term.current = null
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- live 는 바뀌지 않는 ref 다
   }, [tauri, spec.cwd, spec.issueId, remoteHost, remoteTmux, paneId, hintId, gen])
 
   // 분할·닫기·[새 터미널] 처럼 사용자가 패널을 바꿨을 때만 대상 패널로 포커스를 옮긴다(AX-02 자동 포커스 금지 유지)
@@ -396,7 +477,8 @@ function TerminalSession({
     if (!active || !el) return
     const resize = () => {
       const cur = term.current
-      if (!cur) return
+      // 다른 화면의 크기로 보는 중에는 맞추지 않는다(입력하면 이 화면의 크기로 돌아온다)
+      if (!cur || !cur.owner) return
       try {
         cur.fit.fit()
       } catch {

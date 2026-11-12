@@ -16,7 +16,7 @@ export { fail, ok } from '../lib/tauri.mock'
 /** base 를 overrides 로 덮고 모든 메서드를 vi.fn 으로 감싼다 */
 function mockAll<T extends object>(base: T, overrides: Partial<T>): Mocked<T> {
   const merged = { ...base, ...overrides }
-  return Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, vi.fn(fn as (...a: unknown[]) => unknown)])) as unknown as Mocked<T>
+  return Object.fromEntries(Object.entries(merged).map(([k, fn]) => [k, typeof fn === 'function' ? vi.fn(fn as (...a: unknown[]) => unknown) : fn])) as unknown as Mocked<T>
 }
 
 export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
@@ -25,6 +25,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
   const closeListeners = new Set<() => void>()
   const progressListeners = new Set<(p: UpdateProgress) => void>()
   const base: TauriApi = {
+    runtime: 'mock',
     gitRun: async () => ok(),
     ghRun: async () => ok(),
     ghAvailable: async () => false,
@@ -33,6 +34,21 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     ptyResize: async () => {},
     ptyKill: async () => {},
     ptyKillByCwd: async () => 0,
+    ptyFind: async () => null,
+    ptyList: async () => [],
+    onPtyExit: async () => () => {},
+    onPtyResized: async () => () => {},
+    sharedGet: async () => null,
+    sharedSet: async () => {},
+    onSharedChanged: async () => () => {},
+    remoteStatus: async () => ({ enabled: false, lan: false, port: 8790, addresses: [], devices: [], error: null }),
+    remoteConfigure: async () => ({ enabled: false, lan: false, port: 8790, addresses: [], devices: [], error: null }),
+    remotePairStart: async () => ({ code: '123456', expiresInSec: 120 }),
+    remotePairCancel: async () => {},
+    remoteDeviceRemove: async () => ({ enabled: false, lan: false, port: 8790, addresses: [], devices: [], error: null }),
+    onRemoteChanged: async () => () => {},
+    onRemoteRpc: async () => () => {},
+    remoteRpcReply: async () => {},
     sshHosts: async () => [],
     sshHostSave: async () => [],
     sshHostRemove: async () => [],

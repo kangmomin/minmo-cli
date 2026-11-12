@@ -330,7 +330,7 @@ describe('CR-08 PTY write reject → 세션 종료 안내 + [다시 시작]', ()
     expect(screen.getByRole('alert')).toHaveTextContent(ENDED)
   })
 
-  it('ptyKill 의 reject 는 무시한다(언마운트 경로) — unhandled rejection 없음', async () => {
+  it('ptyKill 의 reject 는 무시한다(패널 닫기 경로) — unhandled rejection 없음', async () => {
     const t = setup({
       ptyKill: async () => {
         throw new Error('already dead')
@@ -338,9 +338,19 @@ describe('CR-08 PTY write reject → 세션 종료 안내 + [다시 시작]', ()
     })
     await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
     await flush()
-    t.unmount()
+    const issueId = Object.keys(useUiStore.getState().panes)[0]
+    act(() => useUiStore.getState().closePane(issueId, `${issueId}::1`))
     await flush()
     expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1')
+  })
+
+  it('터미널 탭 전체가 내려가면(호스트 전환 등) 터미널을 끝내지 않는다 — 다른 기기가 보고 있을 수 있고, 돌아오면 다시 붙는다', async () => {
+    const t = setup()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalled())
+    await flush()
+    t.unmount()
+    await flush()
+    expect(t.tauri.ptyKill).not.toHaveBeenCalled()
   })
 })
 

@@ -1,6 +1,5 @@
 // 터미널 PTY (F-04, AC-08). 세션별 cwd 를 기록해 worktree 삭제 전 pty_kill_by_cwd 로 선종료한다.
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -36,8 +35,6 @@ pub struct PtySession {
     scrollback: Arc<Mutex<Scrollback>>,
     cols: u16,
     rows: u16,
-    /// 만든 시각 — 방금 만든 터미널은 패널 구성이 저장되기 전일 수 있어 정리(pty_gc)에서 뺀다
-    created: Instant,
     /// ConPTY 시작 커서 위치 질의(ESC[6n)의 응답(CPR)이 입력으로 지나갔는지
     cpr_answered: bool,
     /// 셸과 그 자손이 속한 Job Object — 만들지 못하면 None(트리 종료만으로 정리)
@@ -223,6 +220,8 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// key(화면의 패널 id)가 있고 그 패널의 터미널이 이미 떠 있으면 새로 만들지 않고 그 id 를 돌려준다 —
+/// 이 PC 의 창과 원격 접속한 기기가 같은 터미널을 함께 쓴다.
 #[tauri::command]
 pub fn pty_spawn(
     app: AppHandle,
@@ -231,69 +230,59 @@ pub fn pty_spawn(
     cols: u16,
     rows: u16,
     remote: Option<RemotePty>,
+    key: Option<String>,
 ) -> Result<String, String> {
-    spawn(&app, &state, None, cwd, cols, rows, remote)
+    if let Some(k) = &key {
+        if let Some(found) = find_alive(&state, k)? {
+            return Ok(found.id);
+        }
+    }
+    spawn(&app, &state, key, cwd, cols, rows, remote)
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PtyOpened {
+pub struct PtyFound {
     id: String,
-    /// false 면 이미 떠 있던 터미널에 붙은 것이다 — scrollback 을 먼저 그린다
-    created: bool,
+    /// 지금까지의 출력 — 붙는 화면이 먼저 그린다
     scrollback: String,
     cols: u16,
     rows: u16,
 }
 
-/// 패널(key)의 터미널을 연다. 이미 떠 있으면 새로 만들지 않고 그 터미널과 지금까지의 출력을 돌려준다 —
-/// 이 PC 의 창과 원격 접속한 기기가 같은 터미널을 함께 본다.
-#[tauri::command]
-pub fn pty_open(
-    app: AppHandle,
-    state: State<'_, PtyState>,
-    key: String,
-    cwd: String,
-    cols: u16,
-    rows: u16,
-    remote: Option<RemotePty>,
-) -> Result<PtyOpened, String> {
+/// key 의 터미널이 살아 있으면 돌려준다. 셸이 끝난 터미널은 치운다(그 패널은 새 터미널을 만들 수 있다)
+fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
     let ended = {
         let mut sessions = state.sessions.lock().map_err(err)?;
-        let found = sessions
+        let Some(id) = sessions
             .iter()
-            .find(|(_, s)| s.key.as_deref() == Some(key.as_str()))
-            .map(|(id, _)| id.clone());
-        match found {
-            Some(id) => {
-                let s = sessions.get_mut(&id).ok_or("pty 없음")?;
-                // 셸이 끝난 터미널은 버리고 새로 만든다
-                if matches!(s.child.try_wait(), Ok(None)) {
-                    let scrollback = s.scrollback.lock().map_err(err)?.0.clone();
-                    return Ok(PtyOpened {
-                        id,
-                        created: false,
-                        scrollback,
-                        cols: s.cols,
-                        rows: s.rows,
-                    });
-                }
-                sessions.remove(&id)
-            }
-            None => None,
+            .find(|(_, s)| s.key.as_deref() == Some(key))
+            .map(|(id, _)| id.clone())
+        else {
+            return Ok(None);
+        };
+        let s = sessions.get_mut(&id).ok_or("pty 없음")?;
+        if matches!(s.child.try_wait(), Ok(None)) {
+            let scrollback = s.scrollback.lock().map_err(err)?.0.clone();
+            return Ok(Some(PtyFound {
+                id,
+                scrollback,
+                cols: s.cols,
+                rows: s.rows,
+            }));
         }
+        sessions.remove(&id)
     };
     if let Some(s) = ended {
         std::thread::spawn(move || kill_and_close(vec![s]));
     }
-    let id = spawn(&app, &state, Some(key), cwd, cols, rows, remote)?;
-    Ok(PtyOpened {
-        id,
-        created: true,
-        scrollback: String::new(),
-        cols,
-        rows,
-    })
+    Ok(None)
+}
+
+/// 패널(key)의 터미널이 이미 떠 있으면 그 id 와 지금까지의 출력을 돌려준다(없으면 null)
+#[tauri::command]
+pub fn pty_find(state: State<'_, PtyState>, key: String) -> Result<Option<PtyFound>, String> {
+    find_alive(&state, &key)
 }
 
 #[derive(Serialize)]
@@ -318,30 +307,6 @@ pub fn pty_list(state: State<'_, PtyState>) -> Result<Vec<PtyInfo>, String> {
             host: s.host.clone(),
         })
         .collect())
-}
-
-/// 방금 만든 터미널은 정리하지 않는 시간 — 패널 구성이 저장·전달되기 전일 수 있다
-const GC_GRACE: Duration = Duration::from_secs(15);
-
-/// 화면에 패널이 남아 있지 않은 터미널(keys 에 없는 key)을 끝낸다. 화면이 닫혀도 터미널은 남으므로(다른 기기가
-/// 보고 있을 수 있다) 패널 구성을 가진 이 PC 의 창이 주기적으로 정리한다.
-#[tauri::command]
-pub async fn pty_gc(state: State<'_, PtyState>, keys: Vec<String>) -> Result<u32, String> {
-    let keep: HashSet<String> = keys.into_iter().collect();
-    let targets: Vec<PtySession> = {
-        let mut sessions = state.sessions.lock().map_err(err)?;
-        let ids: Vec<String> = sessions
-            .iter()
-            .filter(|(_, s)| {
-                s.created.elapsed() > GC_GRACE && s.key.as_ref().is_some_and(|k| !keep.contains(k))
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        ids.iter().filter_map(|id| sessions.remove(id)).collect()
-    };
-    let n = targets.len() as u32;
-    kill_sessions(targets).await?;
-    Ok(n)
 }
 
 fn spawn(
@@ -433,7 +398,6 @@ fn spawn(
             scrollback,
             cols,
             rows,
-            created: Instant::now(),
             cpr_answered: false,
             #[cfg(windows)]
             job,
@@ -739,7 +703,6 @@ mod tests {
                 scrollback: Arc::default(),
                 cols: 80,
                 rows: 24,
-                created: Instant::now(),
                 cpr_answered: false,
                 job,
             };

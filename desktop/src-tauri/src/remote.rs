@@ -48,7 +48,8 @@ const ALLOWED: &[&str] = &[
     "gitRun",
     "ghRun",
     "ghAvailable",
-    "ptyOpen",
+    "ptySpawn",
+    "ptyFind",
     "ptyWrite",
     "ptyResize",
     "ptyKill",
@@ -743,27 +744,22 @@ async fn call(ctx: &Ctx, method: &str, args: Value) -> Result<Value, String> {
             arg(&args, 1)?,
             arg(&args, 2)?,
         )),
-        "ptyOpen" => {
+        "ptySpawn" => {
             #[derive(Deserialize)]
-            struct Open {
-                key: String,
+            struct Spawn {
                 cwd: String,
                 cols: u16,
                 rows: u16,
                 #[serde(default)]
                 remote: Option<pty::RemotePty>,
+                #[serde(default)]
+                key: Option<String>,
             }
-            let o: Open = arg(&args, 0)?;
-            to(serde_json::to_value(pty::pty_open(
-                app.clone(),
-                ptys(),
-                o.key,
-                o.cwd,
-                o.cols,
-                o.rows,
-                o.remote,
-            )?))
+            let o: Spawn = arg(&args, 0)?;
+            pty::pty_spawn(app.clone(), ptys(), o.cwd, o.cols, o.rows, o.remote, o.key)
+                .map(Value::String)
         }
+        "ptyFind" => to(serde_json::to_value(pty::pty_find(ptys(), arg(&args, 0)?)?)),
         "ptyList" => to(serde_json::to_value(pty::pty_list(ptys())?)),
         "sharedGet" => to(serde_json::to_value(
             ctx.mgr().shared_get(&arg::<String>(&args, 0)?)?,
@@ -1163,7 +1159,14 @@ mod tests {
     #[test]
     fn remote_cannot_call_host_only_commands_or_read_tokens() {
         let none = json!([]);
-        for m in ["ptyOpen", "ptyWrite", "gitRun", "readTextFile", "sharedSet"] {
+        for m in [
+            "ptySpawn",
+            "ptyFind",
+            "ptyWrite",
+            "gitRun",
+            "readTextFile",
+            "sharedSet",
+        ] {
             assert!(allowed(m, &none), "{m}");
         }
         for m in [
@@ -1178,7 +1181,7 @@ mod tests {
             "sshHostSave",
             "remoteConfigure",
             "remotePairStart",
-            "ptySpawn",
+            "remoteRpcReply",
             "nope",
         ] {
             assert!(!allowed(m, &none), "{m}");

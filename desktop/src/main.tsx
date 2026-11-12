@@ -2,6 +2,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { App } from './App'
+import { RemoteGate } from './features/remote/RemoteGate'
+import { runtimeKind } from './lib/tauri'
 import './index.css'
 import { applyTheme } from './lib/theme'
 import { useUiStore } from './store/ui'
@@ -11,6 +13,13 @@ applyTheme(useUiStore.getState().theme)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {/* 다른 기기의 브라우저로 연 화면은 먼저 호스트에 붙는다(처음이면 기기 등록) */}
+    {runtimeKind() === 'remote' ? (
+      <RemoteGate>
+        <App />
+      </RemoteGate>
+    ) : (
+      <App />
+    )}
   </StrictMode>,
 )

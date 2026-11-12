@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 브라우저 열기 등은 window.__MINMO_MOCK__ 로 노출해 E2E 가 확인한다.
-import type { CloseAction, CmdResult, DirEntry, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress } from './tauri'
+import type { CloseAction, CmdResult, DirEntry, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, RemoteStatus } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -83,6 +83,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     }
   }
 
+  let remote: RemoteStatus = { enabled: false, lan: false, port: 8790, addresses: [], devices: [{ id: 'd1', name: '내 휴대폰', createdMs: 1, lastSeenMs: 1, connected: false }], error: null }
   const paths = new Set<string>()
   // 파일 탭: "root\nrel" → 내용. worktree 를 만들면 README.md 가 생긴 것으로 본다
   const textFiles = new Map<string, string>()
@@ -274,6 +275,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   }
 
   return {
+    runtime: 'mock',
     gitRun,
     ghRun: async () => fail('gh: mock — not installed', 127),
     ghAvailable: async () => false,
@@ -291,6 +293,28 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       emitPty(id, data === '\r' ? '\r\n$ ' : data)
     },
     ptyResize: async () => {},
+    ptyFind: async () => null,
+    ptyList: async () => [...ptyCwd].map(([id, cwd]) => ({ id, key: null, cwd, host: null })),
+    onPtyExit: async () => () => {},
+    onPtyResized: async () => () => {},
+    // 공유 상태·원격 접속은 mock 에서 쓰지 않는다(화면 상태는 평소처럼 브라우저 저장소에만 남는다)
+    sharedGet: async () => null,
+    sharedSet: async () => {},
+    onSharedChanged: async () => () => {},
+    remoteStatus: async () => remote,
+    remoteConfigure: async (input) => {
+      remote = { ...remote, ...input, addresses: (input.enabled ?? remote.enabled) ? [{ kind: 'local', url: `http://127.0.0.1:${input.port ?? remote.port}` }] : [] }
+      return remote
+    },
+    remotePairStart: async () => ({ code: '123456', expiresInSec: 120 }),
+    remotePairCancel: async () => {},
+    remoteDeviceRemove: async (id) => {
+      remote = { ...remote, devices: remote.devices.filter((d) => d.id !== id) }
+      return remote
+    },
+    onRemoteChanged: async () => () => {},
+    onRemoteRpc: async () => () => {},
+    remoteRpcReply: async () => {},
     ptyProcesses: async (id) => ptyProcs.get(id) ?? [],
     claudeSubagents: async (cwd) => subagents.get(cwd) ?? [],
     notify: async (title, body) => {
