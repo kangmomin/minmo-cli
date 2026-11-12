@@ -1,7 +1,5 @@
 import type { CloseAction, ServerStatus } from '../../lib/tauri'
 
-export const OAUTH_APP_NEW_URL = 'https://github.com/settings/applications/new'
-
 export const CLOSE_OPTIONS: { value: CloseAction; label: string }[] = [
   { value: 'ask', label: '매번 묻기' },
   { value: 'tray', label: '트레이로 최소화(서버 유지)' },

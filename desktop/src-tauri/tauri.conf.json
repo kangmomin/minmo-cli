@@ -36,11 +36,6 @@
       "endpoints": ["https://github.com/kangmomin/minmo-cli/releases/latest/download/latest.json"],
       "windows": { "installMode": "passive" },
       "requireSignedVersion": true
-    },
-    "deep-link": {
-      "desktop": {
-        "schemes": ["minmo"]
-      }
     }
   }
 }

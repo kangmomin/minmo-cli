@@ -61,7 +61,8 @@ export function createFakeApi(overrides: Partial<ApiClient> = {}): Mocked<ApiCli
   let vr: VisibleRepos = { repos: null, updatedAt: null }
   const base: ApiClient = {
     healthz: async () => ({ status: 'ok' }),
-    startLogin: unexpected('startLogin'),
+    startDeviceLogin: unexpected('startDeviceLogin'),
+    pollDeviceLogin: unexpected('pollDeviceLogin'),
     me: async () => ({ id: 'usr_1', githubLogin: 'octocat', avatarUrl: null }),
     getGithubToken: async () => ({ accessToken: 'gho_server' }),
     logout: async () => undefined,

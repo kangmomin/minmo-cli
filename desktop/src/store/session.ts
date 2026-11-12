@@ -3,7 +3,8 @@ import { create } from 'zustand'
 import type { Me } from '@minmo/api-client'
 
 export type ConnectionStatus = 'online' | 'offline'
-export type PendingLogin = { state: string; startedAt: number }
+/** 진행 중인 기기 코드 로그인 — 사용자가 verificationUri 에서 userCode 를 입력해 승인한다 */
+export type PendingLogin = { deviceId: string; userCode: string; verificationUri: string; /** 확인 간격(초) */ interval: number; startedAt: number; /** 코드 만료 시각(ms) */ expiresAt: number }
 export type AuthMessage = { code: string; message: string }
 
 export interface SessionState {
@@ -11,13 +12,13 @@ export interface SessionState {
   me: Me | null
   /** 서버 연결 상태 (OfflineBanner·mutation 비활성 판단) */
   status: ConnectionStatus
-  /** E1 호출로 켠 로그인 대기(10분 TTL, 메모리) */
+  /** E1 호출로 켠 로그인 대기(코드 만료까지, 메모리) */
   pendingLogin: PendingLogin | null
   /** 키체인 복원 진행 중 */
   restoring: boolean
-  /** 로그인 화면 오류(딥링크 error·E1 503 등) */
+  /** 로그인 화면 오류(승인 거부·코드 만료·E1 실패 등) */
   authError: AuthMessage | null
-  /** 안내 배너(콜드 스타트·keyring 저장 실패 등) */
+  /** 안내 배너(keyring 저장 실패 등) */
   notice: string | null
 
   setSession(token: string, me: Me): void

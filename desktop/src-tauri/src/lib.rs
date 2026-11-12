@@ -13,9 +13,7 @@ use tauri::Manager;
 pub fn run() {
     let mut builder = tauri::Builder::default();
 
-    // single-instance 는 가장 먼저 등록해야 한다. deep-link feature 가 켜져 있으면
-    // 두 번째 인스턴스로 들어온 minmo:// URL 을 deep-link 플러그인의 onOpenUrl 로 전달한다.
-    // 트레이로 숨긴 창도 다시 띄운다.
+    // single-instance 는 가장 먼저 등록해야 한다. 두 번째로 실행하면 이미 떠 있는 창(트레이로 숨긴 창 포함)을 띄운다.
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -24,7 +22,6 @@ pub fn run() {
     }
 
     let app = builder
-        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -33,13 +30,6 @@ pub fn run() {
         .manage(ssh::SshState::default())
         .manage(update::UpdateState::default())
         .setup(|app| {
-            // 개발 실행(설치기 없음)에서는 minmo:// 스킴을 런타임에 등록한다. 격리 프로필(E2E)은 설치된 앱의
-            // 등록을 가로채지 않도록 건너뛴다 — 딥링크는 두 번째 인스턴스 인자로 전달해 시험한다
-            #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
-            if !profile::isolated() {
-                use tauri_plugin_deep_link::DeepLinkExt;
-                app.deep_link().register_all()?;
-            }
             // 키체인 서비스 이름이 identifier 를 따르므로 키체인을 쓰기 전에
             profile::init(&app.config().identifier);
             let handle = app.handle().clone();

@@ -221,7 +221,7 @@ describe('contract: 에러 → ApiError (CT-21)', () => {
 
   it('E1 503 github_oauth_not_configured 는 코드 그대로 전달 (CT-38 전제)', async () => {
     const { api } = client(() => json(503, { error: 'github_oauth_not_configured' }), null)
-    const err = (await api.startLogin().catch((e: unknown) => e)) as ApiError
+    const err = (await api.startDeviceLogin().catch((e: unknown) => e)) as ApiError
     expect(err).toMatchObject({ status: 503, code: 'github_oauth_not_configured' })
   })
 })
@@ -234,10 +234,22 @@ describe('contract: 인증 헤더·토큰 override·무인증 경로', () => {
     expect(calls[0].headers.authorization).toBeUndefined()
   })
 
-  it('startLogin 은 POST /auth/github/start (CT-01)', async () => {
-    const { api, calls } = client(() => json(200, { authorizeUrl: 'https://github.com/login/oauth/authorize?x=1', state: 's' }), null)
-    await expect(api.startLogin()).resolves.toEqual({ authorizeUrl: 'https://github.com/login/oauth/authorize?x=1', state: 's' })
-    expect(calls[0]).toMatchObject({ method: 'POST', url: `${BASE}/auth/github/start` })
+  it('startDeviceLogin 은 POST /auth/github/device/start (CT-01)', async () => {
+    const start = { deviceId: 'd', userCode: 'WDJB-MJHT', verificationUri: 'https://github.com/login/device', expiresIn: 900, interval: 5 }
+    const { api, calls } = client(() => json(200, start), null)
+    await expect(api.startDeviceLogin()).resolves.toEqual(start)
+    expect(calls[0]).toMatchObject({ method: 'POST', url: `${BASE}/auth/github/device/start` })
+  })
+
+  it('pollDeviceLogin 은 POST /auth/github/device/poll {deviceId} — pending·ok, 만료·거부는 ApiError (CT-02·03·26)', async () => {
+    const replies = [json(200, { status: 'pending', interval: 5 }), json(200, { status: 'ok', session: 'tok' }), json(400, fx<Record<string, unknown>>('errors.json').device_code_expired), json(400, fx<Record<string, unknown>>('errors.json').access_denied)]
+    const { api, calls } = client(() => replies.shift()!, null)
+    await expect(api.pollDeviceLogin('d')).resolves.toEqual({ status: 'pending', interval: 5 })
+    await expect(api.pollDeviceLogin('d')).resolves.toEqual({ status: 'ok', session: 'tok' })
+    await expect(api.pollDeviceLogin('d')).rejects.toMatchObject({ status: 400, code: 'device_code_expired' })
+    await expect(api.pollDeviceLogin('d')).rejects.toMatchObject({ status: 400, code: 'access_denied' })
+    expect(calls[0]).toMatchObject({ method: 'POST', url: `${BASE}/auth/github/device/poll` })
+    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ deviceId: 'd' })
   })
 
   it('me/getGithubToken/logout 은 token override 를 Bearer 로 전송 (CT-35 지원)', async () => {

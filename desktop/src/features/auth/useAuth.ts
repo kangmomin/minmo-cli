@@ -1,4 +1,5 @@
-// F-01 로그인: E1 → opener → pendingLogin{state} → 딥링크(state 대조) → E3+E4 → 확정 / 실패 E5
+// F-01 로그인(GitHub 기기 코드 방식): E1 로 코드를 받아 보여 주고 브라우저를 연다 → 사용자가 승인할 때까지 E2 를 주기적으로 확인
+// → 세션을 받으면 E3+E4 로 확정 / 실패하면 E5 로 그 세션을 지운다
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef } from 'react'
 
@@ -23,45 +24,20 @@ export interface UseAuthResult {
   notice: string | null
   startLogin(): Promise<void>
   cancelLogin(): void
+  /** 진행 중인 로그인의 승인 페이지를 브라우저로 다시 연다 */
+  openVerification(): Promise<void>
   logout(): Promise<void>
 }
 
-export const PENDING_LOGIN_TTL_MS = 10 * 60 * 1000
-
-export const COLD_START_NOTICE = '앱이 꺼져 있었습니다 — 로그인을 다시 시도하세요'
 export const KEYRING_FAILED_NOTICE = '세션이 저장되지 않음(재시작 시 재로그인) — OS 키체인에 접근할 수 없습니다'
+export const LOGIN_EXPIRED_MESSAGE = '코드가 만료되었습니다 — 다시 로그인하세요'
+export const LOGIN_DENIED_MESSAGE = 'GitHub 에서 승인을 거부했습니다'
 
-/** 딥링크 error 코드 → UI 문구 (UI State Contract "딥링크 error") */
-export function deepLinkErrorMessage(code: string): string {
-  switch (code) {
-    case 'access_denied':
-      return 'GitHub 승인 취소됨'
-    case 'invalid_state':
-    case 'invalid_code':
-      return '로그인 요청이 만료되었거나 올바르지 않습니다 — 다시 시도하세요'
-    case 'github_unavailable':
-      return 'GitHub 연결 실패 — 잠시 후 다시 시도하세요'
-    default:
-      return `로그인 실패(${code}) — 다시 시도`
-  }
-}
-
-/** 딥링크 계약 `minmo://auth?…` — MINMO_DEEP_LINK 기본값 전제(env 로 바꾸면 여기도 함께 바꿔야 함) */
-function isAuthDeepLink(url: URL): boolean {
-  return (
-    url.protocol === 'minmo:' &&
-    url.host.toLowerCase() === 'auth' &&
-    !url.username &&
-    !url.password &&
-    (url.pathname === '' || url.pathname === '/')
-  )
-}
-
-/** E1 authorizeUrl 은 https 만 연다. loopback http(E2E githubmock)만 예외 */
-function isAllowedAuthorizeUrl(raw: string): boolean {
+/** 승인 페이지는 github.com 의 기기 코드 주소만 연다. loopback http(E2E githubmock)만 예외 */
+export function isAllowedVerificationUri(raw: string): boolean {
   try {
     const u = new URL(raw)
-    if (u.protocol === 'https:') return true
+    if (u.protocol === 'https:') return u.hostname === 'github.com' && u.pathname === '/login/device'
     return u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]')
   } catch {
     return false
@@ -71,8 +47,9 @@ function isAllowedAuthorizeUrl(raw: string): boolean {
 function apiMessage(err: unknown): AuthMessage {
   if (err instanceof ApiError) {
     if (err.code === 'github_oauth_not_configured') {
-      return { code: err.code, message: 'GitHub OAuth App 이 설정되지 않았습니다 — 서버 설정에서 Client ID·Secret 을 입력하세요' }
+      return { code: err.code, message: '이 앱에는 GitHub 로그인 설정(Client ID)이 들어 있지 않습니다 — 최신 버전으로 업데이트하세요' }
     }
+    if (err.code === 'github_unavailable') return { code: err.code, message: 'GitHub 에 연결하지 못했습니다 — 잠시 후 다시 시도하세요' }
     if (isOfflineError(err)) return { code: err.code, message: `서버에 연결할 수 없습니다(${err.code}) — 서버 설정에서 상태를 확인하세요` }
     return { code: err.code, message: `로그인 실패(${err.code}) — 다시 시도` }
   }
@@ -100,31 +77,47 @@ export function useAuth(): UseAuthResult {
 
   const phase: AuthPhase = restoring ? 'restoring' : token ? 'authenticated' : pendingLogin ? 'pending' : 'anonymous'
 
+  const openVerification = useCallback(async () => {
+    const store = useSessionStore.getState()
+    const pending = store.pendingLogin
+    if (!pending) return
+    try {
+      await tauri.openUrl(pending.verificationUri)
+    } catch (e) {
+      // 코드는 유효하다 — 직접 주소를 열어 입력할 수 있게 로그인은 계속 기다린다
+      store.setAuthError({ code: 'open_failed', message: `브라우저를 열 수 없습니다(${e instanceof Error ? e.message : String(e)}) — ${pending.verificationUri} 를 직접 여세요` })
+    }
+  }, [tauri])
+
   const startLogin = useCallback(async () => {
     const store = useSessionStore.getState()
     store.setAuthError(null)
     store.setNotice(null)
     let start
     try {
-      start = await api.startLogin()
+      start = await api.startDeviceLogin()
     } catch (e) {
       handleApiError(e)
+      store.setPendingLogin(null)
       store.setAuthError(apiMessage(e))
       return
     }
-    if (!isAllowedAuthorizeUrl(start.authorizeUrl)) {
-      store.setAuthError({ code: 'invalid_authorize_url', message: '서버가 안전하지 않은 로그인 주소를 돌려주었습니다(https 아님)' })
+    if (!isAllowedVerificationUri(start.verificationUri)) {
+      store.setPendingLogin(null)
+      store.setAuthError({ code: 'invalid_verification_uri', message: '서버가 GitHub 가 아닌 승인 주소를 돌려주었습니다' })
       return
     }
-    // 브라우저가 빠르게 돌아와도 대조할 수 있도록 먼저 pendingLogin 을 켠다
-    store.setPendingLogin({ state: start.state, startedAt: Date.now() })
-    try {
-      await tauri.openUrl(start.authorizeUrl)
-    } catch (e) {
-      store.setPendingLogin(null)
-      store.setAuthError({ code: 'open_failed', message: `브라우저를 열 수 없습니다 — ${e instanceof Error ? e.message : String(e)}` })
-    }
-  }, [api, tauri])
+    const now = Date.now()
+    store.setPendingLogin({
+      deviceId: start.deviceId,
+      userCode: start.userCode,
+      verificationUri: start.verificationUri,
+      interval: start.interval,
+      startedAt: now,
+      expiresAt: now + start.expiresIn * 1000,
+    })
+    await openVerification()
+  }, [api, openVerification])
 
   const cancelLogin = useCallback(() => {
     const store = useSessionStore.getState()
@@ -140,17 +133,15 @@ export function useAuth(): UseAuthResult {
     queryClient.clear()
   }, [api, tauri, queryClient])
 
-  return { phase, me, error, notice, startLogin, cancelLogin, logout }
+  return { phase, me, error, notice, startLogin, cancelLogin, openVerification, logout }
 }
 
-/** App 에 1회 마운트: 키체인 세션 복원(E3 검증) + onDeepLink 구독 */
+/** App 에 1회 마운트: 키체인 세션 복원(E3 검증) + 진행 중인 기기 코드 로그인의 승인 확인 */
 export function useAuthController(): void {
   const deps = useDeps()
   const queryClient = useQueryClient()
   const ref = useRef({ deps, queryClient })
   ref.current = { deps, queryClient }
-  /** 이미 처리한 pendingLogin state — deep-link·single-instance 중복 전달을 조용히 무시 */
-  const consumed = useRef(new Set<string>())
   const restored = useRef(false)
 
   // 1) 키체인 세션 복원
@@ -186,10 +177,22 @@ export function useAuthController(): void {
     })()
   }, [])
 
-  // 2) 딥링크 구독
+  // 2) 기기 코드 로그인: 서버가 알려 준 간격으로 승인 여부를 확인한다
+  const deviceId = useSessionStore((s) => s.pendingLogin?.deviceId ?? null)
   useEffect(() => {
-    let unlisten: (() => void) | null = null
-    let disposed = false
+    if (deviceId === null) return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    /** 이 로그인이 아직 진행 중인가(취소·다른 로그인 시작이면 false) */
+    const current = () => {
+      const p = useSessionStore.getState().pendingLogin
+      return !stopped && p !== null && p.deviceId === deviceId ? p : null
+    }
+    const fail = (message: AuthMessage) => {
+      const store = useSessionStore.getState()
+      store.setPendingLogin(null)
+      store.setAuthError(message)
+    }
 
     async function confirm(candidate: string) {
       const { api, tauri } = ref.current.deps
@@ -218,67 +221,47 @@ export function useAuthController(): void {
       }
     }
 
-    function handle(raw: string) {
-      let url: URL
+    const schedule = (seconds: number) => {
+      timer = setTimeout(() => void tick(), Math.max(1, seconds) * 1000)
+    }
+
+    async function tick() {
+      const pending = current()
+      if (!pending) return
+      if (Date.now() >= pending.expiresAt) {
+        fail({ code: 'device_code_expired', message: LOGIN_EXPIRED_MESSAGE })
+        return
+      }
+      const { api } = ref.current.deps
       try {
-        url = new URL(raw)
-      } catch {
-        return
-      }
-      // CT-39: minmo://auth (path 없음 또는 /) 만 — 다른 host/path 는 session/state 가 맞아도 무시
-      if (!isAuthDeepLink(url)) return
-      const params = url.searchParams
-      const state = params.get('state')
-      const session = params.get('session')
-      const error = params.get('error')
-      if (!session && !error) return
-
-      const store = useSessionStore.getState()
-      const pending = store.pendingLogin
-      if (state && consumed.current.has(state)) return
-
-      if (!pending) {
-        // 콜드 스타트(앱이 꺼져 있던 동안 도착) — 처리하지 않고 안내만
-        if (!store.token) store.setNotice(COLD_START_NOTICE)
-        return
-      }
-      if (Date.now() - pending.startedAt > PENDING_LOGIN_TTL_MS) {
-        store.setPendingLogin(null)
-        store.setNotice('로그인 대기 시간이 지났습니다 — 다시 시도하세요')
-        return
-      }
-
-      if (error) {
-        if (state && state !== pending.state) return
-        if (state) {
-          consumed.current.add(state)
-          store.setPendingLogin(null)
+        const res = await api.pollDeviceLogin(deviceId!)
+        if (res.status === 'ok') {
+          if (!current()) {
+            // 그 사이 취소했다 — 만들어진 세션은 쓰지 않으므로 지운다
+            await api.logout({ token: res.session }).catch(() => undefined)
+            return
+          }
+          useSessionStore.getState().setPendingLogin(null)
+          await confirm(res.session)
+          return
         }
-        // state 없는 error 는 메시지만 표시(pendingLogin 유지)
-        store.setAuthError({ code: error, message: deepLinkErrorMessage(error) })
-        return
+        if (current()) schedule(res.interval)
+      } catch (e) {
+        if (!current()) return
+        if (e instanceof ApiError && e.code === 'access_denied') return fail({ code: e.code, message: LOGIN_DENIED_MESSAGE })
+        if (e instanceof ApiError && e.code === 'device_code_expired') return fail({ code: e.code, message: LOGIN_EXPIRED_MESSAGE })
+        // 서버·GitHub 의 일시 오류는 코드가 살아 있는 동안 계속 확인한다
+        if (isOfflineError(e)) handleApiError(e)
+        schedule(pending.interval)
       }
-
-      // session= 은 state 일치가 필수 (login-CSRF/세션 주입 방어)
-      if (!session || !state || state !== pending.state) return
-      consumed.current.add(state)
-      store.setPendingLogin(null)
-      void confirm(session)
     }
 
-    void ref.current.deps.tauri
-      .onDeepLink((urls) => {
-        for (const u of urls) handle(u)
-      })
-      .then((un) => {
-        if (disposed) un()
-        else unlisten = un
-      })
+    schedule(useSessionStore.getState().pendingLogin?.interval ?? 5)
     return () => {
-      disposed = true
-      unlisten?.()
+      stopped = true
+      if (timer !== undefined) clearTimeout(timer)
     }
-  }, [])
+  }, [deviceId])
 
   // 3) 세션이 사라지면(401·로그아웃) 키체인도 비운다
   useEffect(

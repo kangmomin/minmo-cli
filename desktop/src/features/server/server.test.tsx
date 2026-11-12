@@ -53,37 +53,26 @@ describe('ServerSettingsDialog', () => {
     return { tauri: fake.tauri }
   }
 
-  it('상태·callback URL 을 보여 주고, Secret 은 저장 여부만 표시한다', async () => {
-    open({ ...SERVER_SETTINGS, githubClientId: 'Iv1.x', hasClientSecret: true })
-    expect(await screen.findByLabelText('Client ID')).toHaveValue('Iv1.x')
+  it('서버 상태와 포트·닫기 동작만 다룬다 — OAuth App(Client ID·Secret) 항목은 없다', async () => {
+    open()
+    expect(await screen.findByLabelText('포트')).toHaveValue('8787')
     expect(screen.getByTestId('server-status')).toHaveTextContent('실행 중 · 127.0.0.1:8787')
-    expect(screen.getByTestId('callback-url')).toHaveTextContent('http://127.0.0.1:8787/auth/github/callback')
-    const secret = screen.getByLabelText('Client Secret')
-    expect(secret).toHaveValue('')
-    expect(secret).toHaveAttribute('type', 'password')
-    expect(secret).toHaveAttribute('placeholder', expect.stringContaining('저장됨'))
+    expect(screen.queryByLabelText('Client ID')).toBeNull()
+    expect(screen.queryByLabelText('Client Secret')).toBeNull()
+    expect(screen.queryByText(/OAuth App/)).toBeNull()
   })
 
-  it('바뀐 값만 저장하고 닫는다(빈 Secret 은 보내지 않음)', async () => {
+  it('바뀐 값만 저장하고 닫는다', async () => {
     const { tauri } = open()
-    fireEvent.change(await screen.findByLabelText('Client ID'), { target: { value: '  Iv1.new ' } })
-    fireEvent.click(screen.getByLabelText('트레이로 최소화(서버 유지)'))
+    fireEvent.click(await screen.findByLabelText('트레이로 최소화(서버 유지)'))
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
     await waitFor(() => expect(useServerStore.getState().settingsOpen).toBe(false))
-    expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ githubClientId: 'Iv1.new', closeAction: 'tray' })
+    expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ closeAction: 'tray' })
   })
 
-  it('Secret 을 입력하면 보낸다', async () => {
-    const { tauri } = open()
-    fireEvent.change(await screen.findByLabelText('Client Secret'), { target: { value: 'sec ' } })
-    fireEvent.click(screen.getByRole('button', { name: '저장' }))
-    await waitFor(() => expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ githubClientSecret: 'sec' }))
-  })
-
-  it('포트를 바꾸면 callback URL·안내가 따라 바뀌고 새 포트를 저장한다', async () => {
+  it('포트를 바꾸면 안내가 뜨고 새 포트를 저장한다', async () => {
     const { tauri } = open()
     fireEvent.change(await screen.findByLabelText('포트'), { target: { value: '18787' } })
-    expect(screen.getByTestId('callback-url')).toHaveTextContent('http://127.0.0.1:18787/auth/github/callback')
     expect(screen.getByText(/새 포트로 다시 시작하고 다시 연결합니다/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
     await waitFor(() => expect(useServerStore.getState().settingsOpen).toBe(false))
@@ -107,17 +96,12 @@ describe('ServerSettingsDialog', () => {
     })
     useServerStore.setState({ status: running, settingsOpen: true })
     render(<ServerSettingsDialog tauri={fake.tauri} />)
-    fireEvent.change(await screen.findByLabelText('Client ID'), { target: { value: 'x' } })
+    fireEvent.change(await screen.findByLabelText('포트'), { target: { value: '18787' } })
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('키체인 오류')
     expect(useServerStore.getState().settingsOpen).toBe(true)
   })
 
-  it('[GitHub 에서 OAuth App 등록]은 등록 페이지를 연다', async () => {
-    const { tauri } = open()
-    fireEvent.click(await screen.findByRole('button', { name: /OAuth App 등록/ }))
-    expect(tauri.openUrl).toHaveBeenCalledWith('https://github.com/settings/applications/new')
-  })
 })
 
 describe('ServerStartScreen', () => {

@@ -21,7 +21,6 @@ function mockAll<T extends object>(base: T, overrides: Partial<T>): Mocked<T> {
 
 export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
   const keychain = new Map<string, string>()
-  const deepLinkListeners = new Set<(urls: string[]) => void>()
   const serverListeners = new Set<(s: ServerStatus) => void>()
   const closeListeners = new Set<() => void>()
   const progressListeners = new Set<(p: UpdateProgress) => void>()
@@ -69,12 +68,6 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     removePath: async () => {},
     openUrl: async () => {},
     pickFolder: async () => null,
-    onDeepLink: async (cb) => {
-      deepLinkListeners.add(cb)
-      return () => {
-        deepLinkListeners.delete(cb)
-      }
-    },
     serverStatus: async () => ({ state: 'running', port: 8787, message: null }),
     onServerStatus: async (cb) => {
       serverListeners.add(cb)
@@ -107,10 +100,6 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
   return {
     tauri,
     keychain,
-    emitDeepLink(...urls: string[]) {
-      for (const l of [...deepLinkListeners]) l(urls)
-    },
-    deepLinkListenerCount: () => deepLinkListeners.size,
     emitServerStatus(s: ServerStatus) {
       for (const l of [...serverListeners]) l(s)
     },
@@ -125,10 +114,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
 
 export const SERVER_SETTINGS: ServerSettings = {
   port: 8787,
-  githubClientId: '',
-  hasClientSecret: false,
   closeAction: 'ask',
-  callbackUrl: 'http://127.0.0.1:8787/auth/github/callback',
   warning: null,
 }
 
@@ -139,7 +125,8 @@ const unexpected = (name: string) => async () => {
 export function createFakeApi(overrides: Partial<ApiClient> = {}): Mocked<ApiClient> {
   const base: ApiClient = {
     healthz: unexpected('healthz'),
-    startLogin: unexpected('startLogin'),
+    startDeviceLogin: unexpected('startDeviceLogin'),
+    pollDeviceLogin: unexpected('pollDeviceLogin'),
     me: unexpected('me'),
     getGithubToken: unexpected('getGithubToken'),
     logout: unexpected('logout'),

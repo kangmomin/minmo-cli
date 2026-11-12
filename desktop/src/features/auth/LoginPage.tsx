@@ -1,5 +1,5 @@
-import { LogInIcon, Loader2Icon, ServerIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { CopyIcon, ExternalLinkIcon, LogInIcon, Loader2Icon, ServerIcon } from 'lucide-react'
+import { useState } from 'react'
 
 import { ThemeToggle } from '../../components/ThemeToggle'
 import { Button } from '../../components/ui/button'
@@ -8,28 +8,22 @@ import { useSessionStore } from '../../store/session'
 import { AppVersion } from '../update/AppVersion'
 import { useAuth } from './useAuth'
 
-/** UI State "로그인 대기": 2분이 지나면 시간 초과 안내 (pendingLogin 자체 TTL 은 10분) */
-export const LOGIN_WAIT_TIMEOUT_MS = 2 * 60 * 1000
-
+/** GitHub 기기 코드 로그인: [GitHub 로 로그인] → 코드 표시 + 브라우저 열기 → 승인하면 자동으로 로그인된다 */
 export function LoginPage() {
   const auth = useAuth()
   const pending = useSessionStore((s) => s.pendingLogin)
   const setNotice = useSessionStore((s) => s.setNotice)
-  const [now, setNow] = useState(() => Date.now())
+  const [copied, setCopied] = useState('')
 
-  useEffect(() => {
+  async function copyCode() {
     if (!pending) return
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [pending])
-
-  const timedOut = pending !== null && now - pending.startedAt > LOGIN_WAIT_TIMEOUT_MS
-  const oauthMissing = auth.error?.code === 'github_oauth_not_configured'
-
-  // 첫 실행: OAuth App 값이 없으면 로그인 시도 때 서버 설정을 바로 연다
-  useEffect(() => {
-    if (oauthMissing) openServerSettings()
-  }, [oauthMissing, auth.error])
+    try {
+      await navigator.clipboard.writeText(pending.userCode)
+      setCopied('코드를 복사했습니다')
+    } catch {
+      setCopied('복사하지 못했습니다 — 직접 입력하세요')
+    }
+  }
 
   return (
     <div className="relative flex h-full items-center justify-center bg-muted/40" data-testid="login-page">
@@ -59,30 +53,41 @@ export function LoginPage() {
           </p>
         )}
 
-        {auth.phase === 'pending' ? (
-          <div className="grid gap-3">
-            <p className="flex items-center gap-2 text-sm">
-              {timedOut ? (
-                '시간 초과 — 다시 시도'
-              ) : (
-                <>
-                  <Loader2Icon className="size-4 animate-spin" /> 브라우저에서 GitHub 승인 중…
-                </>
-              )}
+        {auth.phase === 'pending' && pending ? (
+          <div className="grid gap-3" data-testid="device-login">
+            <p className="text-sm">브라우저에 열린 GitHub 페이지에 아래 코드를 입력하고 승인하세요. 승인하면 자동으로 로그인됩니다.</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 rounded bg-muted px-3 py-2 text-center font-mono text-2xl font-semibold tracking-widest" data-testid="device-user-code" aria-label={`로그인 코드 ${pending.userCode}`}>
+                {pending.userCode}
+              </code>
+              <Button type="button" variant="outline" size="sm" onClick={() => void copyCode()}>
+                <CopyIcon /> 복사
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground" role="status">
+              {copied}
             </p>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={auth.cancelLogin}>
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2Icon className="size-4 animate-spin" /> GitHub 승인을 기다리는 중…
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => void auth.openVerification()}>
+                <ExternalLinkIcon /> 브라우저 다시 열기
+              </Button>
+              <Button variant="ghost" onClick={auth.cancelLogin}>
                 취소
               </Button>
-              <Button onClick={() => void auth.startLogin()}>다시 시도</Button>
             </div>
+            <p className="break-all text-xs text-muted-foreground">
+              브라우저가 열리지 않으면 직접 여세요: <span className="font-mono">{pending.verificationUri}</span>
+            </p>
           </div>
         ) : (
           <Button onClick={() => void auth.startLogin()} disabled={auth.phase === 'restoring'}>
             <LogInIcon /> GitHub로 로그인
           </Button>
         )}
-        <Button variant={oauthMissing ? 'outline' : 'ghost'} size="sm" onClick={openServerSettings}>
+        <Button variant="ghost" size="sm" onClick={openServerSettings}>
           <ServerIcon /> 서버 설정
         </Button>
       </div>
