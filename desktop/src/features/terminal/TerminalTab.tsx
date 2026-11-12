@@ -10,6 +10,8 @@ import { Button } from '../../components/ui/button'
 import { remotePty } from '../../lib/sshHost'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
+import { noteTerminalInput } from '../agents/useAgentTracker'
+import { PaneAgentChip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 import { layoutPanes, leafIds } from './panes'
 
@@ -108,6 +110,7 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
           data-testid="terminal-pane"
         >
           <TerminalSession spec={spec} paneId={r.id} active={active} hintId={hintId} onExit={onExit} />
+          <PaneAgentChip paneId={r.id} />
         </div>
       ))}
       {!panes.tree && active && (
@@ -274,6 +277,8 @@ function TerminalSession({
         useUiStore.setState((s) => ({ terminalIds: { ...s.terminalIds, [paneId]: id } }))
         const sub = t.onData((d) => {
           if (state.ended) return
+          // 사용자가 친 글자의 에코를 에이전트의 출력으로 세지 않게 알린다
+          noteTerminalInput(paneId)
           tauri.ptyWrite(id, d).catch(state.end)
         })
         cleanups.push(() => sub.dispose())

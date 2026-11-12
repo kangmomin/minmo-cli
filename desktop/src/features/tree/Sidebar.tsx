@@ -1,4 +1,4 @@
-import { ListFilterIcon, ServerCogIcon } from 'lucide-react'
+import { BotIcon, ListFilterIcon, ServerCogIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import type { GitHubOwner, GitHubRepo } from '@minmo/core'
@@ -13,6 +13,7 @@ import { ScrollArea } from '../../components/ui/scroll-area'
 import { sshErrorText } from '../../lib/sshHost'
 import { useHostsStore } from '../../store/hosts'
 import { LOCAL_OWNER, splitFullName, useReposStore } from '../../store/repos'
+import { useUiStore } from '../../store/ui'
 import { HostsDialog } from '../hosts/HostsDialog'
 import type { PreviewIssue } from '../settings/SettingsDialog'
 import { AddRepoMenu } from './AddRepoMenu'
@@ -44,6 +45,8 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings }: SidebarProp
   const ownerFilter = useOwnerFilter()
   const filtering = useRepoSelection() !== null
   const [filterOpen, setFilterOpen] = useState(false)
+  const agentsOnly = useUiStore((s) => s.treeAgentsOnly)
+  const setAgentsOnly = useUiStore((s) => s.setTreeAgentsOnly)
   const [publishId, setPublishId] = useState<string | null>(null)
   const host = useHost()
   const added = useReposStore((s) => s.added)
@@ -107,8 +110,9 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings }: SidebarProp
         </Button>
       </div>
       <HostsDialog open={hostsOpen} onOpenChange={setHostsOpen} />
-      <div className="flex items-center gap-2 border-b px-3 py-2">
-        <span className="flex-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">GitHub</span>
+      {/* 버튼이 여럿이라 좁은 사이드바에서 밀려 나가지 않게 줄바꿈을 허용한다 */}
+      <div className="flex flex-wrap items-center gap-x-1 gap-y-1 border-b px-3 py-2">
+        <span className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">GitHub</span>
         {source.data === 'rest' && (
           <Badge variant="outline" title="gh CLI 가 없거나 인증되지 않아 서버 토큰으로 REST 를 호출합니다">
             gh 미사용(REST)
@@ -122,6 +126,16 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings }: SidebarProp
           onClick={() => setFilterOpen(true)}
         >
           <ListFilterIcon />
+        </Button>
+        <Button
+          variant={agentsOnly ? 'secondary' : 'ghost'}
+          size="icon-sm"
+          aria-label="에이전트가 있는 이슈만"
+          aria-pressed={agentsOnly}
+          title={agentsOnly ? '에이전트가 있는 이슈만 보는 중 — 누르면 모두 보기' : '에이전트가 있는 이슈만 보기'}
+          onClick={() => setAgentsOnly(!agentsOnly)}
+        >
+          <BotIcon />
         </Button>
         <AddRepoMenu />
         <RefreshButton />

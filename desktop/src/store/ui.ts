@@ -16,6 +16,18 @@ const THEME_VALUES: readonly Theme[] = ['ghostty', 'black', 'light']
 
 /** 터미널·파일 편집기의 글자 크기(px) */
 export const FONT_SIZE = { default: 13, min: 9, max: 28 } as const
+/** 전체 현황(에이전트 목록)의 보기 옵션 — 값의 뜻은 features/agents/overview.ts */
+export type AgentsView = {
+  /** 보일 상태(빈 목록 = 전부) */
+  statuses: string[]
+  /** 보일 에이전트 종류(빈 목록 = 전부) */
+  agents: string[]
+  query: string
+  sort: 'status' | 'recent' | 'name'
+  group: 'none' | 'repo' | 'status' | 'agent' | 'host'
+}
+export const DEFAULT_AGENTS_VIEW: AgentsView = { statuses: [], agents: [], query: '', sort: 'status', group: 'none' }
+
 export const clampFontSize = (n: unknown): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(FONT_SIZE.max, Math.max(FONT_SIZE.min, Math.round(n))) : FONT_SIZE.default
 const isTheme = (v: unknown): v is Theme => THEME_VALUES.includes(v as Theme)
@@ -31,6 +43,12 @@ export interface UiState {
   theme: Theme
   /** 터미널·파일 편집기의 글자 크기(px, persist) */
   fontSize: number
+  /** 에이전트가 끝났거나 입력을 기다릴 때 OS 알림을 띄운다(persist) */
+  agentNotify: boolean
+  /** 전체 현황의 필터·정렬·그루핑(persist) */
+  agentsView: AgentsView
+  /** 트리에 에이전트가 있는 이슈만 보인다(persist) */
+  treeAgentsOnly: boolean
   panes: Record<string, IssuePanes>
   /** 사용자가 분할·닫기를 했을 때만 포커스를 옮긴다 — token 이 바뀐 요청만 처리(자동 포커스 금지 AX-02) */
   focusRequest: { paneId: string; token: number } | null
@@ -43,6 +61,9 @@ export interface UiState {
   setTheme(t: Theme): void
   /** 범위(FONT_SIZE)를 벗어나면 가까운 값으로 맞춘다 */
   setFontSize(n: number): void
+  setAgentNotify(v: boolean): void
+  setAgentsView(patch: Partial<AgentsView>): void
+  setTreeAgentsOnly(v: boolean): void
   /**
    * 저장소 식별이 바뀔 때(로컬 저장소를 GitHub 에 올림) 이슈 id 와 트리 노드 id 를 옮긴다.
    * 패널 id 에는 이슈 id 가 들어 있어 옮길 수 없다 — 그 이슈의 터미널 패널은 닫고 다시 열 때 새로 만든다.
@@ -66,6 +87,9 @@ export const useUiStore = create<UiState>()(
       terminalIds: {},
       theme: 'ghostty',
       fontSize: FONT_SIZE.default,
+      agentNotify: true,
+      agentsView: DEFAULT_AGENTS_VIEW,
+      treeAgentsOnly: false,
       panes: {},
       focusRequest: null,
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
@@ -86,6 +110,9 @@ export const useUiStore = create<UiState>()(
         }),
       setTheme: (theme) => set({ theme }),
       setFontSize: (n) => set({ fontSize: clampFontSize(n) }),
+      setAgentNotify: (agentNotify) => set({ agentNotify }),
+      setAgentsView: (patch) => set((s) => ({ agentsView: { ...s.agentsView, ...patch } })),
+      setTreeAgentsOnly: (treeAgentsOnly) => set({ treeAgentsOnly }),
       rekey: (issues, nodes) =>
         set((s) => {
           const worktreePathMap = { ...s.worktreePathMap }
@@ -165,6 +192,9 @@ export const useUiStore = create<UiState>()(
         worktreePathMap: s.worktreePathMap,
         theme: s.theme,
         fontSize: s.fontSize,
+        agentNotify: s.agentNotify,
+        agentsView: s.agentsView,
+        treeAgentsOnly: s.treeAgentsOnly,
       }),
       // v1: Ghostty 가 새 기본 테마다. 예전에는 고른 적이 없어도 기본값 'black' 이 저장돼 있었으므로, 저장된 'black' 을
       // 한 번만 Ghostty 로 옮긴다(직접 고른 'light' 는 그대로 둔다). 그 뒤에 고른 블랙은 유지된다
@@ -176,7 +206,10 @@ export const useUiStore = create<UiState>()(
       // 알 수 없는 테마 값(손으로 고친 값·다른 버전이 남긴 값)은 기본 테마로 본다
       merge: (persisted, current) => {
         const state = (persisted ?? {}) as Partial<UiState>
-        return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme, fontSize: state.fontSize === undefined ? current.fontSize : clampFontSize(state.fontSize) }
+        return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme, fontSize: state.fontSize === undefined ? current.fontSize : clampFontSize(state.fontSize),
+          // 예전 버전의 저장 값에는 없거나 모양이 다를 수 있다 — 기본값 위에 얹는다
+          agentsView: { ...current.agentsView, ...(typeof state.agentsView === 'object' && state.agentsView !== null ? state.agentsView : {}) },
+        }
       },
     },
   ),

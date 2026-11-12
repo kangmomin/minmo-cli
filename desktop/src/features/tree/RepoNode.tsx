@@ -21,6 +21,7 @@ import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
 import { BaseRepoDialog } from './BaseRepoDialog'
+import { issueStatus, useAgentStore } from '../agents/agentStore'
 import { IssueRow } from './IssueRow'
 import { NewTaskDialog } from './LocalRepoDialogs'
 import { useOpenPublish } from './publishContext'
@@ -62,6 +63,10 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
     [issues.issues, map, repo.owner, repo.name, worktreeId],
   )
   const hasAnyWorktree = entries.some(([, e]) => e !== undefined)
+  // "에이전트가 있는 이슈만" 필터 — 켜면 터미널에서 에이전트가 도는 이슈만 남긴다
+  const agentsOnly = useUiStore((s) => s.treeAgentsOnly)
+  const agentPanes = useAgentStore((s) => (agentsOnly ? s.panes : null))
+  const shownEntries = agentPanes ? entries.filter(([i]) => issueStatus(agentPanes, worktreeId(repo.owner, repo.name, i.key)) !== null) : entries
 
   // F-08/EC-24: 펼칠 때 effective 로 현재 경로를 계산해 생성 당시 경로와 비교. 오프라인·캐시 없음이면 배지 생략
   const effective = useQuery({
@@ -243,9 +248,11 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
               </div>
             )}
             {issues.isLoading && <div className="px-2 py-1 text-xs text-muted-foreground">이슈 불러오는 중…</div>}
-            {entries.map(([issue, entry]) => (
+            {agentsOnly && !issues.isLoading && shownEntries.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">에이전트가 도는 이슈 없음</div>}
+            {shownEntries.map(([issue, entry]) => (
               <IssueRow
                 key={issue.key}
+                issueId={worktreeId(repo.owner, repo.name, issue.key)}
                 owner={repo.owner}
                 repo={repo.name}
                 issue={issue}
