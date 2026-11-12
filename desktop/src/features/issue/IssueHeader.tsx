@@ -62,7 +62,7 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
             <GitBranchIcon />
             {state.branch}
           </Badge>
-          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={state.path}>
+          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground max-md:hidden" title={state.path}>
             {state.path}
           </span>
           {state.pathChanged && (

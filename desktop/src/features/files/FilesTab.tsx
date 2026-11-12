@@ -126,8 +126,9 @@ export function FilesTab({ root, scope }: FilesTabProps) {
   }
 
   return (
-    <div className="absolute inset-0 flex" data-testid="files-tab">
-      <div className="flex w-64 shrink-0 flex-col border-r">
+    <div className="absolute inset-0 flex max-md:flex-col" data-testid="files-tab">
+      {/* 좁은 화면(휴대폰)에서는 트리를 위에, 편집기를 아래에 둔다 */}
+      <div className="flex w-64 shrink-0 flex-col border-r max-md:max-h-[38%] max-md:min-h-32 max-md:w-full max-md:border-b max-md:border-r-0">
         <div className="flex items-center gap-0.5 border-b px-1 py-1">
           <Button size="icon-sm" variant="ghost" aria-label="새 파일" title="새 파일" onClick={() => setPrompt({ kind: 'file', dir: targetDir })}>
             <FilePlusIcon />

@@ -1148,18 +1148,32 @@ async fn asset(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
             "웹 화면 파일이 없습니다(개발 모드에서는 빌드한 앱으로 확인하세요)",
         );
     };
+    // 앱의 파일 찾기는 없는 경로에도 index.html 을 돌려준다 — 받은 내용이 index.html 과 같으면 요청한 이름과 상관없이
+    // 화면 파일로 다룬다(형식 추측만으로는 가릴 수 없다: .webmanifest 도 text/html 로 추측된다)
+    let is_index = is_index
+        || (a.mime_type.starts_with("text/html")
+            && resolver
+                .get("index.html".into())
+                .is_some_and(|i| i.bytes == a.bytes));
     let mut resp = Response::new(Body::from(a.bytes));
-    if let Ok(v) = HeaderValue::from_str(&a.mime_type) {
+    // 앱에 들어 있는 파일의 형식 추측은 .webmanifest 를 모른다 — 홈 화면에 추가할 때 브라우저가 읽는 파일이다
+    let mime = if !is_index && path.ends_with(".webmanifest") {
+        "application/manifest+json"
+    } else {
+        a.mime_type.as_str()
+    };
+    if let Ok(v) = HeaderValue::from_str(mime) {
         resp.headers_mut().insert(header::CONTENT_TYPE, v);
     }
     let h = resp.headers_mut();
-    // 화면 파일은 이름에 해시가 붙는다 — index.html 만 매번 새로 받는다
+    // 빌드가 만든 파일(assets/)은 이름에 해시가 붙어 내용이 바뀌면 이름도 바뀐다 — 오래 기억해도 된다.
+    // 그 밖의 파일(index.html, manifest, 아이콘)은 이름이 그대로이므로 매번 새로 확인한다
     h.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static(if is_index {
-            "no-cache"
-        } else {
+        HeaderValue::from_static(if !is_index && path.starts_with("assets/") {
             "public, max-age=31536000, immutable"
+        } else {
+            "no-cache"
         }),
     );
     h.insert(
