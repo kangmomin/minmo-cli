@@ -6,6 +6,16 @@ export const TERMINAL_EXIT_HINT = 'Ctrl+Shift+M'
 /** 패널 단축키 — 앱이 우선 처리하므로 셸의 Ctrl+D(EOF)·Ctrl+W(단어 지우기)는 이 키로 보낼 수 없다(사용자 결정) */
 export const PANE_KEYS = { splitRight: 'Ctrl+D', splitDown: 'Ctrl+Shift+D', close: 'Ctrl+W' } as const
 
+/** 복사·붙여넣기 — Windows Terminal 과 같게: 선택이 있으면 Ctrl+C 는 복사, Ctrl+V 는 붙여넣기 */
+export const CLIPBOARD_KEYS = { copy: 'Ctrl+C', paste: 'Ctrl+V' } as const
+
+export interface TerminalClipboard {
+  /** 터미널에서 선택한 글자(없으면 빈 문자열) */
+  selection(): string
+  copy(text: string): void
+  clearSelection(): void
+}
+
 export interface PaneKeyActions {
   splitRight(): void
   splitDown(): void
@@ -23,9 +33,25 @@ function isKey(e: KeyboardEvent, letter: string): boolean {
  * xterm attachCustomKeyEventHandler 용. false 를 돌려주면 xterm 이 키를 처리(셸 전송)하지 않는다.
  * 앱 단축키는 keydown 에서 1회 실행하고, keypress/keyup 도 셸로 새지 않게 막는다.
  */
-export function createTerminalKeyHandler(onExit: () => void, panes?: PaneKeyActions): (e: KeyboardEvent) => boolean {
+export function createTerminalKeyHandler(onExit: () => void, panes?: PaneKeyActions, clipboard?: TerminalClipboard): (e: KeyboardEvent) => boolean {
   return (e) => {
     if (!e.ctrlKey || e.altKey || e.metaKey) return true
+    if (clipboard && isKey(e, 'c')) {
+      const text = clipboard.selection()
+      // 선택이 없는 Ctrl+C 는 셸로 보낸다(실행 중인 명령 중단). Ctrl+Shift+C 는 복사 전용이라 보내지 않는다
+      if (text === '' && !e.shiftKey) return true
+      if (e.type === 'keydown') {
+        e.preventDefault()
+        if (text !== '') {
+          clipboard.copy(text)
+          clipboard.clearSelection()
+        }
+      }
+      return false
+    }
+    // 붙여넣기: 셸로 ^V 를 보내지 않게만 하고 기본 동작은 막지 않는다 — 브라우저의 붙여넣기 이벤트를 xterm 이 받아
+    // 붙여 넣는다(클립보드 읽기 권한 없이 동작하고, 여러 줄은 셸의 붙여넣기 모드로 들어간다)
+    if (clipboard && isKey(e, 'v')) return false
     let action: (() => void) | undefined
     if (e.shiftKey && isKey(e, 'm')) action = onExit
     else if (panes && e.shiftKey && isKey(e, 'd')) action = panes.splitDown
