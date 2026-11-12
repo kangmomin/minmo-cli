@@ -12,12 +12,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,24 +44,57 @@ var ctGitHubUsers = map[string]map[string]any{
 	"gho_ct_token2": {"id": 480938, "login": "hubot", "avatar_url": nil},
 }
 
-func ctGitHubHandler(w http.ResponseWriter, r *http.Request) {
+// ctGitHub 는 기기 코드 방식의 GitHub 를 흉내 낸다. 다음에 발급할 device_code 를 next 로 정하고(기본 ct-code-ok),
+// 토큰 확인은 그 device_code 로 결과를 정한다: ct-code-ok·ct-code-user2 → 토큰, ct-code-denied → access_denied,
+// ct-code-pending → authorization_pending, 그 외 → expired_token.
+type ctGitHub struct {
+	mu   sync.Mutex
+	next string
+}
+
+func (g *ctGitHub) setNext(code string) {
+	g.mu.Lock()
+	g.next = code
+	g.mu.Unlock()
+}
+
+func (g *ctGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
-	case r.Method == http.MethodPost && r.URL.Path == "/login/oauth/access_token":
-		code := ""
-		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-			var body map[string]string
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			code = body["code"]
-		} else {
-			_ = r.ParseForm()
-			code = r.FormValue("code")
+	case r.Method == http.MethodPost && r.URL.Path == "/login/device/code":
+		_ = r.ParseForm()
+		g.mu.Lock()
+		code := g.next
+		g.next = ""
+		g.mu.Unlock()
+		if code == "" {
+			code = "ct-code-ok"
 		}
 		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"device_code": code, "user_code": "CTCT-1234", "verification_uri": "https://github.com/login/device", "expires_in": 900, "interval": 5,
+			// 서버가 보낸 값을 계약 테스트가 확인할 수 있게 되돌려 준다(GitHub 응답에는 없는 필드 — 서버는 무시한다)
+			"echo_client_id": r.PostFormValue("client_id"), "echo_scope": r.PostFormValue("scope"),
+		})
+	case r.Method == http.MethodPost && r.URL.Path == "/login/oauth/access_token":
+		_ = r.ParseForm()
+		code := r.FormValue("device_code")
+		w.Header().Set("Content-Type", "application/json")
+		if r.FormValue("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" || r.FormValue("client_id") != "ct-client" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "unsupported_grant_type"})
+			return
+		}
 		if tok, ok := ctGitHubCodes[code]; ok {
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": tok, "token_type": "bearer", "scope": "repo,read:org,read:user"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": "bad_verification_code", "error_description": "The code passed is incorrect or expired."})
+		errCode := "expired_token"
+		switch code {
+		case "ct-code-denied":
+			errCode = "access_denied"
+		case "ct-code-pending":
+			errCode = "authorization_pending"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": errCode})
 	case r.Method == http.MethodGet && r.URL.Path == "/user":
 		tok := r.Header.Get("Authorization")
 		tok = strings.TrimPrefix(strings.TrimPrefix(tok, "Bearer "), "token ")
@@ -83,6 +116,7 @@ type ctEnv struct {
 	t      *testing.T
 	api    *httptest.Server
 	gh     *httptest.Server
+	ghMock *ctGitHub
 	conn   *sql.DB
 	now    time.Time
 	client *http.Client
@@ -91,7 +125,8 @@ type ctEnv struct {
 func ctNewEnv(t *testing.T) *ctEnv {
 	t.Helper()
 	e := &ctEnv{t: t, now: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)}
-	e.gh = httptest.NewServer(http.HandlerFunc(ctGitHubHandler))
+	e.ghMock = &ctGitHub{}
+	e.gh = httptest.NewServer(e.ghMock)
 	t.Cleanup(e.gh.Close)
 	conn, err := db.OpenMemory()
 	if err != nil {
@@ -100,15 +135,13 @@ func ctNewEnv(t *testing.T) *ctEnv {
 	e.conn = conn
 	t.Cleanup(func() { _ = conn.Close() })
 	cfg := httpapi.Config{
-		PublicURL:          "http://127.0.0.1:8787",
-		DeepLink:           "minmo://auth",
-		GitHubOAuthBase:    e.gh.URL,
-		GitHubAPIBase:      e.gh.URL,
-		GitHubClientID:     "ct-client",
-		GitHubClientSecret: "ct-secret",
-		TokenKey:           bytes.Repeat([]byte{0x42}, 32),
-		CORSOrigins:        ctCORSOrigins,
-		HTTPClient:         e.gh.Client(),
+		PublicURL:       "http://127.0.0.1:8787",
+		GitHubOAuthBase: e.gh.URL,
+		GitHubAPIBase:   e.gh.URL,
+		GitHubClientID:  "ct-client",
+		TokenKey:        bytes.Repeat([]byte{0x42}, 32),
+		CORSOrigins:     ctCORSOrigins,
+		HTTPClient:      e.gh.Client(),
 	}
 	h := httpapi.NewHandler(cfg, conn, func() time.Time { return e.now })
 	e.api = httptest.NewServer(h)
@@ -172,41 +205,31 @@ func (e *ctEnv) doJSON(method, path, token string, body any) (int, map[string]an
 	return resp.StatusCode, m
 }
 
-func (e *ctEnv) startLogin() (authorizeURL, state string) {
+// startDevice 는 E1 을 호출한다. code 는 GitHub 가 발급할 device_code(= 로그인 결과)를 정한다.
+func (e *ctEnv) startDevice(code string) map[string]any {
 	e.t.Helper()
-	status, m := e.doJSON("POST", "/auth/github/start", "", nil)
+	e.ghMock.setNext(code)
+	status, m := e.doJSON("POST", "/auth/github/device/start", "", nil)
 	if status != 200 {
-		e.t.Fatalf("start: status %d body %v", status, m)
+		e.t.Fatalf("device start: status %d body %v", status, m)
 	}
-	authorizeURL, _ = m["authorizeUrl"].(string)
-	state, _ = m["state"].(string)
-	if authorizeURL == "" || state == "" {
-		e.t.Fatalf("start: missing authorizeUrl/state: %v", m)
-	}
-	return authorizeURL, state
+	return m
 }
 
-func (e *ctEnv) callback(q url.Values) (*http.Response, []byte) {
+func (e *ctEnv) pollDevice(deviceID string) (int, map[string]any) {
 	e.t.Helper()
-	return e.do("GET", "/auth/github/callback?"+q.Encode(), "", nil, nil)
+	return e.doJSON("POST", "/auth/github/device/poll", "", map[string]string{"deviceId": deviceID})
 }
 
-func (e *ctEnv) login(code string) (token, state string) {
+func (e *ctEnv) login(code string) (token, deviceID string) {
 	e.t.Helper()
-	_, state = e.startLogin()
-	resp, b := e.callback(url.Values{"code": {code}, "state": {state}})
-	if resp.StatusCode != http.StatusFound {
-		e.t.Fatalf("callback: status %d body %q", resp.StatusCode, string(b))
+	deviceID, _ = e.startDevice(code)["deviceId"].(string)
+	status, m := e.pollDevice(deviceID)
+	token, _ = m["session"].(string)
+	if status != 200 || m["status"] != "ok" || token == "" {
+		e.t.Fatalf("device poll: status %d body %v", status, m)
 	}
-	loc, err := url.Parse(resp.Header.Get("Location"))
-	if err != nil {
-		e.t.Fatalf("callback Location parse: %v", err)
-	}
-	token = loc.Query().Get("session")
-	if token == "" {
-		e.t.Fatalf("callback Location without session: %s", resp.Header.Get("Location"))
-	}
-	return token, state
+	return token, deviceID
 }
 
 func (e *ctEnv) sessionCount() int {
@@ -329,114 +352,73 @@ func ctFullGlobal(over map[string]any) map[string]any {
 
 // ---- 인증 (CT-01~06, 18, 24~26, 36) ----
 
-func TestCT01_StartLogin(t *testing.T) {
+// CT-01: E1 → {deviceId, userCode, verificationUri, expiresIn, interval} — GitHub 의 device_code 는 응답에 없다
+func TestCT01_StartDeviceLogin(t *testing.T) {
 	e := ctNewEnv(t)
-	authorizeURL, state := e.startLogin()
-	if !strings.HasPrefix(authorizeURL, e.gh.URL+"/login/oauth/authorize?") {
-		t.Errorf("authorizeUrl prefix: %s", authorizeURL)
+	m := e.startDevice("ct-code-ok")
+	if len(m) != 5 {
+		t.Errorf("E1 keys: %v", m)
 	}
-	u, err := url.Parse(authorizeURL)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	if id, _ := m["deviceId"].(string); !ctReToken.MatchString(id) {
+		t.Errorf("deviceId format: %v", m["deviceId"])
 	}
-	q := u.Query()
-	if q.Get("client_id") != "ct-client" {
-		t.Errorf("client_id=%q", q.Get("client_id"))
+	if m["userCode"] != "CTCT-1234" || m["verificationUri"] != "https://github.com/login/device" {
+		t.Errorf("E1 body: %v", m)
 	}
-	if q.Get("redirect_uri") != "http://127.0.0.1:8787/auth/github/callback" {
-		t.Errorf("redirect_uri=%q", q.Get("redirect_uri"))
+	if m["expiresIn"] != float64(900) || m["interval"] != float64(5) {
+		t.Errorf("expiresIn/interval: %v", m)
 	}
-	if q.Get("state") != state {
-		t.Errorf("state in url %q != response state %q", q.Get("state"), state)
-	}
-	if q.Get("code_challenge_method") != "S256" {
-		t.Errorf("code_challenge_method=%q", q.Get("code_challenge_method"))
-	}
-	if len(q.Get("code_challenge")) < 43 {
-		t.Errorf("code_challenge too short: %q", q.Get("code_challenge"))
-	}
-	if !strings.Contains(q.Get("scope"), "repo") {
-		t.Errorf("scope=%q", q.Get("scope"))
+	for k, v := range m {
+		if v == "ct-code-ok" {
+			t.Errorf("device_code leaked in %q", k)
+		}
 	}
 }
 
-func TestCT02_CT36_CallbackRedirect(t *testing.T) {
+// CT-02: E2 승인 → {status:"ok", session}, 세션 1개
+func TestCT02_PollDeviceLoginOK(t *testing.T) {
 	e := ctNewEnv(t)
-	_, state := e.startLogin()
-	resp, b := e.callback(url.Values{"code": {"ct-code-ok"}, "state": {state}})
-	if resp.StatusCode != http.StatusFound {
-		t.Fatalf("status %d body %q", resp.StatusCode, string(b))
+	id, _ := e.startDevice("ct-code-ok")["deviceId"].(string)
+	status, m := e.pollDevice(id)
+	if status != 200 || m["status"] != "ok" || len(m) != 2 {
+		t.Fatalf("E2: status %d body %v", status, m)
 	}
-	if len(b) != 0 {
-		t.Errorf("302 body must be empty, got %q", string(b))
+	if tok, _ := m["session"].(string); !ctReToken.MatchString(tok) {
+		t.Errorf("session token format: %v", m["session"])
 	}
-	loc := resp.Header.Get("Location")
-	if !strings.HasPrefix(loc, "minmo://auth?session=") {
-		t.Errorf("Location %q", loc)
-	}
-	u, _ := url.Parse(loc)
-	if !ctReToken.MatchString(u.Query().Get("session")) {
-		t.Errorf("session token format: %q", u.Query().Get("session"))
-	}
-	if u.Query().Get("state") != state { // CT-36
-		t.Errorf("Location state %q != %q", u.Query().Get("state"), state)
+	if n := e.sessionCount(); n != 1 {
+		t.Errorf("sessions = %d, want 1", n)
 	}
 }
 
-func TestCT03_CT25_CT36_InvalidState(t *testing.T) {
+// CT-03 / CT-25: 승인 전은 {status:"pending", interval}, 모르는·이미 쓴 deviceId 는 400 device_code_expired
+func TestCT03_CT25_PendingAndExpired(t *testing.T) {
 	e := ctNewEnv(t)
-	check := func(name string, q url.Values, code string) {
-		t.Helper()
-		resp, b := e.callback(q)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("%s: status %d", name, resp.StatusCode)
-		}
-		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-			t.Errorf("%s: Content-Type %q, want text/html", name, ct)
-		}
-		if !strings.Contains(string(b), code) {
-			t.Errorf("%s: body lacks %q", name, code)
-		}
-		if !strings.Contains(string(b), "minmo://auth?error="+code) {
-			t.Errorf("%s: body lacks deep link error", name)
-		}
+	id, _ := e.startDevice("ct-code-pending")["deviceId"].(string)
+	status, m := e.pollDevice(id)
+	if status != 200 || m["status"] != "pending" || m["interval"] != float64(5) || m["session"] != nil {
+		t.Errorf("pending: status %d body %v", status, m)
 	}
-	// CT-03: 불일치·누락
-	_, _ = e.startLogin()
-	check("mismatch", url.Values{"code": {"ct-code-ok"}, "state": {"nope"}}, "invalid_state")
-	check("missing", url.Values{"code": {"ct-code-ok"}}, "invalid_state")
+	status, m = e.pollDevice("nope")
+	ctExpectError(t, status, m, 400, "device_code_expired", "")
 	if n := e.sessionCount(); n != 0 {
-		t.Errorf("sessions after invalid_state = %d, want 0", n)
+		t.Errorf("sessions = %d, want 0", n)
 	}
-	// CT-36: error 파라미터보다 state 검증 우선
-	check("error-without-state", url.Values{"error": {"access_denied"}}, "invalid_state")
-	// CT-25: state 재사용
-	_, state := e.login("ct-code-ok")
-	check("reuse", url.Values{"code": {"ct-code-ok"}, "state": {state}}, "invalid_state")
+	// CT-25: 로그인에 쓴 deviceId 는 다시 쓸 수 없다
+	_, used := e.login("ct-code-ok")
+	status, m = e.pollDevice(used)
+	ctExpectError(t, status, m, 400, "device_code_expired", "")
 }
 
+// CT-26: 사용자가 거부 → 400 access_denied, GitHub 쪽 만료 → 400 device_code_expired. 세션 없음
 func TestCT26_GitHubErrors(t *testing.T) {
 	e := ctNewEnv(t)
-	_, state := e.startLogin()
-	resp, b := e.callback(url.Values{"error": {"access_denied"}, "state": {state}})
-	if resp.StatusCode != http.StatusBadRequest || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
-		t.Errorf("access_denied: status %d ct %q", resp.StatusCode, resp.Header.Get("Content-Type"))
-	}
-	if !strings.Contains(string(b), "minmo://auth?error=access_denied&state="+state) {
-		t.Errorf("access_denied: body lacks deep link with state: %q", string(b))
-	}
-	// missing_code
-	_, state = e.startLogin()
-	resp, b = e.callback(url.Values{"state": {state}})
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "missing_code") {
-		t.Errorf("missing_code: status %d body %q", resp.StatusCode, string(b))
-	}
-	// invalid_code (GitHub bad_verification_code)
-	_, state = e.startLogin()
-	resp, b = e.callback(url.Values{"code": {"ct-code-bad"}, "state": {state}})
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "invalid_code") {
-		t.Errorf("invalid_code: status %d body %q", resp.StatusCode, string(b))
-	}
+	id, _ := e.startDevice("ct-code-denied")["deviceId"].(string)
+	status, m := e.pollDevice(id)
+	ctExpectError(t, status, m, 400, "access_denied", "")
+	id, _ = e.startDevice("ct-code-gone")["deviceId"].(string)
+	status, m = e.pollDevice(id)
+	ctExpectError(t, status, m, 400, "device_code_expired", "")
 	if n := e.sessionCount(); n != 0 {
 		t.Errorf("sessions = %d, want 0", n)
 	}

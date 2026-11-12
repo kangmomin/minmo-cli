@@ -18,7 +18,9 @@ const (
 	DefaultDBPath          = "./minmo.db"
 	DefaultGitHubOAuthBase = "https://github.com"
 	DefaultGitHubAPIBase   = "https://api.github.com"
-	DefaultDeepLink        = "minmo://auth"
+	// DefaultGitHubClientID 는 minmo 용 GitHub OAuth App(Device Flow 사용)의 Client ID 다.
+	// 기기 코드 방식은 Secret 이 필요 없어, 공개 값인 Client ID 만 넣어 배포한다. 비어 있으면 로그인할 수 없다.
+	DefaultGitHubClientID = ""
 )
 
 // DefaultCORSOrigins 는 MINMO_CORS_ORIGINS 미설정 시 허용 Origin(A-P04)이다.
@@ -31,9 +33,9 @@ type Config struct {
 	API    httpapi.Config
 }
 
-// OAuthConfigured 는 E1 이 동작할 수 있는지(클라이언트 id·secret 모두 설정) 여부다.
+// OAuthConfigured 는 로그인(E1)이 동작할 수 있는지(Client ID 가 있는지) 여부다.
 func (c Config) OAuthConfigured() bool {
-	return c.API.GitHubClientID != "" && c.API.GitHubClientSecret != ""
+	return c.API.GitHubClientID != ""
 }
 
 // Load 는 getenv(보통 os.Getenv)로 설정을 읽는다. MINMO_TOKEN_KEY 누락·형식 오류,
@@ -50,13 +52,12 @@ func Load(getenv func(string) string) (Config, error) {
 		Listen: get("MINMO_LISTEN", DefaultListen),
 		DBPath: get("MINMO_DB_PATH", DefaultDBPath),
 		API: httpapi.Config{
-			PublicURL:          strings.TrimRight(get("MINMO_PUBLIC_URL", DefaultPublicURL), "/"),
-			DeepLink:           get("MINMO_DEEP_LINK", DefaultDeepLink),
-			GitHubOAuthBase:    strings.TrimRight(get("MINMO_GITHUB_OAUTH_BASE", DefaultGitHubOAuthBase), "/"),
-			GitHubAPIBase:      strings.TrimRight(get("MINMO_GITHUB_API_BASE", DefaultGitHubAPIBase), "/"),
-			GitHubClientID:     get("MINMO_GITHUB_CLIENT_ID", ""),
-			GitHubClientSecret: get("MINMO_GITHUB_CLIENT_SECRET", ""),
-			CORSOrigins:        splitOrigins(get("MINMO_CORS_ORIGINS", "")),
+			PublicURL:       strings.TrimRight(get("MINMO_PUBLIC_URL", DefaultPublicURL), "/"),
+			GitHubOAuthBase: strings.TrimRight(get("MINMO_GITHUB_OAUTH_BASE", DefaultGitHubOAuthBase), "/"),
+			GitHubAPIBase:   strings.TrimRight(get("MINMO_GITHUB_API_BASE", DefaultGitHubAPIBase), "/"),
+			// 환경 변수는 테스트(githubmock)·직접 만든 OAuth App 으로 바꿔 쓸 때만 둔다
+			GitHubClientID: get("MINMO_GITHUB_CLIENT_ID", DefaultGitHubClientID),
+			CORSOrigins:    splitOrigins(get("MINMO_CORS_ORIGINS", "")),
 		},
 	}
 

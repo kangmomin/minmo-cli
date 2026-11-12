@@ -1,15 +1,17 @@
 // Package testutil 은 핸들러 테스트용 서버 조립 헬퍼다.
 //
 //   - NewTestServer(t, opts...): db.OpenMemory() + httptest githubmock.NewHandler() + httpapi.NewHandler 를 조립한다.
-//     기본 Config: PublicURL "http://127.0.0.1:8787", DeepLink "minmo://auth", GitHub*Base = mock URL,
-//     GitHubClientID/Secret "test-client"/"test-secret", TokenKey 32B, CORSOrigins = 계약 기본 4종,
+//     기본 Config: PublicURL "http://127.0.0.1:8787", GitHub*Base = mock URL,
+//     GitHubClientID "test-client", TokenKey 32B, CORSOrigins = 계약 기본 4종,
 //     HTTPClient = mock 서버 client. opts 는 이 Config 를 수정한다. 모든 자원은 t.Cleanup 으로 정리한다.
 //   - 시계: 기본 2026-11-09T12:00:00Z 고정. Now/SetNow/Advance 로 조작(동시 접근 안전).
 //   - Client: 리다이렉트를 따라가지 않는 http.Client.
 //   - Do: API 서버 상대 경로로 요청(body 가 nil 이 아니면 Content-Type: application/json; []byte·string 은 그대로,
 //     그 외는 json.Marshal). token 이 있으면 Authorization: Bearer.
 //   - DoJSON: Do 후 204 이면 (204, nil), 그 외에는 JSON 본문을 map 으로 디코드(비JSON 이면 t.Fatalf).
-//   - Login(code): POST /auth/github/start → callback(code, state) → 302 Location 의 session 토큰과 state 반환(실패 시 t.Fatalf).
+//   - Login(code): githubmock 의 다음 기기 코드 결과를 code 로 정한 뒤 device/start → device/poll 로 로그인해
+//     세션 토큰과 deviceId 를 반환한다(실패 시 t.Fatalf). 시계는 움직이지 않는다(첫 확인은 서버가 바로 받는다).
+//   - SetNextDevice(result): 다음 device/start 가 받을 기기 코드의 결과(githubmock.Code*)를 정한다.
 package testutil
 
 import (
@@ -19,7 +21,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -60,15 +61,13 @@ func NewTestServer(t *testing.T, opts ...func(*httpapi.Config)) *Server {
 	s.DB = conn
 
 	cfg := httpapi.Config{
-		PublicURL:          "http://127.0.0.1:8787",
-		DeepLink:           "minmo://auth",
-		GitHubOAuthBase:    gh.URL,
-		GitHubAPIBase:      gh.URL,
-		GitHubClientID:     "test-client",
-		GitHubClientSecret: "test-secret",
-		TokenKey:           bytes.Repeat([]byte{0x24}, 32),
-		CORSOrigins:        append([]string(nil), config.DefaultCORSOrigins...),
-		HTTPClient:         gh.Client(),
+		PublicURL:       "http://127.0.0.1:8787",
+		GitHubOAuthBase: gh.URL,
+		GitHubAPIBase:   gh.URL,
+		GitHubClientID:  "test-client",
+		TokenKey:        bytes.Repeat([]byte{0x24}, 32),
+		CORSOrigins:     append([]string(nil), config.DefaultCORSOrigins...),
+		HTTPClient:      gh.Client(),
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -159,27 +158,35 @@ func (s *Server) DoJSON(method, path, token string, body any) (int, map[string]a
 	return resp.StatusCode, m
 }
 
-// Login 은 githubmock code 로 로그인해 세션 토큰과 state 를 반환한다.
-func (s *Server) Login(code string) (token, state string) {
+// SetNextDevice 는 githubmock 이 다음에 발급할 기기 코드의 결과(githubmock.Code*)를 정한다.
+func (s *Server) SetNextDevice(result string) {
 	s.t.Helper()
-	status, m := s.DoJSON("POST", "/auth/github/start", "", nil)
-	state, _ = m["state"].(string)
-	if status != http.StatusOK || state == "" {
+	body, _ := json.Marshal(map[string]string{"result": result})
+	resp, err := http.Post(s.GitHubURL+"/mock/device/next", "application/json", bytes.NewReader(body))
+	if err != nil {
+		s.t.Fatalf("mock device next: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		s.t.Fatalf("mock device next: status %d", resp.StatusCode)
+	}
+}
+
+// Login 은 githubmock 결과 code(githubmock.CodeOK·CodeUser2)로 기기 코드 로그인을 끝내고 세션 토큰과 deviceId 를 반환한다.
+func (s *Server) Login(code string) (token, deviceID string) {
+	s.t.Helper()
+	s.SetNextDevice(code)
+	status, m := s.DoJSON("POST", "/auth/github/device/start", "", nil)
+	deviceID, _ = m["deviceId"].(string)
+	if status != http.StatusOK || deviceID == "" {
 		s.t.Fatalf("login start: %d %v", status, m)
 	}
-	resp, b := s.Do("GET", "/auth/github/callback?"+url.Values{"code": {code}, "state": {state}}.Encode(), "", nil, nil)
-	if resp.StatusCode != http.StatusFound {
-		s.t.Fatalf("login callback: %d %q", resp.StatusCode, truncate(b))
+	status, m = s.DoJSON("POST", "/auth/github/device/poll", "", map[string]string{"deviceId": deviceID})
+	token, _ = m["session"].(string)
+	if status != http.StatusOK || m["status"] != "ok" || token == "" {
+		s.t.Fatalf("login poll: %d %v", status, m)
 	}
-	loc, err := url.Parse(resp.Header.Get("Location"))
-	if err != nil {
-		s.t.Fatalf("login callback Location %q: %v", resp.Header.Get("Location"), err)
-	}
-	token = loc.Query().Get("session")
-	if token == "" {
-		s.t.Fatalf("login callback Location without session: %q", resp.Header.Get("Location"))
-	}
-	return token, state
+	return token, deviceID
 }
 
 func truncate(b []byte) string {
