@@ -206,8 +206,12 @@ function TerminalSession({
           copy: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
           clearSelection: () => t.clearSelection(),
         },
-        // 사용자가 친 글자처럼 넣는다 — onData 를 거쳐 PTY 로 간다
-        (data) => t.input(data),
+        // 사용자가 친 글자처럼 넣는다 — onData 를 거쳐 PTY 로 간다.
+        // 한 박자 늦춘다: xterm 은 조합이 끝난 한글을 setTimeout(0) 으로 보내므로, 바로 보내면 마지막 글자보다 먼저 간다
+        (data) =>
+          void setTimeout(() => {
+            if (!disposed) t.input(data)
+          }, 0),
       ),
     )
     const fit = new FitAddon()
