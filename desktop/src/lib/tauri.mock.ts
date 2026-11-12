@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 브라우저 열기 등은 window.__MINMO_MOCK__ 로 노출해 E2E 가 확인한다.
-import type { CloseAction, CmdResult, DirEntry, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus } from './tauri'
+import type { CloseAction, CmdResult, DirEntry, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus, TailscaleLogEvent, TailscaleStatus } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -39,6 +39,10 @@ export interface MinmoMockHandle {
   setSubagents(cwd: string, files: SubagentFile[]): void
   /** notify 로 띄운 알림 */
   notifications: { title: string; body: string }[]
+  /** Tailscale 상태를 정한다(기본: 설치 안 됨) */
+  setTailscale(patch: Partial<TailscaleStatus>): void
+  /** 다음 [HTTPS 로 열기] 가 "tailnet 에서 먼저 켜야 한다"고 답하게 한다 */
+  tailscaleEnableUrl: string | null
 }
 
 /** mock 서버 포트 — VITE_MINMO_SERVER(Playwright) 주소를 따른다 */
@@ -87,6 +91,19 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
 
   let remote: RemoteStatus = { enabled: false, lan: false, port: 8790, addresses: [], devices: [{ id: 'd1', name: '내 휴대폰', createdMs: 1, lastSeenMs: 1, connected: false }], error: null }
   let peers: Peer[] = []
+  // Tailscale: 설치 → 로그인(다음 상태 확인에서 연결됨) → HTTPS 흐름을 흉내 낸다
+  let tailscale: TailscaleStatus = {
+    state: 'missing',
+    name: null,
+    ips: [],
+    httpsUrl: null,
+    httpsConflict: false,
+    install: { command: 'winget install --id Tailscale.Tailscale -e --source winget --accept-source-agreements --accept-package-agreements', auto: true, downloadUrl: 'https://tailscale.com/download' },
+    installing: false,
+    error: null,
+  }
+  let tailscaleLoginPending = false
+  const tailscaleListeners = new Set<(e: TailscaleLogEvent) => void>()
   const paths = new Set<string>()
   // 파일 탭: "root\nrel" → 내용. worktree 를 만들면 README.md 가 생긴 것으로 본다
   const textFiles = new Map<string, string>()
@@ -173,6 +190,10 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     setPtyProcesses: (n, names) => void ptyProcs.set(`mock-pty-${n}`, names),
     setSubagents: (cwd, files) => void subagents.set(cwd, files),
     notifications: [],
+    setTailscale: (patch) => {
+      tailscale = { ...tailscale, ...patch }
+    },
+    tailscaleEnableUrl: null,
   }
   if (typeof window !== 'undefined') window.__MINMO_MOCK__ = handle
 
@@ -334,6 +355,35 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     onSyncApplied: async () => () => {},
     peerOpen: async (id, open) => {
       handle.openedPeers.push({ id, open: open ?? null })
+    },
+    tailscaleStatus: async () => {
+      if (tailscaleLoginPending) {
+        tailscaleLoginPending = false
+        tailscale = { ...tailscale, state: 'running', name: 'mock-pc.tail0000.ts.net', ips: ['100.64.0.1'] }
+      }
+      return tailscale
+    },
+    tailscaleInstall: async () => {
+      for (const line of ['Found Tailscale [Tailscale.Tailscale]', 'Successfully installed']) for (const l of [...tailscaleListeners]) l({ line, transient: false })
+      tailscale = { ...tailscale, state: 'needs-login', install: null }
+      return { exitCode: 0, cancelled: false }
+    },
+    tailscaleInstallCancel: async () => {},
+    tailscaleLogin: async () => {
+      tailscaleLoginPending = true
+      return { url: 'https://login.tailscale.com/a/mock' }
+    },
+    tailscaleServe: async (on) => {
+      const enableUrl = on ? handle.tailscaleEnableUrl : null
+      handle.tailscaleEnableUrl = null
+      if (!enableUrl) tailscale = { ...tailscale, httpsUrl: on ? 'https://mock-pc.tail0000.ts.net' : null }
+      return { status: tailscale, enableUrl }
+    },
+    onTailscaleLog: async (cb) => {
+      tailscaleListeners.add(cb)
+      return () => {
+        tailscaleListeners.delete(cb)
+      }
     },
     ptyProcesses: async (id) => ptyProcs.get(id) ?? [],
     claudeSubagents: async (cwd) => subagents.get(cwd) ?? [],

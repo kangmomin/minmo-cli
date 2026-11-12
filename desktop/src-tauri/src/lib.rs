@@ -1,10 +1,11 @@
 // Tauri 진입점. invoke 이름은 desktop/src/lib/tauri.ts 의 TAURI_COMMANDS 와 1:1,
-// 이벤트 이름은 TAURI_EVENTS("pty-data", "script-log", "server-status", "close-requested", "update-progress") 와 일치해야 한다.
+// 이벤트 이름은 TAURI_EVENTS("pty-data", "script-log", "server-status", "close-requested", "update-progress", "tailscale-log") 와 일치해야 한다.
 mod commands;
 mod profile;
 mod remote;
 mod server;
 mod shell;
+mod tailscale;
 mod update;
 
 use commands::{agents, fs, git, keychain, pty, script, ssh};
@@ -31,6 +32,7 @@ pub fn run() {
         .manage(script::ScriptState::default())
         .manage(ssh::SshState::default())
         .manage(update::UpdateState::default())
+        .manage(tailscale::TailscaleState::default())
         .setup(|app| {
             // 키체인 서비스 이름이 identifier 를 따르므로 키체인을 쓰기 전에
             profile::init(&app.config().identifier);
@@ -123,6 +125,11 @@ pub fn run() {
             remote::peer_open,
             remote::shared_get,
             remote::shared_set,
+            tailscale::tailscale_status,
+            tailscale::tailscale_install,
+            tailscale::tailscale_install_cancel,
+            tailscale::tailscale_login,
+            tailscale::tailscale_serve,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -133,6 +140,7 @@ pub fn run() {
             if let Some(mgr) = app.try_state::<server::ServerManager>() {
                 mgr.shutdown(app);
             }
+            tailscale::shutdown(app);
         }
     });
 }

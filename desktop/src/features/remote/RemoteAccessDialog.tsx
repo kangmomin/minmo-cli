@@ -10,17 +10,24 @@ import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
-import type { RemoteAddress, RemoteStatus } from '../../lib/tauri'
+import type { RemoteAddress, RemoteStatus, TailscaleStatus } from '../../lib/tauri'
 import { usePeersStore } from '../../store/peers'
 import { useUiStore } from '../../store/ui'
 import { usePeerAgentsStore } from './peerAgents'
 import { runPeerSync, usePeerSyncStore } from './peerSync'
+import { TailscaleSection } from './TailscaleSection'
 
-const KIND_LABEL: Record<RemoteAddress['kind'], string> = { tailscale: 'Tailscale', lan: '같은 네트워크(LAN)', local: '이 PC' }
+const KIND_LABEL: Record<RemoteAddress['kind'], string> = { 'tailscale-https': 'Tailscale HTTPS', tailscale: 'Tailscale', lan: '같은 네트워크(LAN)', local: '이 PC' }
 
-/** 다른 기기에서 열 주소 — Tailscale 을 먼저, 없으면 LAN(이 PC 전용 주소는 다른 기기에서 열 수 없다) */
+/** 다른 기기에서 열 주소 — Tailscale(HTTPS 가 있으면 그것)을 먼저, 없으면 LAN(이 PC 전용 주소는 다른 기기에서 열 수 없다) */
 export function shareableAddress(addresses: RemoteAddress[]): RemoteAddress | null {
-  return addresses.find((a) => a.kind === 'tailscale') ?? addresses.find((a) => a.kind === 'lan') ?? null
+  const pick = (kind: RemoteAddress['kind']) => addresses.find((a) => a.kind === kind)
+  return pick('tailscale-https') ?? pick('tailscale') ?? pick('lan') ?? null
+}
+
+/** 접속 주소 목록 — Tailscale HTTPS(tailscale serve)가 켜져 있으면 맨 앞에 둔다 */
+export function withHttps(addresses: RemoteAddress[], httpsUrl: string | null | undefined): RemoteAddress[] {
+  return httpsUrl ? [{ kind: 'tailscale-https', url: httpsUrl }, ...addresses] : addresses
 }
 
 function QrCode({ text }: { text: string }) {
@@ -60,6 +67,7 @@ function Body() {
   const [pair, setPair] = useState<{ code: string; until: number } | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [port, setPort] = useState('')
+  const [tailscale, setTailscale] = useState<TailscaleStatus | null>(null)
 
   const run = useCallback(async (job: () => Promise<RemoteStatus>) => {
     setError(null)
@@ -110,9 +118,28 @@ function Body() {
     if (pair && left === 0) setPair(null)
   }, [pair, left])
 
+  // Tailscale 에 방금 연결됐으면(주소가 생겼으면) 접속 주소를 다시 읽는다. 그 주소에 여는 일은 호스트가 한다(tailscale.rs).
+  // 목록만 바꾼다 — 입력하던 포트나 떠 있는 오류를 건드리지 않게
+  const tailscaleIps = tailscale?.state === 'running' ? tailscale.ips.join(',') : ''
+  const enabled = status?.enabled ?? false
+  useEffect(() => {
+    if (!tailscaleIps || !enabled) return
+    let disposed = false
+    void tauri
+      .remoteStatus()
+      .then((s) => {
+        if (!disposed) setStatus(s)
+      })
+      .catch(() => undefined)
+    return () => {
+      disposed = true
+    }
+  }, [tailscaleIps, enabled, tauri])
+
   if (!status) return <p className="text-sm text-muted-foreground">{error ?? '불러오는 중…'}</p>
 
-  const share = shareableAddress(status.addresses)
+  const addresses = withHttps(status.addresses, tailscale?.httpsUrl)
+  const share = shareableAddress(addresses)
   const startPair = async () => {
     setError(null)
     try {
@@ -138,7 +165,7 @@ function Body() {
               접속 주소
             </h3>
             <ul className="grid gap-1">
-              {status.addresses.map((a) => (
+              {addresses.map((a) => (
                 <li key={a.url} className="flex items-center gap-2">
                   <Badge variant="outline">{KIND_LABEL[a.kind]}</Badge>
                   <code className="flex-1 truncate font-mono text-xs">{a.url}</code>
@@ -148,9 +175,6 @@ function Body() {
                 </li>
               ))}
             </ul>
-            {!status.addresses.some((a) => a.kind === 'tailscale') && (
-              <p className="text-xs text-muted-foreground">Tailscale 주소가 없습니다. 이 PC 와 접속할 기기에 Tailscale 을 설치해 같은 계정으로 로그인하면, 어디서든 암호화된 연결로 접속할 수 있습니다.</p>
-            )}
             <label className="flex items-start gap-2">
               <input type="checkbox" className="mt-0.5" checked={status.lan} onChange={(e) => void run(() => tauri.remoteConfigure({ lan: e.target.checked }))} />
               <span>
@@ -208,7 +232,9 @@ function Body() {
         </>
       )}
 
-      <section className="grid gap-2" aria-labelledby={`${uid}-dev`}>
+      <TailscaleSection remoteEnabled={status.enabled} onStatus={setTailscale} />
+
+      <section className="grid gap-2 border-t pt-3" aria-labelledby={`${uid}-dev`}>
         <h3 id={`${uid}-dev`} className="font-medium">
           등록된 기기
         </h3>

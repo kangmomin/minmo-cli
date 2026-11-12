@@ -43,7 +43,7 @@ export type PtyInfo = { id: string; key: string | null; cwd: string; host: strin
 export type PtyResizedEvent = { id: string; cols: number; rows: number }
 
 /** 원격 접속(src-tauri/src/remote.rs) — 다른 PC·휴대폰의 브라우저가 이 앱에 붙는다 */
-export type RemoteAddress = { kind: 'local' | 'tailscale' | 'lan'; url: string }
+export type RemoteAddress = { kind: 'local' | 'tailscale' | 'tailscale-https' | 'lan'; url: string }
 export type RemoteDevice = { id: string; name: string; createdMs: number; lastSeenMs: number; connected: boolean }
 export type RemoteStatus = { enabled: boolean; lan: boolean; port: number; addresses: RemoteAddress[]; devices: RemoteDevice[]; error: string | null }
 export type RemoteConfigInput = Partial<Pick<RemoteStatus, 'enabled' | 'lan' | 'port'>>
@@ -57,6 +57,25 @@ export type Peer = { id: string; name: string; url: string; token: string | null
 export type PeerInput = { url: string; code: string; name: string }
 /** 그 PC 의 화면에서 바로 보여 줄 이슈·터미널 패널 */
 export type PeerOpen = { target: IssueTarget; paneId: string | null }
+/** Tailscale 설치·로그인·HTTPS 도우미(src-tauri/src/tailscale.rs). unavailable = 설치는 됐지만 서비스가 답하지 않음 */
+export type TailscaleState = 'missing' | 'needs-login' | 'needs-approval' | 'stopped' | 'starting' | 'running' | 'unknown' | 'unavailable'
+/** command 는 화면에 그대로 보여 주는 설치 명령, auto 면 앱이 그 명령을 대신 실행할 수 있다 */
+export type TailscaleInstallPlan = { command: string | null; auto: boolean; downloadUrl: string }
+export type TailscaleStatus = {
+  state: TailscaleState
+  name: string | null
+  ips: string[]
+  /** tailnet 안에서 여는 HTTPS 주소(tailscale serve 가 원격 접속 포트를 가리킬 때) */
+  httpsUrl: string | null
+  /** 443 에 사용자가 따로 건 tailscale serve 설정이 있다 — 건드리지 않는다 */
+  httpsConflict: boolean
+  install: TailscaleInstallPlan | null
+  /** 설치 명령이 돌고 있다 */
+  installing: boolean
+  error: string | null
+}
+/** transient = 진행 막대처럼 앞 줄을 덮어쓰는 줄 */
+export type TailscaleLogEvent = { line: string; transient: boolean }
 /** native = Tauri 창, remote = 다른 기기의 브라우저(호스트에 붙음), mock = 개발·테스트 */
 export type RuntimeKind = 'native' | 'remote' | 'mock'
 
@@ -142,6 +161,17 @@ export interface TauriApi extends WorktreeHost, GhHost {
   /** 다른 PC 와의 동기화로 이 PC 서버의 설정·메모가 바뀌었다 — 화면이 다시 읽는다 */
   onSyncApplied(cb: () => void): Promise<Unlisten>
   remoteRpcReply(id: number, ok: boolean, value: unknown): Promise<void>
+
+  /** Tailscale 도우미 — 이 PC 의 창에서만 쓴다. 실행되는 명령은 앱이 정해 둔 것뿐이다 */
+  tailscaleStatus(): Promise<TailscaleStatus>
+  /** 패키지 관리자로 설치한다(출력은 onTailscaleLog) */
+  tailscaleInstall(): Promise<ScriptRunResult>
+  tailscaleInstallCancel(): Promise<void>
+  /** 로그인을 시작한다. url 은 브라우저로 열 주소(이미 로그인돼 있어 바로 연결되면 null) */
+  tailscaleLogin(): Promise<{ url: string | null }>
+  /** tailnet 안에서 HTTPS 로 연다/닫는다. enableUrl 은 tailnet 에서 HTTPS 를 먼저 켜야 할 때 그 주소 */
+  tailscaleServe(on: boolean): Promise<{ status: TailscaleStatus; enableUrl: string | null }>
+  onTailscaleLog(cb: (e: TailscaleLogEvent) => void): Promise<Unlisten>
 
   scriptRun(req: ScriptRunRequest): Promise<ScriptRunResult>
   scriptCancel(runId: string): Promise<void>
@@ -286,6 +316,11 @@ export const TAURI_COMMANDS = {
   peerAdd: 'peer_add',
   peerRemove: 'peer_remove',
   peerOpen: 'peer_open',
+  tailscaleStatus: 'tailscale_status',
+  tailscaleInstall: 'tailscale_install',
+  tailscaleInstallCancel: 'tailscale_install_cancel',
+  tailscaleLogin: 'tailscale_login',
+  tailscaleServe: 'tailscale_serve',
   agentsPublish: 'agents_publish',
 } as const
 
@@ -300,6 +335,7 @@ export const TAURI_EVENTS = {
   sharedChanged: 'shared-changed',
   remoteChanged: 'remote-changed',
   remoteRpc: 'remote-rpc',
+  tailscaleLog: 'tailscale-log',
   agentsChanged: 'agents-changed',
   syncApplied: 'sync-applied',
 } as const
@@ -339,6 +375,12 @@ export function createTauriApi(): TauriApi {
     peerAdd: (input) => call(C.peerAdd, { input }),
     peerRemove: (id) => call(C.peerRemove, { id }),
     peerOpen: (id, open) => call(C.peerOpen, { id, open: open ?? null }),
+    tailscaleStatus: () => call(C.tailscaleStatus),
+    tailscaleInstall: () => call(C.tailscaleInstall),
+    tailscaleInstallCancel: () => call(C.tailscaleInstallCancel),
+    tailscaleLogin: () => call(C.tailscaleLogin),
+    tailscaleServe: (on) => call(C.tailscaleServe, { on }),
+    onTailscaleLog: async (cb) => (await event()).listen<TailscaleLogEvent>(TAURI_EVENTS.tailscaleLog, (e) => cb(e.payload)),
     agentsPublish: (rows) => call(C.agentsPublish, { rows }),
     onSyncApplied: async (cb) => (await event()).listen(TAURI_EVENTS.syncApplied, () => cb()),
     ptyWrite: (id, data) => call(C.ptyWrite, { id, data }),
