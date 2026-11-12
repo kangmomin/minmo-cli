@@ -1149,7 +1149,13 @@ async fn asset(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
         );
     };
     let mut resp = Response::new(Body::from(a.bytes));
-    if let Ok(v) = HeaderValue::from_str(&a.mime_type) {
+    // 앱에 들어 있는 파일의 형식 추측은 .webmanifest 를 모른다 — 홈 화면에 추가할 때 브라우저가 읽는 파일이다
+    let mime = if path.ends_with(".webmanifest") {
+        "application/manifest+json"
+    } else {
+        a.mime_type.as_str()
+    };
+    if let Ok(v) = HeaderValue::from_str(mime) {
         resp.headers_mut().insert(header::CONTENT_TYPE, v);
     }
     let h = resp.headers_mut();

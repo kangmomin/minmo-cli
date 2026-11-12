@@ -149,7 +149,7 @@ function LocalFilesBody({ target, worktreePath }: { target: IssueTarget; worktre
       </form>
 
       {/* 원격 폴더는 이 PC 의 탐색기로 열 수 없다 — 위의 경로만 보여 준다 */}
-      {!remote && (
+      {!remote && tauri.runtime !== 'remote' && (
         <div className="flex items-center justify-between gap-2">
           <Button variant="outline" size="sm" disabled={!dir} onClick={() => void run(() => tauri.openDir(dir!), '보관 폴더를 열었습니다')}>
             <FolderOpenIcon /> 폴더 열기

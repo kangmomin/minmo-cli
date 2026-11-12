@@ -61,6 +61,18 @@ test.describe('휴대폰 크기', () => {
     await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(1)
 
+    // 변경·파일 탭은 위아래로 쌓는다(목록 위, 내용 아래) — 좌우로 끼우면 둘 다 못 쓴다
+    await page.getByRole('tab', { name: '파일' }).click()
+    await page.getByText('README.md').click()
+    const tree = await page.getByRole('tree', { name: '파일' }).boundingBox()
+    const editor = await page.getByTestId('code-editor').boundingBox()
+    expect(editor!.y).toBeGreaterThanOrEqual(tree!.y + tree!.height - 1)
+    expect(editor!.width).toBeGreaterThan(300)
+    await page.getByRole('tab', { name: '변경' }).click()
+    const diff = await page.getByLabel('diff').boundingBox()
+    expect(diff!.width).toBeGreaterThan(300)
+    await page.getByRole('tab', { name: '터미널' }).click()
+
     // 목록으로 돌아간다
     await page.getByRole('button', { name: '이슈 목록 보기' }).click()
     await expect(page.getByTestId('issue-row-42')).toBeVisible()

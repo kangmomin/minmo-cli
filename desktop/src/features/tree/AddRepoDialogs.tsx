@@ -66,7 +66,8 @@ function PathField({ id, value, onChange, placeholder }: { id: string; value: st
   return (
     <div className="flex gap-2">
       <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} spellCheck={false} className="font-mono" />
-      {host.alias === null && (
+      {/* 폴더 선택 창은 이 PC 의 창에서만 뜬다 — 원격 호스트의 폴더나 원격 화면에서는 경로를 직접 적는다 */}
+      {host.alias === null && tauri.runtime !== 'remote' && (
         <Button
           type="button"
           variant="outline"

@@ -183,7 +183,7 @@ export function ChangesTab({ target }: ChangesTabProps) {
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(14rem,1fr)_2fr] gap-2">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(14rem,1fr)_2fr] gap-2 max-md:grid-cols-1 max-md:grid-rows-[minmax(6rem,2fr)_3fr]">
         <div className="flex min-h-0 flex-col rounded border">
           <label className="flex items-center gap-2 border-b px-2 py-1 text-xs">
             <input
