@@ -220,6 +220,12 @@ export function createRemoteTauri(conn: RemoteConnection): TauriApi {
     peerAdd: hostOnly('다른 PC 등록'),
     peerRemove: hostOnly('다른 PC 삭제'),
     peerOpen: hostOnly('다른 PC 열기'),
+    // Tailscale 설치·네트워크 설정은 그 PC 앞에서만 한다
+    tailscaleStatus: hostOnly('Tailscale 설정'),
+    tailscaleInstall: hostOnly('Tailscale 설치'),
+    tailscaleInstallCancel: async () => undefined,
+    tailscaleLogin: hostOnly('Tailscale 로그인'),
+    tailscaleServe: hostOnly('Tailscale HTTPS 설정'),
     agentsPublish: async () => undefined,
   }
   return new Proxy(local as TauriApi, {

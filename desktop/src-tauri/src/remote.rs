@@ -270,50 +270,13 @@ pub fn pick_addrs(
     out
 }
 
-/// `tailscale ip -4` 가 알려 주는 이 PC 의 Tailscale 주소(없거나 실행할 수 없으면 빈 목록). 잠깐 기억해 둔다
+/// 이 PC 의 Tailscale 주소 — tailscale 이 직접 알려 준 것(crate::tailscale::ip4)
 fn tailscale_addrs(all: &[Ipv4Addr]) -> Vec<Ipv4Addr> {
-    static CACHE: Mutex<Option<(Instant, Vec<Ipv4Addr>)>> = Mutex::new(None);
     // 그 대역의 주소가 없으면 물어볼 것도 없다
     if !all.iter().any(is_cgnat) {
         return Vec::new();
     }
-    if let Ok(c) = CACHE.lock() {
-        if let Some((at, list)) = c.as_ref() {
-            if at.elapsed() < Duration::from_secs(60) {
-                return list.clone();
-            }
-        }
-    }
-    let mut candidates = vec![std::path::PathBuf::from("tailscale")];
-    if cfg!(windows) {
-        candidates.push(r"C:\Program Files\Tailscale\tailscale.exe".into());
-    } else if cfg!(target_os = "macos") {
-        candidates.push("/Applications/Tailscale.app/Contents/MacOS/Tailscale".into());
-    }
-    let mut list = Vec::new();
-    for exe in candidates {
-        let mut cmd = std::process::Command::new(exe);
-        cmd.args(["ip", "-4"]);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            // CREATE_NO_WINDOW — 콘솔 창이 깜박이지 않게
-            cmd.creation_flags(0x0800_0000);
-        }
-        if let Ok(out) = cmd.output() {
-            if out.status.success() {
-                list = String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .filter_map(|l| l.trim().parse().ok())
-                    .collect();
-                break;
-            }
-        }
-    }
-    if let Ok(mut c) = CACHE.lock() {
-        *c = Some((Instant::now(), list.clone()));
-    }
-    list
+    crate::tailscale::ip4()
 }
 
 fn listen_addrs(lan: bool) -> Vec<(Ipv4Addr, &'static str)> {
@@ -416,6 +379,14 @@ impl RemoteManager {
 
     fn config(&self) -> Config {
         self.config.lock().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.config().port
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.config().enabled
     }
 
     fn update<F: FnOnce(&mut Config)>(&self, f: F) -> Result<(), String> {
@@ -1311,6 +1282,7 @@ pub fn remote_configure(app: AppHandle, input: ConfigInput) -> Result<Status, St
             return Err("내장 서버와 같은 포트는 쓸 수 없습니다".into());
         }
     }
+    let before = mgr.config();
     mgr.update(|c| {
         if let Some(v) = input.enabled {
             c.enabled = v;
@@ -1334,6 +1306,11 @@ pub fn remote_configure(app: AppHandle, input: ConfigInput) -> Result<Status, St
         }
     }
     mgr.reconcile(&app);
+    // 원격 접속을 끄거나 포트를 바꾸면 minmo 가 건 HTTPS(tailscale serve)도 따라간다
+    let after = mgr.config();
+    if (before.enabled, before.port) != (after.enabled, after.port) {
+        crate::tailscale::follow_remote(&app);
+    }
     Ok(mgr.status())
 }
 
@@ -1949,6 +1926,12 @@ mod tests {
             "remoteConfigure",
             "remotePairStart",
             "remoteRpcReply",
+            // 붙은 기기가 이 PC 에 프로그램을 설치하거나 네트워크 설정을 바꾸지 못한다
+            "tailscaleStatus",
+            "tailscaleInstall",
+            "tailscaleInstallCancel",
+            "tailscaleLogin",
+            "tailscaleServe",
             "nope",
         ] {
             assert!(!allowed(m, &none), "{m}");

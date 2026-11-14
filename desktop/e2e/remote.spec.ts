@@ -28,6 +28,41 @@ test('원격 접속 설정: 켜면 접속 주소가 보이고, [기기 등록] �
   await expect(dialog.getByText('등록된 기기가 없습니다.')).toBeVisible()
 })
 
+test('Tailscale 도우미: 설치 → 로그인 → 연결됨 → HTTPS 켜기/끄기 (접속 주소·QR 이 HTTPS 주소를 쓴다)', async ({ page }) => {
+  await page.getByRole('button', { name: '원격 접속', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '원격 접속' })
+  await dialog.getByRole('checkbox', { name: '원격 접속 켜기' }).check()
+  const section = dialog.getByTestId('tailscale')
+  // 설치 전: 실행될 명령을 먼저 보여 준다
+  await expect(section).toHaveAttribute('data-state', 'missing')
+  await expect(section.getByText(/^winget install --id Tailscale\.Tailscale/)).toBeVisible()
+  await section.getByRole('button', { name: 'Tailscale 설치' }).click()
+  await expect(section).toHaveAttribute('data-state', 'needs-login')
+
+  // 로그인 주소를 브라우저로 열고, 로그인이 끝나면 스스로 연결됨으로 바뀐다
+  await section.getByRole('button', { name: 'Tailscale 로그인' }).click()
+  await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__!.openedUrls)).toContain('https://login.tailscale.com/a/mock')
+  await expect(section).toHaveAttribute('data-state', 'running')
+  await expect(section.getByText('mock-pc.tail0000.ts.net')).toBeVisible()
+
+  // tailnet 에서 HTTPS 가 꺼져 있으면 켜는 곳을 안내한다
+  await page.evaluate(() => {
+    window.__MINMO_MOCK__!.tailscaleEnableUrl = 'https://login.tailscale.com/f/serve?node=mock'
+  })
+  await section.getByRole('button', { name: 'HTTPS 로 열기' }).click()
+  await expect(section.getByTestId('tailscale-enable')).toContainText('https://login.tailscale.com/f/serve?node=mock')
+
+  await section.getByRole('button', { name: 'HTTPS 로 열기' }).click()
+  await expect(section.getByTestId('tailscale-enable')).toHaveCount(0)
+  await expect(dialog.getByText('Tailscale HTTPS')).toBeVisible()
+  await dialog.getByRole('button', { name: '기기 등록' }).click()
+  await expect(dialog.getByRole('img', { name: '접속 주소 QR 코드: https://mock-pc.tail0000.ts.net' })).toBeVisible()
+
+  await section.getByRole('button', { name: 'HTTPS 끄기' }).click()
+  await expect(dialog.getByText('Tailscale HTTPS')).toHaveCount(0)
+  await expect(section.getByRole('button', { name: 'HTTPS 로 열기' })).toBeVisible()
+})
+
 test.describe('휴대폰 크기', () => {
   test.use({ viewport: devices['iPhone 13'].viewport, hasTouch: true, isMobile: true })
 

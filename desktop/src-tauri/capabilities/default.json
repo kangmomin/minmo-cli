@@ -12,7 +12,9 @@
       "allow": [
         { "url": "https://github.com/login/device" },
         { "url": "http://127.0.0.1:*" },
-        { "url": "https://github.com/*/*/pull/*" }
+        { "url": "https://github.com/*/*/pull/*" },
+        { "url": "https://login.tailscale.com/*" },
+        { "url": "https://tailscale.com/download*" }
       ]
     }
   ]

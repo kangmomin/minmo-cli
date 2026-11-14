@@ -6,7 +6,7 @@ import { ApiError } from '@minmo/api-client'
 import type { ApiClient, ApiErrorCode, Notes } from '@minmo/api-client'
 
 import type { GitHubClient } from '@minmo/core'
-import type { ServerSettings, ServerStatus, TauriApi, UpdateProgress } from '../lib/tauri'
+import type { ServerSettings, ServerStatus, TailscaleStatus, TauriApi, UpdateProgress } from '../lib/tauri'
 import { ok } from '../lib/tauri.mock'
 
 export type Mocked<T> = { [K in keyof T]: T[K] extends (...args: infer A) => infer R ? Mock<(...args: A) => R> : T[K] }
@@ -56,6 +56,12 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     agentsPublish: async () => {},
     onSyncApplied: async () => () => {},
     peerOpen: async () => {},
+    tailscaleStatus: async () => TAILSCALE_MISSING,
+    tailscaleInstall: async () => ({ exitCode: 0, cancelled: false }),
+    tailscaleInstallCancel: async () => {},
+    tailscaleLogin: async () => ({ url: null }),
+    tailscaleServe: async () => ({ status: TAILSCALE_MISSING, enableUrl: null }),
+    onTailscaleLog: async () => () => {},
     sshHosts: async () => [],
     sshHostSave: async () => [],
     sshHostRemove: async () => [],
@@ -136,6 +142,17 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
       for (const l of [...progressListeners]) l(p)
     },
   }
+}
+
+export const TAILSCALE_MISSING: TailscaleStatus = {
+  state: 'missing',
+  name: null,
+  ips: [],
+  httpsUrl: null,
+  httpsConflict: false,
+  install: { command: 'winget install --id Tailscale.Tailscale -e', auto: true, downloadUrl: 'https://tailscale.com/download' },
+  installing: false,
+  error: null,
 }
 
 export const SERVER_SETTINGS: ServerSettings = {
