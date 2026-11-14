@@ -6,5 +6,6 @@
   "postCreateScript": "",
   "sparsePaths": "",
   "postCreateScriptPosix": "",
+  "ignoredCopyExclude": "node_modules\ntarget\ndist\nbuild\nout\n.next\n.nuxt\n.venv\nvenv\n__pycache__\n.gradle\n.turbo\n.cache\ncoverage",
   "updatedAt": "<ts>"
 }

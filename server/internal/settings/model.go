@@ -22,6 +22,8 @@ type Values struct {
 	SparsePaths string `json:"sparsePaths"`
 	// PostCreateScriptPosix 는 Linux/macOS(sh) 생성 후 스크립트. PostCreateScript 는 Windows(PowerShell) 용이다
 	PostCreateScriptPosix string `json:"postCreateScriptPosix"`
+	// IgnoredCopyExclude 는 새 worktree 에 무시된 파일을 가져올 때 뺄 폴더·파일 이름(줄바꿈 구분). "off" 면 가져오지 않는다
+	IgnoredCopyExclude string `json:"ignoredCopyExclude"`
 }
 
 // Input 은 nullable 7필드(nil = 상속/미지정). org/project 저장 행과 PUT 입력 모두에 쓴다.
@@ -33,6 +35,7 @@ type Input struct {
 	PostCreateScript      *string `json:"postCreateScript"`
 	SparsePaths           *string `json:"sparsePaths"`
 	PostCreateScriptPosix *string `json:"postCreateScriptPosix"`
+	IgnoredCopyExclude    *string `json:"ignoredCopyExclude"`
 }
 
 // Record 는 저장된 설정 행이다. 행이 없으면 모든 필드 nil · UpdatedAt nil.
@@ -50,6 +53,7 @@ type Sources struct {
 	PostCreateScript      Scope `json:"postCreateScript"`
 	SparsePaths           Scope `json:"sparsePaths"`
 	PostCreateScriptPosix Scope `json:"postCreateScriptPosix"`
+	IgnoredCopyExclude    Scope `json:"ignoredCopyExclude"`
 }
 
 // Effective 는 E12 응답 본문 `{values, sources}` 이다.
@@ -68,5 +72,9 @@ func Defaults() Values {
 		PostCreateScript:      "",
 		SparsePaths:           "",
 		PostCreateScriptPosix: "",
+		IgnoredCopyExclude:    DefaultIgnoredCopyExclude,
 	}
 }
+
+// DefaultIgnoredCopyExclude 는 의존성·빌드 산출물처럼 크고 다시 만들 수 있는 폴더다(마이그레이션 0006 과 같은 값).
+const DefaultIgnoredCopyExclude = "node_modules\ntarget\ndist\nbuild\nout\n.next\n.nuxt\n.venv\nvenv\n__pycache__\n.gradle\n.turbo\n.cache\ncoverage"

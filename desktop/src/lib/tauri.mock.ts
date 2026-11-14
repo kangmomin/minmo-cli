@@ -496,6 +496,8 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       localFiles.set(dst, [...target, ...added].sort())
       return added.length
     },
+    // mock git 은 무시된 파일을 돌려주지 않는다 — 호출되면 받은 경로를 그대로 복사한 것으로 친다
+    copyPaths: async (_src, _dst, rels, _skipNames) => rels.length,
     listFiles: async (root) => [...(localFiles.get(root) ?? [])],
     copyFileInto: async (_srcRoot, rel, dstRoot) => {
       localFiles.set(dstRoot, [...new Set([...(localFiles.get(dstRoot) ?? []), rel])].sort())

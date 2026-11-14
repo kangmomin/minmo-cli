@@ -69,6 +69,7 @@ const ALLOWED: &[&str] = &[
     "pathExists",
     "removeDir",
     "copyTree",
+    "copyPaths",
     "listFiles",
     "copyFileInto",
     "removeFileIn",

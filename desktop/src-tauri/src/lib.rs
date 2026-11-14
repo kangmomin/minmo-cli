@@ -93,6 +93,7 @@ pub fn run() {
             fs::path_exists,
             fs::remove_dir,
             fs::copy_tree,
+            fs::copy_paths,
             fs::list_files,
             fs::copy_file_into,
             fs::remove_file_in,

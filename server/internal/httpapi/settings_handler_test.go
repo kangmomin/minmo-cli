@@ -11,7 +11,7 @@ import (
 
 var reTS = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
 
-var settingsFields = []string{"branchTemplate", "etcBranchName", "worktreePath", "mainClonePath", "postCreateScript", "sparsePaths", "postCreateScriptPosix"}
+var settingsFields = []string{"branchTemplate", "etcBranchName", "worktreePath", "mainClonePath", "postCreateScript", "sparsePaths", "postCreateScriptPosix", "ignoredCopyExclude"}
 
 // requiredGlobalFields 는 전역 PUT 에서 생략·null 이 400 인 필드(sparsePaths 는 v2.6 호환을 위해 제외)
 var requiredGlobalFields = settingsFields[:5]
@@ -24,6 +24,7 @@ var defaultGlobal = map[string]any{
 	"postCreateScript":      "",
 	"sparsePaths":           "",
 	"postCreateScriptPosix": "",
+	"ignoredCopyExclude":    "node_modules\ntarget\ndist\nbuild\nout\n.next\n.nuxt\n.venv\nvenv\n__pycache__\n.gradle\n.turbo\n.cache\ncoverage",
 }
 
 func globalWith(over map[string]any) map[string]any {
@@ -43,8 +44,8 @@ func expectEmptyScope(t *testing.T, name string, status int, m map[string]any) {
 		t.Errorf("%s: status %d %v", name, status, m)
 		return
 	}
-	if len(m) != 8 {
-		t.Errorf("%s: want 8 keys, got %v", name, m)
+	if len(m) != 9 {
+		t.Errorf("%s: want 9 keys, got %v", name, m)
 	}
 	for _, k := range append(append([]string{}, settingsFields...), "updatedAt") {
 		if v, ok := m[k]; !ok || v != nil {
@@ -58,7 +59,7 @@ func TestSettings_GlobalDefaults_CT07(t *testing.T) {
 	s := testutil.NewTestServer(t)
 	token, _ := s.Login(githubmock.CodeOK)
 	status, m := s.DoJSON("GET", "/settings", token, nil)
-	if status != 200 || len(m) != 8 {
+	if status != 200 || len(m) != 9 {
 		t.Fatalf("GET /settings %d %v", status, m)
 	}
 	for k, v := range defaultGlobal {
@@ -118,9 +119,23 @@ func TestSettings_GlobalExplicitNull_CT29(t *testing.T) {
 	if status, m := s.DoJSON("PUT", "/settings", token, body); status != 200 || m["sparsePaths"] != "desktop" || m["postCreateScriptPosix"] != "npm ci" || m["etcBranchName"] != "misc" {
 		t.Errorf("omitted v2.6+ fields should keep stored value: %d %v", status, m)
 	}
+	// ignoredCopyExclude: 생략하면 저장값 유지(처음엔 기본 제외 목록), "off"·이름 목록은 저장, 경로는 거절
+	legacy := globalWith(nil)
+	delete(legacy, "ignoredCopyExclude")
+	if status, m := s.DoJSON("PUT", "/settings", token, legacy); status != 200 || m["ignoredCopyExclude"] != defaultGlobal["ignoredCopyExclude"] {
+		t.Errorf("omitted ignoredCopyExclude should keep default: %d %v", status, m)
+	}
+	if status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"ignoredCopyExclude": "off"})); status != 200 || m["ignoredCopyExclude"] != "off" {
+		t.Errorf("PUT ignoredCopyExclude off: %d %v", status, m)
+	}
+	if status, m := s.DoJSON("PUT", "/settings", token, legacy); status != 200 || m["ignoredCopyExclude"] != "off" {
+		t.Errorf("omitted ignoredCopyExclude should keep stored: %d %v", status, m)
+	}
+	status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"ignoredCopyExclude": "a/b"}))
+	expectErr(t, status, m, 400, "invalid_ignored_copy_exclude", "ignoredCopyExclude")
 	s.DoJSON("PUT", "/settings", token, globalWith(nil))
 	// 전역은 postCreateScript "" 허용 — 저장 후 그대로 반환
-	status, m := s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"postCreateScript": "", "branchTemplate": "feat/{number}"}))
+	status, m = s.DoJSON("PUT", "/settings", token, globalWith(map[string]any{"postCreateScript": "", "branchTemplate": "feat/{number}"}))
 	if status != 200 || m["postCreateScript"] != "" || m["branchTemplate"] != "feat/{number}" {
 		t.Errorf("valid global PUT %d %v", status, m)
 	}

@@ -107,6 +107,17 @@ describe('validateSettingValue (서버 규칙과 동일)', () => {
   })
 })
 
+describe('ignoredCopyExclude — 이름만 받는다', () => {
+  it('이름 목록·빈 값·"off" 는 통과, 경로·..·제어문자·크기 초과는 거절', () => {
+    for (const ok of ['node_modules\n\n  .venv  \ntarget', '', 'off', DEFAULT_SETTINGS.ignoredCopyExclude]) {
+      expect(validateSettingValue('ignoredCopyExclude', ok)).toBeNull()
+    }
+    for (const bad of ['a/b', 'a\\b', '..', '.', 'a\tb', 'x'.repeat(4097), 'a\n'.repeat(100)]) {
+      expect(validateSettingValue('ignoredCopyExclude', bad)).toBe('invalid_ignored_copy_exclude')
+    }
+  })
+})
+
 describe('mergeSettings', () => {
   it('null·undefined 는 아래 값을 두고, "" 는 값으로 덮는다 — 출처는 마지막으로 덮은 층', () => {
     const m = mergeSettings(DEFAULT_SETTINGS, 'default', [

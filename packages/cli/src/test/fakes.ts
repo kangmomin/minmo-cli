@@ -33,6 +33,7 @@ export const EMPTY_RECORD: SettingsRecord = {
   postCreateScript: null,
   sparsePaths: null,
   postCreateScriptPosix: null,
+  ignoredCopyExclude: null,
   updatedAt: null,
 }
 
@@ -45,6 +46,7 @@ export const EFFECTIVE: Effective = {
     postCreateScript: '',
     sparsePaths: '',
     postCreateScriptPosix: '',
+    ignoredCopyExclude: 'node_modules',
   },
   sources: {
     branchTemplate: 'global',
@@ -54,6 +56,7 @@ export const EFFECTIVE: Effective = {
     postCreateScript: 'global',
     sparsePaths: 'global',
     postCreateScriptPosix: 'global',
+    ignoredCopyExclude: 'global',
   },
 }
 
@@ -80,6 +83,8 @@ export function createFakeApi(overrides: Partial<ApiClient> = {}): Mocked<ApiCli
     exchangeCliCode: async () => ({ session: 'sess_cli' }),
     listSessions: async () => ({ sessions: [] }),
     revokeSession: async () => undefined,
+    syncExport: unexpected('syncExport'),
+    syncImport: unexpected('syncImport'),
   }
   return mockAll(base, overrides)
 }

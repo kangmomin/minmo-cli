@@ -20,6 +20,7 @@ const GLOBAL: SettingsRecord = {
   postCreateScript: '',
   sparsePaths: '',
   postCreateScriptPosix: '',
+  ignoredCopyExclude: 'node_modules',
   updatedAt: '2026-11-09T00:00:00.000Z',
 }
 

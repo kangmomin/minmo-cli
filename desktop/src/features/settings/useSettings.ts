@@ -14,7 +14,7 @@ export type SettingsFormData = {
   isLoading: boolean
 }
 
-export const SETTINGS_FIELDS = ['branchTemplate', 'etcBranchName', 'worktreePath', 'mainClonePath', 'postCreateScript', 'sparsePaths', 'postCreateScriptPosix'] as const
+export const SETTINGS_FIELDS = ['branchTemplate', 'etcBranchName', 'worktreePath', 'mainClonePath', 'postCreateScript', 'sparsePaths', 'postCreateScriptPosix', 'ignoredCopyExclude'] as const
 
 /** base 위에 레코드의 non-null 값을 덮는다 (null = 상속) */
 export function overlay(base: SettingsValues, rec: SettingsRecord | undefined): SettingsValues {
@@ -27,7 +27,7 @@ export function overlay(base: SettingsValues, rec: SettingsRecord | undefined): 
   return out
 }
 
-const EMPTY_VALUES: SettingsValues = { branchTemplate: '', etcBranchName: '', worktreePath: '', mainClonePath: '', postCreateScript: '', sparsePaths: '', postCreateScriptPosix: '' }
+const EMPTY_VALUES: SettingsValues = { branchTemplate: '', etcBranchName: '', worktreePath: '', mainClonePath: '', postCreateScript: '', sparsePaths: '', postCreateScriptPosix: '', ignoredCopyExclude: '' }
 
 export function useSettings(scope: SettingsScope): SettingsFormData & {
   save(input: SettingsInput): Promise<SettingsRecord>

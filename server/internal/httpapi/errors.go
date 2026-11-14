@@ -24,6 +24,7 @@ const (
 	CodeInvalidPathTemplate      ErrorCode = "invalid_path_template"
 	CodeScriptTooLarge           ErrorCode = "script_too_large"
 	CodeInvalidSparsePaths       ErrorCode = "invalid_sparse_paths"
+	CodeInvalidIgnoredCopy       ErrorCode = "invalid_ignored_copy_exclude"
 	CodeInvalidVisibleRepos      ErrorCode = "invalid_visible_repos"
 	CodeInvalidCLICode           ErrorCode = "invalid_cli_code"
 	CodeInvalidIssueKey          ErrorCode = "invalid_issue_key"

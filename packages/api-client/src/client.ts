@@ -77,6 +77,7 @@ const ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'invalid_path_template',
   'script_too_large',
   'invalid_sparse_paths',
+  'invalid_ignored_copy_exclude',
   'invalid_visible_repos',
   'invalid_cli_code',
   'invalid_issue_key',

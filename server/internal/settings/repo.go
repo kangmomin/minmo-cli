@@ -11,7 +11,7 @@ import (
 // ErrGlobalMissing 는 세션이 있는 사용자에게 전역 설정 행이 없는 불변식 위반이다(로그인 시 항상 생성).
 var ErrGlobalMissing = errors.New("전역 설정 행 없음")
 
-const selectColumns = `branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, post_create_script_posix, updated_at`
+const selectColumns = `branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, post_create_script_posix, ignored_copy_exclude, updated_at`
 
 // Get 은 (userID, scope, owner, repo) 행을 조회한다. 행이 없으면 모든 필드 nil 인 Record.
 // owner/repo 는 호출자가 소문자로 정규화해 넘기며, global 은 둘 다 "", org 는 repo "".
@@ -34,8 +34,8 @@ func Get(ctx context.Context, db *sql.DB, userID string, scope Scope, owner, rep
 func Upsert(ctx context.Context, db *sql.DB, userID string, scope Scope, owner, repo string, in Input, now time.Time) (Record, error) {
 	row := db.QueryRowContext(ctx, `
 		INSERT INTO settings (user_id, scope, owner, repo,
-			branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, post_create_script_posix, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, post_create_script_posix, ignored_copy_exclude, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (user_id, scope, owner, repo) DO UPDATE SET
 			branch_template = excluded.branch_template,
 			etc_branch_name = excluded.etc_branch_name,
@@ -44,10 +44,11 @@ func Upsert(ctx context.Context, db *sql.DB, userID string, scope Scope, owner, 
 			post_create_script = excluded.post_create_script,
 			sparse_paths = excluded.sparse_paths,
 			post_create_script_posix = excluded.post_create_script_posix,
+			ignored_copy_exclude = excluded.ignored_copy_exclude,
 			updated_at = excluded.updated_at
 		RETURNING `+selectColumns,
 		userID, string(scope), owner, repo,
-		in.BranchTemplate, in.EtcBranchName, in.WorktreePath, in.MainClonePath, in.PostCreateScript, in.SparsePaths, in.PostCreateScriptPosix,
+		in.BranchTemplate, in.EtcBranchName, in.WorktreePath, in.MainClonePath, in.PostCreateScript, in.SparsePaths, in.PostCreateScriptPosix, in.IgnoredCopyExclude,
 		now.UnixMilli())
 	rec, err := scanRecord(row)
 	if err != nil {
@@ -61,11 +62,11 @@ func EnsureGlobalDefaults(ctx context.Context, db *sql.DB, userID string, now ti
 	d := Defaults()
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO settings (user_id, scope, owner, repo,
-			branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, post_create_script_posix, updated_at)
-		VALUES (?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?)
+			branch_template, etc_branch_name, worktree_path, main_clone_path, post_create_script, sparse_paths, post_create_script_posix, ignored_copy_exclude, updated_at)
+		VALUES (?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (user_id, scope, owner, repo) DO NOTHING`,
 		userID, string(ScopeGlobal),
-		d.BranchTemplate, d.EtcBranchName, d.WorktreePath, d.MainClonePath, d.PostCreateScript, d.SparsePaths, d.PostCreateScriptPosix,
+		d.BranchTemplate, d.EtcBranchName, d.WorktreePath, d.MainClonePath, d.PostCreateScript, d.SparsePaths, d.PostCreateScriptPosix, d.IgnoredCopyExclude,
 		now.UnixMilli())
 	if err != nil {
 		return fmt.Errorf("전역 기본 설정 생성 실패: %w", err)
@@ -92,7 +93,7 @@ func GetEffective(ctx context.Context, db *sql.DB, userID, owner, repo string) (
 		var scope string
 		var rec Record
 		if err := rows.Scan(&scope, &rec.BranchTemplate, &rec.EtcBranchName, &rec.WorktreePath,
-			&rec.MainClonePath, &rec.PostCreateScript, &rec.SparsePaths, &rec.PostCreateScriptPosix, &rec.UpdatedAt); err != nil {
+			&rec.MainClonePath, &rec.PostCreateScript, &rec.SparsePaths, &rec.PostCreateScriptPosix, &rec.IgnoredCopyExclude, &rec.UpdatedAt); err != nil {
 			return Effective{}, fmt.Errorf("effective 조회 실패: %w", err)
 		}
 		switch Scope(scope) {
@@ -129,6 +130,11 @@ func (r Record) Values() Values {
 		}
 		return *p
 	}
+	// 0006 이 global 행을 기본 목록으로 채우므로 NULL 은 드물지만, 그때도 큰 폴더를 복사하지 않게 기본값으로 읽는다
+	ignored := DefaultIgnoredCopyExclude
+	if r.IgnoredCopyExclude != nil {
+		ignored = *r.IgnoredCopyExclude
+	}
 	return Values{
 		BranchTemplate:        deref(r.BranchTemplate),
 		EtcBranchName:         deref(r.EtcBranchName),
@@ -137,12 +143,13 @@ func (r Record) Values() Values {
 		PostCreateScript:      deref(r.PostCreateScript),
 		SparsePaths:           deref(r.SparsePaths),
 		PostCreateScriptPosix: deref(r.PostCreateScriptPosix),
+		IgnoredCopyExclude:    ignored,
 	}
 }
 
 func scanRecord(row *sql.Row) (Record, error) {
 	var rec Record
 	err := row.Scan(&rec.BranchTemplate, &rec.EtcBranchName, &rec.WorktreePath,
-		&rec.MainClonePath, &rec.PostCreateScript, &rec.SparsePaths, &rec.PostCreateScriptPosix, &rec.UpdatedAt)
+		&rec.MainClonePath, &rec.PostCreateScript, &rec.SparsePaths, &rec.PostCreateScriptPosix, &rec.IgnoredCopyExclude, &rec.UpdatedAt)
 	return rec, err
 }

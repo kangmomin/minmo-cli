@@ -84,7 +84,7 @@ func (a *api) putSettings(scope settings.Scope) func(http.ResponseWriter, *http.
 			writeError(w, http.StatusBadRequest, ErrorCode(code), field)
 			return
 		}
-		if scope == settings.ScopeGlobal && (in.SparsePaths == nil || in.PostCreateScriptPosix == nil) {
+		if scope == settings.ScopeGlobal && (in.SparsePaths == nil || in.PostCreateScriptPosix == nil || in.IgnoredCopyExclude == nil) {
 			// 나중에 추가된 필드는 이전 클라이언트가 보내지 않는다 — 전역은 저장된 값을 유지하고, 없으면 ""
 			cur, err := settings.Get(r.Context(), a.db, s.userID, scope, owner, repo)
 			if err != nil {
@@ -103,6 +103,11 @@ func (a *api) putSettings(scope settings.Scope) func(http.ResponseWriter, *http.
 			}
 			keep(&in.SparsePaths, cur.SparsePaths)
 			keep(&in.PostCreateScriptPosix, cur.PostCreateScriptPosix)
+			if in.IgnoredCopyExclude == nil {
+				// 저장값도 없으면 "" (전부 복사)가 아니라 기본 제외 목록
+				v := cur.Values().IgnoredCopyExclude
+				in.IgnoredCopyExclude = &v
+			}
 		}
 		rec, err := settings.Upsert(r.Context(), a.db, s.userID, scope, owner, repo, in, a.now())
 		if err != nil {

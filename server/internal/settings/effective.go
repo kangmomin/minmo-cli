@@ -5,7 +5,7 @@ package settings
 func Merge(global Values, org, project Input) Effective {
 	e := Effective{
 		Values:  global,
-		Sources: Sources{ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal},
+		Sources: Sources{ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal, ScopeGlobal},
 	}
 	for _, layer := range []struct {
 		scope Scope
@@ -18,6 +18,7 @@ func Merge(global Values, org, project Input) Effective {
 		apply(&e.Values.PostCreateScript, &e.Sources.PostCreateScript, layer.in.PostCreateScript, layer.scope)
 		apply(&e.Values.SparsePaths, &e.Sources.SparsePaths, layer.in.SparsePaths, layer.scope)
 		apply(&e.Values.PostCreateScriptPosix, &e.Sources.PostCreateScriptPosix, layer.in.PostCreateScriptPosix, layer.scope)
+		apply(&e.Values.IgnoredCopyExclude, &e.Sources.IgnoredCopyExclude, layer.in.IgnoredCopyExclude, layer.scope)
 	}
 	return e
 }

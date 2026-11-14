@@ -87,7 +87,7 @@ describe('contract: 성공 응답 ↔ fixture (CT-05, 07, 09, 13, 14, 22)', () =
     const got = await api.getEffective('acme', 'widgets')
     expect(got).toEqual(eff)
     expect(Object.keys(got.sources).sort()).toEqual(
-      ['branchTemplate', 'etcBranchName', 'mainClonePath', 'postCreateScript', 'postCreateScriptPosix', 'sparsePaths', 'worktreePath'].sort(),
+      ['branchTemplate', 'etcBranchName', 'ignoredCopyExclude', 'mainClonePath', 'postCreateScript', 'postCreateScriptPosix', 'sparsePaths', 'worktreePath'].sort(),
     )
     expect(calls[0].url).toBe(`${BASE}/projects/acme/widgets/settings/effective`)
   })

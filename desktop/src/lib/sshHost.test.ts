@@ -91,6 +91,31 @@ describe('createSshOps', () => {
     expect(opts?.stdin).not.toContain('_local')
   })
 
+  it('copyPaths: 목록은 스크립트 안의 인용한 heredoc 으로, 폴더는 인자로 — 밖을 가리키는 경로는 보내지 않는다', async () => {
+    const { tauri, ops } = setup(PROBE, { sshExec: async () => ok('3\n') })
+    expect(await ops.copyPaths('/ws/o/r/main', '/ws/o/r/t', ['.env', 'apps/web/.env.local', '$(rm -rf ~)', 'MINMO_PATHS_0'], ['node_modules', "it's", 'a*b'])).toBe(3)
+    const [, argv, opts] = tauri.sshExec.mock.calls[0]
+    expect(argv).toEqual(['sh', '-s', '--', '/ws/o/r/main', '/ws/o/r/t'])
+    // 끝 표시가 목록의 줄과 겹치지 않고, 인용돼 있어 셸이 목록을 해석하지 않는다
+    expect(opts?.stdin).toContain("<<'MINMO_PATHS_1'\n.env\napps/web/.env.local\n$(rm -rf ~)\nMINMO_PATHS_0\nMINMO_PATHS_1\n")
+    expect(opts?.stdin).not.toContain('/ws/o/r')
+    // 폴더 안에서는 .git·제외 이름으로 내려가지 않는다 — 이름은 인용하고 find 패턴 글자는 막는다
+    expect(opts?.stdin).toContain(String.raw`\( -name '.git' -o -name 'node_modules' -o -name 'it'\''s' -o -name 'a\*b' \) -prune -o -type f`)
+
+    tauri.sshExec.mockClear()
+    expect(await ops.copyPaths('/ws/o/r/main', '/ws/o/r/t', [], [])).toBe(0)
+    for (const bad of ['a/b', 'a\nb', '']) await expect(ops.copyPaths('/ws/o/r/main', '/ws/o/r/t', ['.env'], [bad])).rejects.toThrow('제외 이름')
+    for (const bad of ['../x', '/abs', 'a/../b', 'a\nb', 'a\\b', '']) await expect(ops.copyPaths('/ws/o/r/main', '/ws/o/r/t', [bad], [])).rejects.toThrow('상대 경로')
+    await expect(ops.copyPaths('/home/dev', '/ws/o/r/t', ['.env'], [])).rejects.toThrow('사용할 수 없는 폴더')
+    await expect(ops.copyPaths('/ws/o/r/main', '/', ['.env'], [])).rejects.toThrow('사용할 수 없는 폴더')
+    expect(tauri.sshExec).not.toHaveBeenCalled()
+  })
+
+  it('copyPaths: 복사에 실패한 파일이 있으면 원격의 오류로 실패한다', async () => {
+    const { ops } = setup(PROBE, { sshExec: async () => fail('cp: cannot open: Permission denied', 1) })
+    await expect(ops.copyPaths('/ws/o/r/main', '/ws/o/r/t', ['.env'], [])).rejects.toThrow('Permission denied')
+  })
+
   it('얕은 폴더(홈·루트)에서는 파일 작업을 하지 않는다', async () => {
     const { tauri, ops } = setup()
     for (const root of ['/', '/home/dev', 'rel/a/b/c', '/a/b/../c']) expect(() => assertRoot(root)).toThrow('사용할 수 없는 폴더')

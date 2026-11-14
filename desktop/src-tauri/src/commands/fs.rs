@@ -176,6 +176,131 @@ pub fn copy_tree(src: String, dst: String) -> Result<u32, String> {
     copy_tree_impl(src, dst).map_err(|e| e.to_string())
 }
 
+/// 이름 비교용 — Windows·macOS 는 대소문자를 가리지 않는 파일시스템이 기본이다
+fn fold_name(name: &str) -> String {
+    if cfg!(target_os = "linux") {
+        name.to_string()
+    } else {
+        name.to_lowercase()
+    }
+}
+
+/// copy_paths 의 실패 집계: 읽지 못한 폴더·복사하지 못한 파일을 세고 첫 사유만 남긴다
+#[derive(Debug, Default, PartialEq)]
+struct CopyFailures {
+    count: u32,
+    first: Option<String>,
+}
+
+impl CopyFailures {
+    fn add(&mut self, rel: &Path, e: std::io::Error) {
+        self.count += 1;
+        self.first
+            .get_or_insert_with(|| format!("{}: {e}", rel_string(rel)));
+    }
+}
+
+/// walk_files 와 같되 skip 에 있는 이름은 내려가지 않고(무시된 폴더 속의 node_modules·중첩 저장소의 .git),
+/// 읽지 못한 폴더는 실패로 세고 넘어간다 — 무시된 폴더에는 무엇이 들어 있을지 모른다
+fn walk_skipping(
+    root: &Path,
+    dir: &Path,
+    skip: &std::collections::HashSet<String>,
+    out: &mut Vec<PathBuf>,
+    failures: &mut CopyFailures,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => return failures.add(dir.strip_prefix(root).unwrap_or(dir), e),
+    };
+    for entry in entries.flatten() {
+        if skip.contains(&fold_name(&entry.file_name().to_string_lossy())) {
+            continue;
+        }
+        let Ok(ty) = entry.file_type() else { continue };
+        if ty.is_dir() {
+            walk_skipping(root, &entry.path(), skip, out, failures);
+        } else if ty.is_file() {
+            if let Ok(rel) = entry.path().strip_prefix(root) {
+                out.push(rel.to_path_buf());
+            }
+        }
+    }
+}
+
+/// src 아래의 상대 경로들(파일 또는 폴더 — 폴더는 skip_names·.git 을 뺀 그 안 전부)을 dst 의 같은 위치로 복사한다.
+/// copy_tree 와 같은 규칙(기존 파일 유지·링크 건너뜀)이되, 일부가 실패해도 끝까지 간다. (복사한 수, 실패)
+fn copy_paths_impl(
+    src: &Path,
+    dst: &Path,
+    rels: &[PathBuf],
+    skip_names: &[String],
+) -> (u32, CopyFailures) {
+    let skip: std::collections::HashSet<String> = skip_names
+        .iter()
+        .map(|n| fold_name(n))
+        .chain([".git".to_string()])
+        .collect();
+    let mut failures = CopyFailures::default();
+    let mut files = Vec::new();
+    for rel in rels {
+        // 원본 쪽 링크도 따라가지 않는다 — src 밖의 파일을 worktree 로 끌어오지 않게
+        if has_symlink_between(src, rel) {
+            continue;
+        }
+        let full = src.join(rel);
+        let Ok(meta) = std::fs::symlink_metadata(&full) else {
+            continue;
+        };
+        if meta.is_dir() {
+            walk_skipping(src, &full, &skip, &mut files, &mut failures);
+        } else if meta.is_file() {
+            files.push(rel.clone());
+        }
+    }
+    let mut copied = 0;
+    for rel in files {
+        let target = dst.join(&rel);
+        if std::fs::symlink_metadata(&target).is_ok() || has_symlink_between(dst, &rel) {
+            continue;
+        }
+        let done = target
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::copy(src.join(&rel), &target));
+        match done {
+            Ok(_) => copied += 1,
+            Err(e) => failures.add(&rel, e),
+        }
+    }
+    (copied, failures)
+}
+
+/// 새 worktree 에 무시된 파일(.env 등)을 원본 폴더에서 가져온다. 파일이 많을 수 있어 창을 멈추지 않게 별도 스레드에서 돈다
+#[tauri::command]
+pub async fn copy_paths(
+    src: String,
+    dst: String,
+    rels: Vec<String>,
+    skip_names: Vec<String>,
+) -> Result<u32, String> {
+    let src = guard_root(&src)?.to_path_buf();
+    let dst = guard_root(&dst)?.to_path_buf();
+    let rels = rels
+        .iter()
+        .map(|r| safe_rel(r))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (copied, failures) = tauri::async_runtime::spawn_blocking(move || {
+        copy_paths_impl(&src, &dst, &rels, &skip_names)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    match failures.first {
+        Some(e) => Err(format!("{copied}개 복사, {}개 실패 — {e}", failures.count)),
+        None => Ok(copied),
+    }
+}
+
 /// root 아래 파일의 상대 경로('/' 구분, 정렬). root 가 없으면 빈 목록
 #[tauri::command]
 pub fn list_files(root: String) -> Result<Vec<String>, String> {
@@ -661,6 +786,103 @@ mod tests {
     #[cfg(unix)]
     fn symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
         std::os::unix::fs::symlink(target, link)
+    }
+
+    #[test]
+    fn copy_paths_copies_listed_files_and_dirs_only() {
+        let base = tmp("paths");
+        let (src, dst) = (base.join("main"), base.join("wt"));
+        std::fs::create_dir_all(src.join(".venv/bin")).unwrap();
+        std::fs::create_dir_all(src.join("node_modules/x")).unwrap();
+        std::fs::create_dir_all(src.join("apps/web")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join(".env"), "A=1").unwrap();
+        std::fs::write(src.join(".venv/bin/python"), "py").unwrap();
+        std::fs::write(src.join("node_modules/x/i.js"), "x").unwrap();
+        std::fs::write(src.join("apps/web/.env.local"), "B=2").unwrap();
+        std::fs::write(src.join("tracked.txt"), "t").unwrap();
+        std::fs::write(dst.join(".env"), "A=mine").unwrap();
+
+        let rels: Vec<PathBuf> = [".env", ".venv", "apps/web/.env.local", "gone"]
+            .iter()
+            .map(|r| safe_rel(r).unwrap())
+            .collect();
+        // .env 는 이미 있어 그대로, 없는 경로는 건너뜀 → 2개
+        assert_eq!(
+            copy_paths_impl(&src, &dst, &rels, &[]),
+            (2, CopyFailures::default())
+        );
+        assert_eq!(std::fs::read_to_string(dst.join(".env")).unwrap(), "A=mine");
+        assert_eq!(
+            std::fs::read_to_string(dst.join(".venv/bin/python")).unwrap(),
+            "py"
+        );
+        assert!(dst.join("apps/web/.env.local").is_file());
+        assert!(!dst.join("node_modules").exists());
+        assert!(!dst.join("tracked.txt").exists());
+        // 밖을 가리키는 상대 경로는 명령 단계에서 거부된다
+        for bad in [
+            "../x",
+            "a/../../b",
+            "",
+            if cfg!(windows) { r"C:\x" } else { "/x" },
+        ] {
+            assert!(safe_rel(bad).is_err(), "{bad}");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 통째로 무시된 폴더 안의 제외 이름(node_modules)과 중첩 저장소의 .git 은 내려가지 않는다
+    #[test]
+    fn copy_paths_skips_names_inside_copied_dirs() {
+        let base = tmp("paths-skip");
+        let (src, dst) = (base.join("main"), base.join("wt"));
+        std::fs::create_dir_all(src.join("tmp/pkg/node_modules/x")).unwrap();
+        std::fs::create_dir_all(src.join("tmp/nested/.git")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("tmp/keep.txt"), "k").unwrap();
+        std::fs::write(src.join("tmp/pkg/a.js"), "a").unwrap();
+        std::fs::write(src.join("tmp/pkg/node_modules/x/i.js"), "x").unwrap();
+        std::fs::write(src.join("tmp/nested/.git/config"), "c").unwrap();
+        std::fs::write(src.join("tmp/nested/file"), "f").unwrap();
+        let rels = vec![safe_rel("tmp").unwrap()];
+        assert_eq!(
+            copy_paths_impl(&src, &dst, &rels, &["node_modules".to_string()]),
+            (3, CopyFailures::default())
+        );
+        assert!(dst.join("tmp/keep.txt").is_file() && dst.join("tmp/pkg/a.js").is_file());
+        assert!(dst.join("tmp/nested/file").is_file());
+        assert!(!dst.join("tmp/pkg/node_modules").exists());
+        assert!(!dst.join("tmp/nested/.git").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 원본 쪽 링크(무시된 폴더가 밖을 가리키는 경우)를 따라 밖의 파일을 worktree 로 끌어오지 않는다
+    #[test]
+    fn copy_paths_does_not_follow_source_links() {
+        let base = tmp("paths-link");
+        let (src, dst, outside) = (base.join("main"), base.join("wt"), base.join("outside"));
+        std::fs::create_dir_all(src.join("data")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret"), "s").unwrap();
+        if symlink_dir(&outside, &src.join("linked")).is_err()
+            || symlink_dir(&outside, &src.join("data/inner")).is_err()
+        {
+            eprintln!("심볼릭 링크를 만들 권한이 없어 건너뜀");
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+        let rels: Vec<PathBuf> = ["linked", "linked/secret", "data"]
+            .iter()
+            .map(|r| safe_rel(r).unwrap())
+            .collect();
+        assert_eq!(
+            copy_paths_impl(&src, &dst, &rels, &[]),
+            (0, CopyFailures::default())
+        );
+        assert!(!dst.join("linked").exists() && !dst.join("data/inner").exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// 저장소에 커밋된 디렉터리 링크(config -> 밖)를 따라 보관 파일을 worktree 밖에 쓰지 않는다
