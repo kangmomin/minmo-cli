@@ -25,6 +25,7 @@ export function createFakeHost(overrides: Partial<FakeHost> = {}): Mocked<FakeHo
     pathExists: async () => false,
     removeDir: async () => {},
     copyTree: async () => 0,
+    copyPaths: async () => 0,
     scriptRun: async () => ({ exitCode: 0, cancelled: false }),
     scriptCancel: async () => {},
     onScriptLog: async () => () => {},

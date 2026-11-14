@@ -27,6 +27,7 @@ const SCOPE_EMPTY = {
   postCreateScript: null,
   sparsePaths: null,
   postCreateScriptPosix: null,
+  ignoredCopyExclude: null,
   updatedAt: null,
 }
 const GLOBAL = {
@@ -37,6 +38,7 @@ const GLOBAL = {
   postCreateScript: '',
   sparsePaths: '',
   postCreateScriptPosix: '',
+  ignoredCopyExclude: 'node_modules',
   updatedAt: '2026-11-09T00:00:00.000Z',
 }
 

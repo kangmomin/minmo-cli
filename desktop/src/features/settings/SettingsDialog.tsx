@@ -12,7 +12,7 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { Textarea } from '../../components/ui/textarea'
-import { issueBranchContext } from '@minmo/core'
+import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF, ignoredCopyNames, issueBranchContext } from '@minmo/core'
 import { isLocalOwner, repoLabelOf, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useSettings } from './useSettings'
@@ -30,6 +30,7 @@ export interface SettingsDialogProps {
 type TextField = 'branchTemplate' | 'etcBranchName' | 'worktreePath' | 'mainClonePath'
 type ScriptMode = 'inherit' | 'none' | 'custom'
 type SparseMode = 'inherit' | 'all' | 'custom'
+type IgnoredMode = 'inherit' | 'on' | 'off'
 
 const TEXT_FIELDS: { field: TextField; label: string; hint: string }[] = [
   { field: 'branchTemplate', label: '브랜치 템플릿', hint: '{number} 필수 · {slug} {title}' },
@@ -44,6 +45,7 @@ const ERROR_TEXT: Record<string, string> = {
   global_requires_all_fields: '전역 설정은 이 값을 비울 수 없습니다',
   script_too_large: '스크립트가 64 KiB 를 넘습니다',
   invalid_sparse_paths: '저장소 기준 상대 폴더만 한 줄에 하나씩 적을 수 있습니다 (glob·.. 불가)',
+  invalid_ignored_copy_exclude: '폴더·파일 이름만 한 줄에 하나씩 적을 수 있습니다 (경로·.. 불가)',
   invalid_json: '값의 형식이 올바르지 않습니다',
 }
 
@@ -179,6 +181,17 @@ function sparseSummary(v: string): string {
   return dirs.length === 0 ? '(전체)' : dirs.join(', ')
 }
 
+function initialIgnoredMode(scope: SettingsScope, v: string | null | undefined): IgnoredMode {
+  if (v == null) return scope.kind === 'global' ? 'on' : 'inherit'
+  return ignoredCopyNames(v) === null ? 'off' : 'on'
+}
+
+function ignoredSummary(v: string): string {
+  const names = ignoredCopyNames(v)
+  if (names === null) return '가져오지 않음'
+  return names.size === 0 ? '모두 가져옴' : `가져옴 · 제외: ${[...names].join(', ')}`
+}
+
 function SettingsForm(props: {
   scope: SettingsScope
   record: SettingsRecord
@@ -207,6 +220,14 @@ function SettingsForm(props: {
   const [posixScript, setPosixScript] = useState(record.postCreateScriptPosix ?? '')
   const [sparseMode, setSparseMode] = useState<SparseMode>(() => initialSparseMode(scope, record.sparsePaths))
   const [sparse, setSparse] = useState(record.sparsePaths ?? '')
+  const [ignoredMode, setIgnoredMode] = useState<IgnoredMode>(() => initialIgnoredMode(scope, record.ignoredCopyExclude))
+  // 꺼져 있거나 상속 중이면 켰을 때 채울 목록을 미리 넣어 둔다(상속값, 없으면 기본 제외 목록)
+  const [ignored, setIgnored] = useState(() => {
+    const own = record.ignoredCopyExclude
+    if (own != null && ignoredCopyNames(own) !== null) return own
+    const up = inherited?.ignoredCopyExclude
+    return up != null && ignoredCopyNames(up) !== null ? up : DEFAULT_IGNORED_COPY_EXCLUDE
+  })
   const [errors, setErrors] = useState<Partial<Record<keyof SettingsValues, string>>>({})
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -244,6 +265,7 @@ function SettingsForm(props: {
       postCreateScript: scriptMode === 'inherit' ? null : scriptMode === 'none' ? '' : script,
       postCreateScriptPosix: posixMode === 'inherit' ? null : posixMode === 'none' ? '' : posixScript,
       sparsePaths: sparseMode === 'inherit' ? null : sparseMode === 'all' ? '' : sparse,
+      ignoredCopyExclude: ignoredMode === 'inherit' ? null : ignoredMode === 'off' ? IGNORED_COPY_OFF : ignored,
     }
     try {
       await props.save(input)
@@ -364,6 +386,64 @@ function SettingsForm(props: {
               {errors.sparsePaths && (
                 <p id={fieldId('sparse-error')} role="alert" className="text-xs text-destructive">
                   {errors.sparsePaths}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-2">
+          <span id={fieldId('ignored-group')} className="text-sm font-medium">
+            무시된 파일 가져오기
+          </span>
+          <RadioGroup
+            aria-labelledby={fieldId('ignored-group')}
+            aria-describedby={fieldId('ignored-desc')}
+            value={ignoredMode}
+            onValueChange={(v) => setIgnoredMode(v as IgnoredMode)}
+            className="flex gap-4"
+          >
+            {!isGlobal && (
+              <div className="flex items-center gap-2">
+                <RadioGroupItem id={fieldId('ignored-inherit')} value="inherit" />
+                <Label htmlFor={fieldId('ignored-inherit')}>상속</Label>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <RadioGroupItem id={fieldId('ignored-on')} value="on" />
+              <Label htmlFor={fieldId('ignored-on')}>가져오기</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem id={fieldId('ignored-off')} value="off" />
+              <Label htmlFor={fieldId('ignored-off')}>가져오지 않음</Label>
+            </div>
+          </RadioGroup>
+          <p id={fieldId('ignored-desc')} className="text-xs text-muted-foreground">
+            새 worktree 를 만들 때 .gitignore 로 빠진 파일(.env 등)을 원본 폴더에서 복사합니다 · 원본: 기준·로컬 저장소 폴더, 없으면 ★기타 worktree, 그다음
+            최근에 커밋한 worktree
+          </p>
+          {ignoredMode === 'inherit' && inherited && (
+            <p className="text-xs text-muted-foreground">상속: {ignoredSummary(inherited.ignoredCopyExclude ?? DEFAULT_IGNORED_COPY_EXCLUDE)}</p>
+          )}
+          {ignoredMode === 'on' && (
+            <div className="grid gap-1.5">
+              <Label htmlFor={fieldId('ignored')}>가져오지 않을 폴더·파일 이름</Label>
+              <Textarea
+                id={fieldId('ignored')}
+                value={ignored}
+                rows={4}
+                className="font-mono"
+                aria-invalid={errors.ignoredCopyExclude ? true : undefined}
+                aria-describedby={errors.ignoredCopyExclude ? `${fieldId('ignored-hint')} ${fieldId('ignored-error')}` : fieldId('ignored-hint')}
+                onChange={(e) => setIgnored(e.target.value)}
+                spellCheck={false}
+              />
+              <p id={fieldId('ignored-hint')} className="text-xs text-muted-foreground">
+                이름을 한 줄에 하나씩(패턴 불가) · 경로 어디에든 이 이름이 있으면 복사하지 않습니다 · 여기 없는 큰 폴더는 그대로 복사되니 추가하세요 · 비우면 전부 복사
+              </p>
+              {errors.ignoredCopyExclude && (
+                <p id={fieldId('ignored-error')} role="alert" className="text-xs text-destructive">
+                  {errors.ignoredCopyExclude}
                 </p>
               )}
             </div>

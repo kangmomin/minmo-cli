@@ -19,6 +19,7 @@
   "invalid_path_template_main": { "error": "invalid_path_template", "field": "mainClonePath" },
   "script_too_large": { "error": "script_too_large", "field": "postCreateScript" },
   "invalid_sparse_paths": { "error": "invalid_sparse_paths", "field": "sparsePaths" },
+  "invalid_ignored_copy_exclude": { "error": "invalid_ignored_copy_exclude", "field": "ignoredCopyExclude" },
   "invalid_visible_repos": { "error": "invalid_visible_repos", "field": "repos" },
   "invalid_cli_code": { "error": "invalid_cli_code" },
   "invalid_issue_key": { "error": "invalid_issue_key" },

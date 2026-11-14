@@ -19,6 +19,7 @@ const (
 	codePathTemplate = "invalid_path_template"
 	codeScript       = "script_too_large"
 	codeSparse       = "invalid_sparse_paths"
+	codeIgnoredCopy  = "invalid_ignored_copy_exclude"
 )
 
 var (
@@ -48,6 +49,7 @@ func ValidateInput(scope Scope, in Input) (code, field string) {
 		{"postCreateScript", in.PostCreateScript, checkPostCreateScript, false},
 		{"sparsePaths", in.SparsePaths, checkSparsePaths, true},
 		{"postCreateScriptPosix", in.PostCreateScriptPosix, checkPostCreateScript, true},
+		{"ignoredCopyExclude", in.IgnoredCopyExclude, checkIgnoredCopyExclude, true},
 	}
 	for _, f := range fields {
 		if f.value == nil {
@@ -140,6 +142,33 @@ func checkSparsePaths(v string) string {
 		for _, r := range p {
 			if unicode.IsControl(r) {
 				return codeSparse
+			}
+		}
+	}
+	return ""
+}
+
+// checkIgnoredCopyExclude 는 줄마다 폴더·파일 "이름" 하나인지 검사한다(빈 줄은 무시). 경로·패턴은 받지 않는다 —
+// 클라이언트가 경로의 각 단계와 이름을 그대로 비교하기 때문이다. "off"(가져오지 않음)도 이름 형식이라 통과한다.
+func checkIgnoredCopyExclude(v string) string {
+	if len(v) > maxSparseBytes {
+		return codeIgnoredCopy
+	}
+	lines := strings.Split(v, "\n")
+	if len(lines) > maxSparseLines {
+		return codeIgnoredCopy
+	}
+	for _, line := range lines {
+		p := strings.TrimSpace(line)
+		if p == "" {
+			continue
+		}
+		if p == "." || p == ".." || strings.ContainsAny(p, `/\`) {
+			return codeIgnoredCopy
+		}
+		for _, r := range p {
+			if unicode.IsControl(r) {
+				return codeIgnoredCopy
 			}
 		}
 	}

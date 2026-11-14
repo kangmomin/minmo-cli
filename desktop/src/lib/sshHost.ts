@@ -12,6 +12,7 @@ export type HostOps = Pick<
   | 'pathExists'
   | 'removeDir'
   | 'copyTree'
+  | 'copyPaths'
   | 'listFiles'
   | 'copyFileInto'
   | 'removeFileIn'
@@ -58,6 +59,49 @@ find . -type f ! -name "*$NL*" -print | {
   echo "$n"
   exit $bad
 }`
+
+const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
+
+/** COPY_PATHS 의 목록 끝 표시 — 목록의 줄과 겹치지 않게 호출마다 새로 만든다 */
+const pathsDelimiter = (rels: string[]) => {
+  for (let i = 0; ; i++) {
+    const d = `MINMO_PATHS_${i}`
+    if (!rels.includes(d)) return d
+  }
+}
+
+/**
+ * src 아래의 상대 경로들(파일·폴더)을 dst 로 복사한다 — COPY_TREE 와 같은 규칙.
+ * 스크립트가 이미 stdin 으로 가므로 목록은 인용한 heredoc 으로 싣는다(명령줄 길이 제한을 피하고, 셸이 해석하지 않는다)
+ */
+const copyPathsScript = (rels: string[], skipNames: string[]) => {
+  const end = pathsDelimiter(rels)
+  // 폴더 안을 훑을 때 내려가지 않을 이름(.git·제외 이름). 작은따옴표로 감싸고 find 의 패턴 글자는 막는다
+  const prune = ['.git', ...skipNames].map((n) => `-name ${shQuote(n.replace(/[\\*?[]/g, '\\$&'))}`).join(' -o ')
+  return `${NOLINK}
+src=$1; dst=$2
+cd -- "$src" || exit 1
+{
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    nolink "$src" "$rel" || continue
+    if [ -d "$rel" ]; then find "./$rel" \\( ${prune} \\) -prune -o -type f ! -name "*$NL*" -print
+    elif [ -f "$rel" ]; then printf '%s\\n' "./$rel"; fi
+  done <<'${end}'
+${rels.join('\n')}
+${end}
+} | {
+  n=0; bad=0
+  while IFS= read -r f; do
+    rel=\${f#./}; t="$dst/$rel"
+    nolink "$dst" "$rel" || continue
+    if [ -e "$t" ] || [ -L "$t" ]; then continue; fi
+    if mkdir -p -- "$(dirname -- "$t")" && cp -p -- "$f" "$t"; then n=$((n+1)); else bad=1; fi
+  done
+  echo "$n"
+  exit $bad
+}`
+}
 
 const LIST_FILES = `NL='
 '
@@ -263,6 +307,14 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
       assertRoot(src)
       assertRoot(dst)
       return Number(must(await script(COPY_TREE, [src, dst]), '파일 복사').stdout.trim()) || 0
+    },
+    copyPaths: async (src, dst, rels, skipNames) => {
+      inRoot(src, ...rels)
+      assertRoot(dst)
+      // 이름 하나씩만(경로·줄바꿈 불가) — 스크립트 본문에 싣기 때문이다
+      for (const n of skipNames) if (n === '' || /[/\n\r\0]/.test(n)) throw new Error(`제외 이름이 올바르지 않습니다: ${n}`)
+      if (rels.length === 0) return 0
+      return Number(must(await script(copyPathsScript(rels, skipNames), [src, dst]), '무시된 파일 복사').stdout.trim()) || 0
     },
     listFiles: async (root) => {
       assertRoot(root)

@@ -6,7 +6,8 @@
     "mainClonePath": "~/minmo-workspaces/{owner}/{repo}/_main",
     "postCreateScript": "",
     "sparsePaths": "",
-    "postCreateScriptPosix": ""
+    "postCreateScriptPosix": "",
+    "ignoredCopyExclude": "node_modules\ntarget\ndist\nbuild\nout\n.next\n.nuxt\n.venv\nvenv\n__pycache__\n.gradle\n.turbo\n.cache\ncoverage"
   },
   "sources": {
     "branchTemplate": "project",
@@ -15,6 +16,7 @@
     "mainClonePath": "global",
     "postCreateScript": "global",
     "sparsePaths": "global",
-    "postCreateScriptPosix": "global"
+    "postCreateScriptPosix": "global",
+    "ignoredCopyExclude": "global"
   }
 }

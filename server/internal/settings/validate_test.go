@@ -218,6 +218,16 @@ func TestValidate_PostCreateScript_CT28(t *testing.T) {
 	runValidate(t, allScopes, []vcase{
 		{name: "posix ok", in: Input{PostCreateScriptPosix: sp("npm ci")}},
 		{name: "posix too large", in: Input{PostCreateScriptPosix: sp(strings.Repeat("x", 65537))}, code: "script_too_large", field: "postCreateScriptPosix"},
+		// ignoredCopyExclude: 이름만(경로·"."·".."·제어문자 거절), 빈 값·"off"·빈 줄 허용
+		{name: "ignored names ok", in: Input{IgnoredCopyExclude: sp("node_modules\n\n  .venv  \ntarget")}},
+		{name: "ignored empty ok", in: Input{IgnoredCopyExclude: sp("")}},
+		{name: "ignored off ok", in: Input{IgnoredCopyExclude: sp("off")}},
+		{name: "ignored path", in: Input{IgnoredCopyExclude: sp("a/b")}, code: "invalid_ignored_copy_exclude", field: "ignoredCopyExclude"},
+		{name: "ignored backslash", in: Input{IgnoredCopyExclude: sp("a\\b")}, code: "invalid_ignored_copy_exclude", field: "ignoredCopyExclude"},
+		{name: "ignored dotdot", in: Input{IgnoredCopyExclude: sp("..")}, code: "invalid_ignored_copy_exclude", field: "ignoredCopyExclude"},
+		{name: "ignored control", in: Input{IgnoredCopyExclude: sp("a\tb")}, code: "invalid_ignored_copy_exclude", field: "ignoredCopyExclude"},
+		{name: "ignored too large", in: Input{IgnoredCopyExclude: sp(strings.Repeat("x", 4097))}, code: "invalid_ignored_copy_exclude", field: "ignoredCopyExclude"},
+		{name: "ignored too many lines", in: Input{IgnoredCopyExclude: sp(strings.Repeat("a\n", 100))}, code: "invalid_ignored_copy_exclude", field: "ignoredCopyExclude"},
 	})
 }
 

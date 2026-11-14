@@ -79,6 +79,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     pathExists: async () => false,
     removeDir: async () => {},
     copyTree: async () => 0,
+    copyPaths: async () => 0,
     listFiles: async () => [],
     copyFileInto: async () => {},
     removeFileIn: async () => {},

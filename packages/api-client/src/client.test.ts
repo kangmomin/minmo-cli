@@ -35,6 +35,7 @@ const SETTINGS = {
   postCreateScript: null,
   sparsePaths: null,
   postCreateScriptPosix: null,
+  ignoredCopyExclude: null,
   updatedAt: null,
 }
 

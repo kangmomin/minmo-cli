@@ -170,6 +170,8 @@ export interface TauriApi extends WorktreeHost, GhHost {
   removeDir(path: string): Promise<void>
   /** src 의 파일을 dst 의 같은 상대 경로로 복사(기존 파일은 유지)하고 복사한 개수를 돌려준다. src 가 없으면 0 */
   copyTree(src: string, dst: string): Promise<number>
+  /** src 아래의 상대 경로들(파일·폴더)을 dst 의 같은 위치로 복사 — 새 worktree 에 무시된 파일을 가져올 때 */
+  copyPaths(src: string, dst: string, rels: string[], skipNames: string[]): Promise<number>
   /** root 아래 파일의 상대 경로('/' 구분, 정렬). root 가 없으면 [] */
   listFiles(root: string): Promise<string[]>
   /** srcRoot/rel → dstRoot/rel 복사(덮어씀). rel 은 상대 경로만 */
@@ -253,6 +255,7 @@ export const TAURI_COMMANDS = {
   pathExists: 'path_exists',
   removeDir: 'remove_dir',
   copyTree: 'copy_tree',
+  copyPaths: 'copy_paths',
   listFiles: 'list_files',
   copyFileInto: 'copy_file_into',
   removeFileIn: 'remove_file_in',
@@ -368,6 +371,7 @@ export function createTauriApi(): TauriApi {
     pathExists: (path) => call(C.pathExists, { path }),
     removeDir: (path) => call(C.removeDir, { path }),
     copyTree: (src, dst) => call(C.copyTree, { src, dst }),
+    copyPaths: (src, dst, rels, skipNames) => call(C.copyPaths, { src, dst, rels, skipNames }),
     listFiles: (root) => call(C.listFiles, { root }),
     copyFileInto: (srcRoot, rel, dstRoot) => call(C.copyFileInto, { srcRoot, rel, dstRoot }),
     removeFileIn: (root, rel) => call(C.removeFileIn, { root, rel }),

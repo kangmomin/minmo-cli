@@ -28,6 +28,12 @@ export interface FsHost {
   removeDir(path: string): Promise<void>
   /** src 의 파일을 dst 의 같은 상대 경로로 복사(기존 파일은 유지)하고 복사한 개수를 돌려준다. src 가 없으면 0 */
   copyTree(src: string, dst: string): Promise<number>
+  /**
+   * src 아래의 상대 경로들(파일 또는 폴더 — 폴더는 그 안 전부)을 dst 의 같은 위치로 복사하고 복사한 파일 수를 돌려준다.
+   * copyTree 와 같은 규칙: 기존 파일은 유지, 심볼릭 링크는 건너뜀. 구분자는 `/`.
+   * 폴더 안을 훑을 때 이름이 skipNames 에 있거나 `.git` 인 폴더·파일은 내려가지 않는다(무시된 폴더 속의 node_modules·중첩 저장소)
+   */
+  copyPaths(src: string, dst: string, rels: string[], skipNames: string[]): Promise<number>
 }
 
 export interface ScriptHost {

@@ -5,6 +5,7 @@ import type { Effective, PathContext, Platform, SettingsValues } from '@minmo/ap
 
 import { isOfflineError } from './apiErrors'
 import type { CmdResult, GitHost, ScriptRunResult, WorktreeHost } from './host'
+import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF } from './settings'
 
 export type IssueTarget = {
   owner: string
@@ -85,7 +86,7 @@ export interface WorktreePathStore {
   delete(id: string): void
 }
 
-export type SetupStep = 'effective' | 'clone' | 'fetch' | 'prune' | 'branch' | 'worktree' | 'sparse' | 'localfiles' | 'script'
+export type SetupStep = 'effective' | 'clone' | 'fetch' | 'prune' | 'branch' | 'worktree' | 'sparse' | 'localfiles' | 'ignored' | 'script'
 export type SetupLogEvent = {
   issueId: string
   step: SetupStep
@@ -182,6 +183,59 @@ export function sparseDirs(v: string): string[] {
     .filter(Boolean)
 }
 
+/** ignoredCopyExclude 설정 → 뺄 이름 집합. null = 가져오지 않음. 값이 없으면(이전 서버) 기본 목록 */
+export function ignoredCopyNames(v: string | undefined | null): Set<string> | null {
+  const names = (v ?? DEFAULT_IGNORED_COPY_EXCLUDE)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (names.length === 1 && names[0] === IGNORED_COPY_OFF) return null
+  return new Set(names)
+}
+
+/** 이름 비교용 — Windows·macOS 는 대소문자를 가리지 않는 파일시스템이 기본이다 */
+const foldName = (name: string, platform: Platform) => (platform === 'linux' ? name : name.toLowerCase())
+
+/**
+ * `git ls-files --others --ignored --exclude-standard --directory -z` 출력 → 가져올 상대 경로(폴더는 끝에 `/`).
+ * 통째로 무시된 폴더는 `dir/` 한 줄로 온다. 경로의 어느 단계든 exclude 에 있으면 뺀다(폴더 안쪽은 호스트가 훑으며 거른다).
+ * sparse 가 있으면 체크아웃되는 곳만: 그 폴더 안, 그리고 최상위·그 폴더의 상위 폴더들의 직속 파일(cone 규칙)
+ */
+export function ignoredPathsToCopy(stdout: string, exclude: ReadonlySet<string>, sparse: readonly string[], platform: Platform = 'linux'): string[] {
+  const skip = new Set([...exclude].map((n) => foldName(n, platform)))
+  const out: string[] = []
+  for (const raw of stdout.split('\0')) {
+    // U+FFFD: UTF-8 이 아닌 이름이 깨져 온 것 — 그 이름으로는 원본을 찾지 못한다.
+    // `\`·줄바꿈이 든 이름은 호스트마다 다르게 풀려(구분자·줄 단위 전달) 하나 때문에 전체가 거부되므로 여기서 뺀다
+    if (raw === '' || /[\uFFFD\\\r\n]/.test(raw)) continue
+    const isDir = raw.endsWith('/')
+    const rel = isDir ? raw.slice(0, -1) : raw
+    const segs = rel.split('/')
+    if (segs.some((s) => s === '' || s === '.' || s === '..' || s === '.git' || skip.has(foldName(s, platform)))) continue
+    if (sparse.length > 0) {
+      const parent = segs.slice(0, -1).join('/')
+      const inCone = sparse.some((d) => rel === d || rel.startsWith(`${d}/`))
+      const directFile = !isDir && (parent === '' || sparse.some((d) => d.startsWith(`${parent}/`)))
+      if (!inCone && !directFile) continue
+    }
+    out.push(raw)
+  }
+  return out
+}
+
+/** `git worktree list --porcelain` → 체크아웃이 있는 worktree 들(bare·prunable 제외) */
+function parseWorktreeList(stdout: string): { path: string; head: string }[] {
+  const out: { path: string; head: string }[] = []
+  for (const block of stdout.split(/\r?\n\r?\n/)) {
+    const lines = block.split(/\r?\n/)
+    const path = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length)
+    const head = lines.find((l) => l.startsWith('HEAD '))?.slice('HEAD '.length)
+    if (!path || !head || lines.some((l) => l === 'bare' || l.startsWith('prunable'))) continue
+    out.push({ path, head })
+  }
+  return out
+}
+
 /** 생성 후 스크립트는 실행 셸이 OS 마다 달라 두 벌이다 — Windows 는 PowerShell, 그 외(macOS·원격 CLI)는 sh */
 export function scriptFor(values: Pick<SettingsValues, 'postCreateScript' | 'postCreateScriptPosix'>, platform: Platform): string {
   return platform === 'win32' ? values.postCreateScript : values.postCreateScriptPosix
@@ -236,6 +290,10 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
   const repoLocks = new Map<string, Promise<void>>()
   /** 이슈별 실행 중인 생성 후 스크립트 */
   const running = new Map<string, RunningScript>()
+  /** 이슈별 진행 중인 무시된 파일 복사 — 삭제가 끝나기를 기다린다(복사가 지운 폴더를 다시 만들지 않게) */
+  const copying = new Map<string, Promise<void>>()
+  /** 삭제가 진행 중인 이슈 — 그 사이 끝난 복사 뒤에 스크립트를 시작하지 않는다 */
+  const deleting = new Set<string>()
   let seq = 0
   const newRunId = deps.newRunId ?? (() => globalThis.crypto?.randomUUID?.() ?? `run-${Date.now()}-${++seq}`)
 
@@ -281,6 +339,75 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
   }
 
   const localDir = (main: string) => deps.localDirFor?.(main) ?? localFilesDir(main, platform)
+
+  /**
+   * 무시된 파일을 가져올 원본 후보(앞이 우선). 체크아웃된 메인 저장소(로컬·기준 저장소) → ★기타 worktree →
+   * 가장 최근에 커밋한 다른 worktree. 비어 있으면 이 저장소의 첫 worktree
+   */
+  async function ignoredSources(t: IssueTarget, p: Plan): Promise<string[]> {
+    const same = (a: string, b: string) => normalizePath(a, platform) === normalizePath(b, platform)
+    const out: string[] = []
+    const add = (path: string) => {
+      if (!same(path, p.path) && !out.some((o) => same(o, path))) out.push(path)
+    }
+    const bare = await tauri.gitRun(['-C', p.main, 'rev-parse', '--is-bare-repository'])
+    if (bare.code === 0 && bare.stdout.trim() === 'false') add(p.main)
+    const etc = deps.pathStore.get(worktreeId(t.owner, t.repo, 'etc'))
+    if (etc && (await tauri.pathExists(etc.path))) add(etc.path)
+    const list = await tauri.gitRun(['-C', p.main, 'worktree', 'list', '--porcelain'])
+    if (list.code !== 0) return out
+    const others = parseWorktreeList(list.stdout).filter((w) => !same(w.path, p.path) && !same(w.path, p.main))
+    if (others.length === 0) return out
+    // 만든 시각은 git 이 기록하지 않는다 — 마지막 커밋 시각이 가장 늦은 것을 "최근에 쓴 worktree" 로 본다
+    const at = new Map<string, number>()
+    if (others.length > 1) {
+      const times = await tauri.gitRun(['-C', p.main, 'log', '--no-walk=unsorted', '--format=%H %ct', ...new Set(others.map((w) => w.head))])
+      if (times.code === 0) {
+        for (const line of times.stdout.split(/\r?\n/)) {
+          const [hash, ct] = line.trim().split(' ')
+          if (hash && ct) at.set(hash, Number(ct) || 0)
+        }
+      }
+    }
+    let best = others[0]
+    for (const w of others) if ((at.get(w.head) ?? 0) > (at.get(best.head) ?? 0)) best = w
+    add(best.path)
+    return out
+  }
+
+  /** 새 worktree(브랜치)의 .gitignore 로도 무시되는 것만 남긴다 — 원본 브랜치에서만 무시되던 파일이 새 브랜치에서 커밋 대상으로 보이지 않게 */
+  async function stillIgnored(p: Plan, rels: string[]): Promise<string[]> {
+    const kept: string[] = []
+    // 인자로 넘기므로 명령줄 길이 제한(Windows 약 32K)에 걸리지 않게 나눈다
+    for (let i = 0; i < rels.length; i += 100) {
+      const chunk = rels.slice(i, i + 100)
+      const r = await tauri.gitRun(['-C', p.path, '-c', 'core.quotePath=false', 'check-ignore', '--', ...chunk])
+      // 1 = 무시되는 것이 없음. 그 밖의 실패는 판단할 수 없으니 가져오지 않는다
+      if (r.code === 1) continue
+      if (r.code !== 0) throw new Error(r.stderr.trim() || `git check-ignore 실패(${r.code})`)
+      // 따옴표·제어문자가 든 이름은 git 이 인용해 내보내 여기서 맞지 않는다 → 가져오지 않는 쪽으로 떨어진다
+      const hit = new Set(r.stdout.split(/\r?\n/))
+      kept.push(...chunk.filter((c) => hit.has(c)))
+    }
+    return kept
+  }
+
+  /** .gitignore 로 빠져 새 worktree 에 없는 파일(.env 등)을 원본에서 가져온다. 큰 폴더는 설정의 제외 목록으로 뺀다 */
+  async function copyIgnored(t: IssueTarget, p: Plan): Promise<void> {
+    const exclude = ignoredCopyNames(p.values.ignoredCopyExclude)
+    if (!exclude) return
+    for (const src of await ignoredSources(t, p)) {
+      // --directory: 통째로 무시된 폴더(node_modules 등)를 한 줄로 받아, 뺄 폴더 안을 훑지 않는다
+      const ls = await gitOrThrow(p.issueId, 'ignored', ['-C', src, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'])
+      const rels = await stillIgnored(p, ignoredPathsToCopy(ls.stdout, exclude, sparseDirs(p.values.sparsePaths), platform))
+      // 가져올 것이 없는 원본(예: 체크아웃만 있고 쓰지 않는 메인 저장소)이면 다음 후보를 본다
+      if (rels.length === 0) continue
+      log(p.issueId, 'ignored', 'start', src)
+      const n = await tauri.copyPaths(src, p.path, rels.map((r) => r.replace(/\/$/, '')), [...exclude])
+      log(p.issueId, 'ignored', 'ok', `무시된 파일 ${n}개 복사`)
+      return
+    }
+  }
 
   async function plan(t: IssueTarget): Promise<Plan> {
     const issueId = worktreeId(t.owner, t.repo, t.key)
@@ -527,6 +654,22 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       log(issueId, 'localfiles', 'error', e instanceof Error ? e.message : String(e))
     }
 
+    // 보관 파일이 먼저다(덮어쓰지 않으므로 보관해 둔 .env 가 이긴다)
+    const copy = copyIgnored(t, p).catch((e: unknown) => {
+      // gitOrThrow 는 이미 로그를 남겼다 — 복사 실패만 여기서 남긴다
+      if (!(e instanceof WorktreeError)) log(issueId, 'ignored', 'error', e instanceof Error ? e.message : String(e))
+    })
+    copying.set(issueId, copy)
+    try {
+      await copy
+    } finally {
+      if (copying.get(issueId) === copy) copying.delete(issueId)
+    }
+    // 복사는 repo lock 밖에서 오래 걸릴 수 있다 — 그 사이 worktree 가 삭제됐으면 없는 폴더에서 스크립트를 돌리지 않는다
+    if (deleting.has(issueId) || deps.pathStore.get(issueId)?.path !== p.path) {
+      return { issueId, path: p.path, branch: outcome.branch, created: true, pathChanged: false, script: SKIPPED }
+    }
+
     // A-14: 생성 후 스크립트는 worktree 를 새로 만들었을 때 1회만
     let script = SKIPPED
     const postCreate = scriptFor(p.values, platform)
@@ -611,18 +754,25 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
         await r.done.catch(() => undefined)
       }
       await tauri.ptyKillByCwd(entry.path)
+      deleting.add(issueId)
+      try {
+        // 복사는 중간에 멈출 수 없다 — 끝난 뒤에 지워야 지운 폴더가 다시 생기지 않는다
+        await copying.get(issueId)
 
-      await withRepoLock(t.owner, t.repo, async () => {
-        const main = await mainCloneFor(t, entry.path)
-        const rm = await tauri.gitRun(['-C', main, 'worktree', 'remove', '--force', entry.path])
-        if (rm.code !== 0) {
-          throw new WorktreeError('git_failed', { message: rm.stderr.trim() || 'git worktree remove 실패', stderr: rm.stderr })
-        }
-        // 로컬 브랜치 삭제 실패(다른 worktree 가 사용 중 등)는 삭제 자체를 막지 않는다
-        await tauri.gitRun(['-C', main, 'branch', '-D', entry.branch])
-      })
-      deps.pathStore.delete(issueId)
-      return { status: 'deleted' }
+        await withRepoLock(t.owner, t.repo, async () => {
+          const main = await mainCloneFor(t, entry.path)
+          const rm = await tauri.gitRun(['-C', main, 'worktree', 'remove', '--force', entry.path])
+          if (rm.code !== 0) {
+            throw new WorktreeError('git_failed', { message: rm.stderr.trim() || 'git worktree remove 실패', stderr: rm.stderr })
+          }
+          // 로컬 브랜치 삭제 실패(다른 worktree 가 사용 중 등)는 삭제 자체를 막지 않는다
+          await tauri.gitRun(['-C', main, 'branch', '-D', entry.branch])
+        })
+        deps.pathStore.delete(issueId)
+        return { status: 'deleted' }
+      } finally {
+        deleting.delete(issueId)
+      }
     },
   }
 }

@@ -7,7 +7,7 @@ import type { Effective, SettingsValues } from '@minmo/api-client'
 
 import { createFakeHost, deferred, fail, flush, ok } from './testing'
 import type { CmdResult, RunOptions, ScriptRunResult } from './host'
-import { createWorktreeService, isAbsoluteFor, localFilesDir, scriptFor, sparseDirs, worktreeId } from './worktree'
+import { createWorktreeService, ignoredCopyNames, ignoredPathsToCopy, isAbsoluteFor, localFilesDir, scriptFor, sparseDirs, worktreeId } from './worktree'
 import type { IssueTarget, SetupLogEvent, WorktreeEntry } from './worktree'
 
 const HOME = '/home/u'
@@ -28,11 +28,12 @@ const DEFAULTS: SettingsValues = {
   postCreateScript: '',
   sparsePaths: '',
   postCreateScriptPosix: '',
+  ignoredCopyExclude: 'off',
 }
 
 const effective = (v: Partial<SettingsValues> = {}): Effective => ({
   values: { ...DEFAULTS, ...v },
-  sources: { branchTemplate: 'global', etcBranchName: 'global', worktreePath: 'global', mainClonePath: 'global', postCreateScript: 'global', sparsePaths: 'global', postCreateScriptPosix: 'global' },
+  sources: { branchTemplate: 'global', etcBranchName: 'global', worktreePath: 'global', mainClonePath: 'global', postCreateScript: 'global', sparsePaths: 'global', postCreateScriptPosix: 'global', ignoredCopyExclude: 'global' },
 })
 
 // ── git 시뮬레이터 ───────────────────────────────────────────────
@@ -55,6 +56,16 @@ type Sim = {
   head?: string
   /** origin/HEAD 가 없는 저장소 */
   noOriginHead?: boolean
+  /** 메인 저장소가 체크아웃된 일반 저장소(로컬·기준 저장소). 기본은 bare(_main) */
+  mainCheckedOut?: boolean
+  /** 폴더별 `ls-files --others --ignored --directory -z` 출력 */
+  ignored?: Record<string, string>
+  /** worktree 경로별 HEAD 와 그 커밋 시각 */
+  heads?: Record<string, [string, number]>
+  failLsFiles?: string
+  /** 새 worktree 의 .gitignore 로는 무시되지 않는 경로(브랜치마다 규칙이 다른 경우) */
+  notIgnoredInNew?: string[]
+  failCheckIgnore?: string
 }
 
 const HASH = 'abc1234def5678abc1234def5678abc1234def56'
@@ -85,6 +96,7 @@ function refExists(sim: Sim, a: string[]): boolean | undefined {
 
 async function simGit(sim: Sim, args: string[], opts?: RunOptions): Promise<CmdResult> {
   const [a, cwd] = normalize(args, opts)
+  if (a[0] === '-c') a.splice(0, 2) // git -c key=value <명령>
   const positional = (from: number) => a.slice(from).filter((x) => !x.startsWith('-'))
   switch (a[0]) {
     case 'clone': {
@@ -95,6 +107,7 @@ async function simGit(sim: Sim, args: string[], opts?: RunOptions): Promise<CmdR
       return ok()
     }
     case 'rev-parse': {
+      if (a.includes('--is-bare-repository')) return ok(sim.mainCheckedOut ? 'false\n' : 'true\n')
       if (a.includes('--git-dir')) {
         return cwd === MAIN && sim.existing.has(MAIN) && sim.mainIsRepo ? ok('.git\n') : fail('fatal: not a git repository', 128)
       }
@@ -144,9 +157,9 @@ async function simGit(sim: Sim, args: string[], opts?: RunOptions): Promise<CmdR
       const sub = a[1]
       if (sub === 'prune') return ok()
       if (sub === 'list') {
-        const entries: [string, string][] = sim.mainIsRepo && sim.existing.has(MAIN) ? [[MAIN, 'main']] : []
-        entries.push(...sim.worktrees.entries())
-        return ok(entries.map(([p, b]) => `worktree ${p}\nHEAD ${HASH}\nbranch refs/heads/${b}\n`).join('\n'))
+        const main = sim.mainIsRepo && sim.existing.has(MAIN) ? (sim.mainCheckedOut ? `worktree ${MAIN}\nHEAD ${HASH}\nbranch refs/heads/main\n` : `worktree ${MAIN}\nbare\n`) : ''
+        const rest = [...sim.worktrees.entries()].map(([p, b]) => `worktree ${p}\nHEAD ${sim.heads?.[p]?.[0] ?? HASH}\nbranch refs/heads/${b}\n`)
+        return ok([main, ...rest].filter(Boolean).join('\n'))
       }
       if (sub === 'add') {
         const rest = a.slice(2)
@@ -190,6 +203,15 @@ async function simGit(sim: Sim, args: string[], opts?: RunOptions): Promise<CmdR
     }
     case 'rev-list':
       return ok(`${sim.unpushed}\n`)
+    case 'ls-files':
+      return sim.failLsFiles ? fail(sim.failLsFiles, 128) : ok(sim.ignored?.[cwd ?? ''] ?? '')
+    case 'check-ignore': {
+      if (sim.failCheckIgnore) return fail(sim.failCheckIgnore, 128)
+      const hit = a.slice(a.indexOf('--') + 1).filter((x) => !sim.notIgnoredInNew?.includes(x))
+      return hit.length > 0 ? ok(hit.join('\n') + '\n') : fail('', 1)
+    }
+    case 'log':
+      return ok(Object.values(sim.heads ?? {}).map(([h, t]) => `${h} ${t}`).join('\n'))
     default:
       return ok()
   }
@@ -206,6 +228,7 @@ type SetupOpts = {
   scriptCancel?: (runId: string) => Promise<void>
   entries?: [string, WorktreeEntry][]
   copyTree?: (src: string, dst: string) => Promise<number>
+  copyPaths?: (src: string, dst: string, rels: string[], skipNames: string[]) => Promise<number>
   localDirFor?: (main: string) => string | undefined
   defaultBranch?: (owner: string, repo: string) => Promise<string>
 }
@@ -234,6 +257,7 @@ function setup(o: SetupOpts = {}) {
     ...(o.scriptRun ? { scriptRun: o.scriptRun } : {}),
     ...(o.scriptCancel ? { scriptCancel: o.scriptCancel } : {}),
     ...(o.copyTree ? { copyTree: o.copyTree } : {}),
+    ...(o.copyPaths ? { copyPaths: o.copyPaths } : {}),
   })
   const store = new Map<string, WorktreeEntry>(o.entries ?? [])
   const pathStore = {
@@ -705,6 +729,204 @@ describe('openIssue — 레포별 로컬 파일 보관 폴더(_local)', () => {
     const t = setup({ values: { worktreePath: '~/minmo-workspaces/{owner}/{repo}/_local/{branch}' } })
     await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'overlaps_main_clone' })
     expect(t.find((a) => a[0] === 'clone')).toHaveLength(0)
+  })
+})
+
+describe('openIssue — 무시된 파일(.env 등) 가져오기', () => {
+  const ETC_WT = '/home/u/minmo-workspaces/MyOrg/Repo-A/etc'
+  const WT43 = '/home/u/minmo-workspaces/MyOrg/Repo-A/issue--43-fix-bug'
+  const ON = { ignoredCopyExclude: 'node_modules\ntarget' }
+  const LS = ['.env', 'node_modules/', 'apps/web/.env.local', 'apps/web/node_modules/', '.venv/', 'logs/a.log'].join('\0') + '\0'
+  const isLs = (a: string[]) => a[0] === 'ls-files'
+
+  it('ignoredCopyNames: 줄 목록 → 이름 집합, "off" 는 null, 값이 없으면(이전 서버) 기본 목록', () => {
+    expect(ignoredCopyNames('off')).toBeNull()
+    expect(ignoredCopyNames(' off \n')).toBeNull()
+    expect([...ignoredCopyNames('a\r\n\n  b  ')!]).toEqual(['a', 'b'])
+    expect(ignoredCopyNames('')!.size).toBe(0)
+    expect(ignoredCopyNames(undefined)!.has('node_modules')).toBe(true)
+  })
+
+  it('ignoredPathsToCopy: 제외 이름이 경로 어디에든 있으면 뺀다 · 폴더는 끝 / 제거 · 이상한 경로는 버린다', () => {
+    const ex = new Set(['node_modules', 'target'])
+    expect(ignoredPathsToCopy(LS, ex, [])).toEqual(['.env', 'apps/web/.env.local', '.venv/', 'logs/a.log'])
+    expect(ignoredPathsToCopy(['../x', '/abs', 'a//b', '.git/config', 'bad\uFFFDname', 'back\\slash', 'new\nline', 'ok'].join('\0'), ex, [])).toEqual(['ok'])
+    // Windows·macOS 는 이름의 대소문자를 가리지 않는다
+    expect(ignoredPathsToCopy('Node_Modules/\0.env\0', ex, [], 'win32')).toEqual(['.env'])
+    expect(ignoredPathsToCopy('Node_Modules/\0', ex, [], 'linux')).toEqual(['Node_Modules/'])
+    expect(ignoredPathsToCopy('', ex, [])).toEqual([])
+  })
+
+  it('ignoredPathsToCopy: sparse 면 그 폴더 안과, 최상위·상위 폴더의 직속 파일만(cone)', () => {
+    expect(ignoredPathsToCopy(LS, new Set(['node_modules']), ['apps/web'])).toEqual(['.env', 'apps/web/.env.local'])
+    expect(ignoredPathsToCopy('apps/.env\0apps/other/.env\0apps/cache/\0', new Set(), ['apps/web'])).toEqual(['apps/.env'])
+    // 이름이 앞부분만 같은 폴더는 다른 폴더다
+    expect(ignoredPathsToCopy('apps/web2/.env\0', new Set(), ['apps/web'])).toEqual([])
+  })
+
+  it('원본 ①: 메인 저장소가 체크아웃된 저장소(로컬·기준 저장소)면 그 폴더에서', async () => {
+    const copyPaths = vi.fn(async () => 3)
+    const t = setup({ mainExists: true, values: ON, sim: { mainCheckedOut: true, ignored: { [MAIN]: LS } }, copyPaths })
+    await t.svc.openIssue(ISSUE42)
+    expect(copyPaths).toHaveBeenCalledWith(MAIN, WT42, ['.env', 'apps/web/.env.local', '.venv', 'logs/a.log'], ['node_modules', 'target'])
+    expect(t.find(isLs)[0]).toEqual(['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'])
+    expect(t.logs).toContainEqual({ issueId: ID42, step: 'ignored', status: 'ok', message: '무시된 파일 3개 복사' })
+  })
+
+  it('원본 ②: 메인이 bare(_main)면 ★기타 worktree 에서', async () => {
+    const copyPaths = vi.fn(async () => 1)
+    const t = setup({
+      mainExists: true,
+      values: ON,
+      sim: { existing: new Set([ETC_WT]), worktrees: new Map([[ETC_WT, 'etc']]), ignored: { [ETC_WT]: '.env\0' } },
+      entries: [[worktreeId('MyOrg', 'Repo-A', 'etc'), { path: ETC_WT, branch: 'etc' }]],
+      copyPaths,
+    })
+    await t.svc.openIssue(ISSUE42)
+    expect(copyPaths).toHaveBeenCalledWith(ETC_WT, WT42, ['.env'], ['node_modules', 'target'])
+  })
+
+  it('원본 ③: 기타가 없으면 가장 최근에 커밋한 다른 worktree 에서', async () => {
+    const OLD = '/home/u/minmo-workspaces/MyOrg/Repo-A/issue--1-old'
+    const copyPaths = vi.fn(async () => 1)
+    const t = setup({
+      mainExists: true,
+      values: ON,
+      sim: {
+        existing: new Set([OLD, WT43]),
+        worktrees: new Map([[OLD, 'issue/1-old'], [WT43, 'issue/43-fix-bug']]),
+        heads: { [OLD]: ['a'.repeat(40), 100], [WT43]: ['b'.repeat(40), 200] },
+        ignored: { [OLD]: 'old.env\0', [WT43]: '.env\0' },
+      },
+      copyPaths,
+    })
+    await t.svc.openIssue(ISSUE42)
+    expect(copyPaths).toHaveBeenCalledWith(WT43, WT42, ['.env'], ['node_modules', 'target'])
+  })
+
+  it('원본 ④: 첫 worktree 면(원본 없음) 건너뛴다 · ★기타 자신을 만들 때 자신을 원본으로 쓰지 않는다', async () => {
+    const copyPaths = vi.fn(async () => 1)
+    const t = setup({ mainExists: true, values: ON, copyPaths })
+    await t.svc.openIssue(ISSUE42)
+    expect(copyPaths).not.toHaveBeenCalled()
+    expect(t.find(isLs)).toHaveLength(0)
+
+    const e = setup({ mainExists: true, values: ON, copyPaths })
+    await e.svc.openIssue(ETC)
+    expect(copyPaths).not.toHaveBeenCalled()
+  })
+
+  it('"off" 면 원본을 찾지도 않는다 · 가져올 것이 없으면 복사하지 않는다', async () => {
+    const copyPaths = vi.fn(async () => 1)
+    const off = setup({ mainExists: true, values: { ignoredCopyExclude: 'off' }, sim: { mainCheckedOut: true, ignored: { [MAIN]: LS } }, copyPaths })
+    await off.svc.openIssue(ISSUE42)
+    expect(off.find((a) => a.includes('--is-bare-repository'))).toHaveLength(0)
+
+    const none = setup({ mainExists: true, values: ON, sim: { mainCheckedOut: true, ignored: { [MAIN]: 'node_modules/\0' } }, copyPaths })
+    await none.svc.openIssue(ISSUE42)
+    expect(copyPaths).not.toHaveBeenCalled()
+  })
+
+  it('순서: 보관한 로컬 파일 → 무시된 파일 → 생성 후 스크립트', async () => {
+    const order: string[] = []
+    const t = setup({
+      mainExists: true,
+      values: { ...ON, postCreateScriptPosix: 'npm ci' },
+      sim: { mainCheckedOut: true, ignored: { [MAIN]: '.env\0' } },
+      copyTree: async () => (order.push('local'), 1),
+      copyPaths: async () => (order.push('ignored'), 1),
+      scriptRun: async () => (order.push('script'), { exitCode: 0, cancelled: false }),
+    })
+    await t.svc.openIssue(ISSUE42)
+    expect(order).toEqual(['local', 'ignored', 'script'])
+  })
+
+  it('실패해도 이슈는 열리고 스크립트는 실행된다 · 기존 worktree 전환에는 가져오지 않는다', async () => {
+    const scriptRun = vi.fn(async () => ({ exitCode: 0, cancelled: false }))
+    const t = setup({
+      mainExists: true,
+      values: { ...ON, postCreateScriptPosix: 'npm ci' },
+      sim: { mainCheckedOut: true, ignored: { [MAIN]: '.env\0' } },
+      copyPaths: async () => Promise.reject(new Error('1개 복사, 1개 실패 — a: EACCES')),
+      scriptRun,
+    })
+    const res = await t.svc.openIssue(ISSUE42)
+    expect(res.created).toBe(true)
+    expect(scriptRun).toHaveBeenCalledTimes(1)
+    expect(t.logs).toContainEqual({ issueId: ID42, step: 'ignored', status: 'error', message: '1개 복사, 1개 실패 — a: EACCES' })
+
+    t.tauri.copyPaths.mockClear()
+    await t.svc.openIssue(ISSUE42)
+    expect(t.tauri.copyPaths).not.toHaveBeenCalled()
+
+    const ls = setup({ mainExists: true, values: ON, sim: { mainCheckedOut: true, failLsFiles: 'fatal: boom' } })
+    expect((await ls.svc.openIssue(ISSUE42)).created).toBe(true)
+    expect(ls.logs.filter((l) => l.step === 'ignored' && l.status === 'error')).toHaveLength(1)
+  })
+
+  it('새 브랜치의 .gitignore 로는 무시되지 않는 파일은 가져오지 않는다(커밋 대상으로 보이지 않게) · 확인에 실패하면 아무것도 가져오지 않는다', async () => {
+    const copyPaths = vi.fn(async () => 1)
+    const t = setup({ mainExists: true, values: ON, sim: { mainCheckedOut: true, ignored: { [MAIN]: '.env\0secret.txt\0tmp/\0' }, notIgnoredInNew: ['secret.txt', 'tmp/'] }, copyPaths })
+    await t.svc.openIssue(ISSUE42)
+    expect(copyPaths).toHaveBeenCalledWith(MAIN, WT42, ['.env'], ['node_modules', 'target'])
+    // 폴더는 끝에 / 를 붙여 물어야 `tmp/` 같은 폴더 전용 규칙에 맞는다
+    expect(t.find((a) => a.includes('check-ignore'))[0].slice(-3)).toEqual(['.env', 'secret.txt', 'tmp/'])
+
+    const bad = setup({ mainExists: true, values: ON, sim: { mainCheckedOut: true, ignored: { [MAIN]: '.env\0' }, failCheckIgnore: 'fatal: boom' }, copyPaths })
+    copyPaths.mockClear()
+    expect((await bad.svc.openIssue(ISSUE42)).created).toBe(true)
+    expect(copyPaths).not.toHaveBeenCalled()
+    expect(bad.logs).toContainEqual({ issueId: ID42, step: 'ignored', status: 'error', message: 'fatal: boom' })
+  })
+
+  it('앞 후보에 가져올 것이 없으면 다음 후보를 본다(체크아웃만 있고 쓰지 않는 메인 저장소 → ★기타)', async () => {
+    const copyPaths = vi.fn(async () => 1)
+    const t = setup({
+      mainExists: true,
+      values: ON,
+      sim: { mainCheckedOut: true, existing: new Set([ETC_WT]), worktrees: new Map([[ETC_WT, 'etc']]), ignored: { [MAIN]: 'node_modules/\0', [ETC_WT]: '.env\0' } },
+      entries: [[worktreeId('MyOrg', 'Repo-A', 'etc'), { path: ETC_WT, branch: 'etc' }]],
+      copyPaths,
+    })
+    await t.svc.openIssue(ISSUE42)
+    expect(copyPaths).toHaveBeenCalledTimes(1)
+    expect(copyPaths).toHaveBeenCalledWith(ETC_WT, WT42, ['.env'], ['node_modules', 'target'])
+  })
+
+  it('복사 중 삭제: 삭제는 복사가 끝나기를 기다리고, 삭제된 worktree 에서는 생성 후 스크립트를 돌리지 않는다', async () => {
+    const gate = deferred<number>()
+    const order: string[] = []
+    const scriptRun = vi.fn(async () => ({ exitCode: 0, cancelled: false }))
+    const t = setup({
+      mainExists: true,
+      values: { ...ON, postCreateScriptPosix: 'npm ci' },
+      sim: { mainCheckedOut: true, ignored: { [MAIN]: '.env\0' } },
+      copyPaths: async () => {
+        order.push('copy-start')
+        const n = await gate.promise
+        order.push('copy-end')
+        return n
+      },
+      scriptRun,
+    })
+    const opening = t.svc.openIssue(ISSUE42)
+    await vi.waitFor(() => expect(order).toEqual(['copy-start']))
+    const deleting = t.svc.deleteWorktree(ISSUE42, { confirmed: true }).then((r) => (order.push('deleted'), r))
+    await flush()
+    expect(t.find(t.isRemove)).toHaveLength(0)
+    gate.resolve(1)
+    expect((await deleting).status).toBe('deleted')
+    const res = await opening
+    expect(order).toEqual(['copy-start', 'copy-end', 'deleted'])
+    expect(res.script).toEqual({ status: 'skipped', exitCode: null })
+    expect(scriptRun).not.toHaveBeenCalled()
+  })
+
+  it('sparse 저장소는 체크아웃한 폴더 안과 최상위 파일만 가져온다', async () => {
+    const copyPaths = vi.fn(async () => 2)
+    const t = setup({ mainExists: true, values: { ...ON, sparsePaths: 'apps/web' }, sim: { mainCheckedOut: true, ignored: { [MAIN]: LS } }, copyPaths })
+    await t.svc.openIssue(ISSUE42)
+    expect(copyPaths).toHaveBeenCalledWith(MAIN, WT42, ['.env', 'apps/web/.env.local'], ['node_modules', 'target'])
   })
 })
 

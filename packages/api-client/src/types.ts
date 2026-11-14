@@ -9,11 +9,13 @@ export type SettingsValues = {
   sparsePaths: string
   /** v2.7: Linux/macOS(sh) 생성 후 스크립트. postCreateScript 는 Windows(PowerShell) 용 */
   postCreateScriptPosix: string
+  /** v2.8: 새 worktree 에 무시된 파일을 가져올 때 뺄 폴더·파일 이름(줄바꿈 구분). "off" = 가져오지 않음 */
+  ignoredCopyExclude: string
 }
 export type SettingsField = keyof SettingsValues
 // 전역은 null 없음
 export type SettingsRecord = { [K in keyof SettingsValues]: SettingsValues[K] | null } & { updatedAt: string | null }
-// 전역 PUT 은 5개 필드가 string 필수, sparsePaths·postCreateScriptPosix 는 생략·null 이면 저장값 유지(없으면 "")
+// 전역 PUT 은 5개 필드가 string 필수, sparsePaths·postCreateScriptPosix·ignoredCopyExclude 는 생략·null 이면 저장값 유지(없으면 기본값)
 export type SettingsInput = { [K in keyof SettingsValues]?: string | null }
 export type SettingsSource = 'global' | 'org' | 'project'
 export type Effective = { values: SettingsValues; sources: Record<keyof SettingsValues, SettingsSource> }
@@ -48,6 +50,7 @@ export type ErrorCode =
   | 'invalid_path_template'
   | 'script_too_large'
   | 'invalid_sparse_paths'
+  | 'invalid_ignored_copy_exclude'
   | 'invalid_visible_repos'
   | 'invalid_cli_code'
   | 'invalid_issue_key'

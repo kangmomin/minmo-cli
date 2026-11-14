@@ -1,7 +1,7 @@
 // 원격 CLI 의 호스트 — @minmo/core 의 worktree·GitHub 로직이 쓰는 OS 기능을 Node 로 구현한다(Linux·macOS·Windows).
 import type { GhHost, WorktreeHost } from '@minmo/core'
 
-import { copyTree, exists, removeDir } from './fsops'
+import { copyPaths, copyTree, exists, removeDir } from './fsops'
 import { run } from './proc'
 import { createScriptHost } from './script'
 import { killByCwd } from './tmux'
@@ -27,6 +27,7 @@ export function createNodeHost(env: NodeJS.ProcessEnv = process.env, platform: N
     pathExists: exists,
     removeDir: (p) => removeDir(p),
     copyTree,
+    copyPaths,
     ...createScriptHost(platform),
     // worktree 를 지우기 전 그 안의 터미널·프로세스 정리 — Windows 는 tmux·/proc 대신 명령줄로 찾는다
     ptyKillByCwd:

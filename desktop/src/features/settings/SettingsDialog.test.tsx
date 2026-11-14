@@ -25,6 +25,7 @@ const GLOBAL: SettingsRecord = {
   postCreateScript: '',
   sparsePaths: '',
   postCreateScriptPosix: '',
+  ignoredCopyExclude: 'node_modules',
   updatedAt: '2026-11-09T00:00:00.000Z',
 }
 const EMPTY: SettingsRecord = {
@@ -35,6 +36,7 @@ const EMPTY: SettingsRecord = {
   postCreateScript: null,
   sparsePaths: null,
   postCreateScriptPosix: null,
+  ignoredCopyExclude: null,
   updatedAt: null,
 }
 const PROJECT: SettingsScope = { kind: 'project', owner: 'MyOrg', repo: 'Repo-A' }
@@ -177,6 +179,54 @@ describe('v2.7 생성 후 스크립트 OS 분리', () => {
     })
     await user.click(screen.getByRole('button', { name: '저장' }))
     await waitFor(() => expect(posix).toHaveAttribute('aria-invalid', 'true'))
+  })
+})
+
+describe('무시된 파일 가져오기(ignoredCopyExclude)', () => {
+  const G = '무시된 파일 가져오기'
+
+  it('전역: 저장된 목록으로 "가져오기" — 상속 선택지 없음, 고친 목록 그대로 저장', async () => {
+    const { api, user } = setup({ scope: { kind: 'global' } })
+    await field('브랜치 템플릿')
+    expect(within(group(G)).queryByRole('radio', { name: '상속' })).toBeNull()
+    expect(within(group(G)).getByRole('radio', { name: '가져오기' })).toBeChecked()
+    const list = await field('가져오지 않을 폴더·파일 이름')
+    expect(list).toHaveValue('node_modules')
+    await replace(user, list, 'node_modules\ndata')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1))
+    expect(api.putSettings.mock.calls[0][1].ignoredCopyExclude).toBe('node_modules\ndata')
+  })
+
+  it('"가져오지 않음" → "off" 로 저장, 다시 열면 그 상태 · 켜면 기본 제외 목록이 채워져 있다', async () => {
+    const { api, user } = setup({ scope: { kind: 'global' }, global: { ...GLOBAL, ignoredCopyExclude: 'off' } })
+    await waitFor(() => expect(within(group(G)).getByRole('radio', { name: '가져오지 않음' })).toBeChecked())
+    expect(screen.queryByLabelText('가져오지 않을 폴더·파일 이름')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1))
+    expect(api.putSettings.mock.calls[0][1].ignoredCopyExclude).toBe('off')
+
+    await user.click(within(group(G)).getByRole('radio', { name: '가져오기' }))
+    expect((await field('가져오지 않을 폴더·파일 이름') as HTMLTextAreaElement).value).toContain('node_modules\ntarget')
+  })
+
+  it('프로젝트: 기본은 상속(null) + 상속값 요약, 400 → 인라인 오류', async () => {
+    const { api, user } = setup({ scope: PROJECT })
+    await waitFor(() => expect(within(group(G)).getByRole('radio', { name: '상속' })).toBeChecked())
+    expect(await screen.findByText('상속: 가져옴 · 제외: node_modules')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1))
+    expect(api.putSettings.mock.calls[0][1].ignoredCopyExclude).toBeNull()
+
+    api.putSettings.mockImplementation(async () => {
+      throw apiError(400, 'invalid_ignored_copy_exclude', { field: 'ignoredCopyExclude' })
+    })
+    await user.click(within(group(G)).getByRole('radio', { name: '가져오기' }))
+    const list = await field('가져오지 않을 폴더·파일 이름')
+    await replace(user, list, 'a/b')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(list).toHaveAttribute('aria-invalid', 'true'))
+    expect(screen.getByRole('alert')).toHaveTextContent('폴더·파일 이름만')
   })
 })
 

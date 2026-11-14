@@ -12,7 +12,13 @@ export const SETTING_FIELDS: readonly SettingsField[] = [
   'postCreateScript',
   'sparsePaths',
   'postCreateScriptPosix',
+  'ignoredCopyExclude',
 ]
+
+/** 의존성·빌드 산출물처럼 크고 다시 만들 수 있는 폴더(model.go DefaultIgnoredCopyExclude 와 같은 값) */
+export const DEFAULT_IGNORED_COPY_EXCLUDE = ['node_modules', 'target', 'dist', 'build', 'out', '.next', '.nuxt', '.venv', 'venv', '__pycache__', '.gradle', '.turbo', '.cache', 'coverage'].join('\n')
+/** ignoredCopyExclude 가 이 값이면 무시된 파일을 가져오지 않는다 */
+export const IGNORED_COPY_OFF = 'off'
 
 /** 신규 사용자 전역 기본값(model.go Defaults) */
 export const DEFAULT_SETTINGS: Readonly<SettingsValues> = {
@@ -23,9 +29,10 @@ export const DEFAULT_SETTINGS: Readonly<SettingsValues> = {
   postCreateScript: '',
   sparsePaths: '',
   postCreateScriptPosix: '',
+  ignoredCopyExclude: DEFAULT_IGNORED_COPY_EXCLUDE,
 }
 
-export type SettingErrorCode = 'invalid_template' | 'invalid_path_template' | 'script_too_large' | 'invalid_sparse_paths'
+export type SettingErrorCode = 'invalid_template' | 'invalid_path_template' | 'script_too_large' | 'invalid_sparse_paths' | 'invalid_ignored_copy_exclude'
 
 const MAX_BRANCH_RUNES = 100
 const MAX_PATH_RUNES = 512
@@ -107,6 +114,19 @@ function checkSparsePaths(v: string): SettingErrorCode | null {
   return null
 }
 
+/** 줄마다 폴더·파일 이름 하나 — 경로의 각 단계와 그대로 비교하므로 경로·`.`·`..` 는 받지 않는다 */
+function checkIgnoredCopyExclude(v: string): SettingErrorCode | null {
+  if (bytes(v) > MAX_SPARSE_BYTES) return 'invalid_ignored_copy_exclude'
+  const lines = v.split('\n')
+  if (lines.length > MAX_SPARSE_LINES) return 'invalid_ignored_copy_exclude'
+  for (const line of lines) {
+    const p = trimSpace(line)
+    if (p === '') continue
+    if (p === '.' || p === '..' || /[/\\]/.test(p) || CONTROL.test(p)) return 'invalid_ignored_copy_exclude'
+  }
+  return null
+}
+
 const CHECKS: Record<SettingsField, (v: string) => SettingErrorCode | null> = {
   branchTemplate: checkBranchTemplate,
   etcBranchName: checkEtcBranchName,
@@ -115,6 +135,7 @@ const CHECKS: Record<SettingsField, (v: string) => SettingErrorCode | null> = {
   postCreateScript: checkScript,
   sparsePaths: checkSparsePaths,
   postCreateScriptPosix: checkScript,
+  ignoredCopyExclude: checkIgnoredCopyExclude,
 }
 
 /** 값 하나를 서버와 같은 규칙으로 검사한다. 위반이면 서버 오류 코드, 통과면 null */
