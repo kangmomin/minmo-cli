@@ -265,6 +265,19 @@ fn take_utf8(pending: &mut Vec<u8>) -> String {
 /// tmux 가 바깥 터미널에 내보낼 제목 형식 — desktop/src/features/agents/detect.ts 의 TMUX_TITLE_PREFIX 와 짝이다
 const TMUX_TITLE_FORMAT: &str = "minmo:#{pane_current_command}:#{pane_title}";
 
+/// bash 의 rcfile 로 읽힐 내용(fd 3) — 로그인 셸과 같은 순서로 시작 파일을 읽은 뒤 worktree 로 돌아온다.
+/// 시작 파일(~/.bashrc 등)이 cd 를 하면 셸을 띄우기 전에 한 cd 가 덮이기 때문이다
+const BASH_LOGIN_RC: &str = r#"exec 3<&-; [ -r /etc/profile ] && . /etc/profile; for f in ~/.bash_profile ~/.bash_login ~/.profile; do if [ -r "$f" ]; then . "$f"; break; fi; done; unset f; cd -- "$MINMO_WORKTREE""#;
+
+/// worktree(dir = 인용된 경로)에서 사용자 셸을 여는 한 줄(POSIX sh). bash 는 시작 파일 뒤에 worktree 로 돌아오고,
+/// 그 밖의 셸은 로그인 셸 그대로다(시작 파일이 cd 를 하면 그 폴더에서 시작한다)
+fn worktree_shell(dir: &str) -> String {
+    let rc = ssh::quote(BASH_LOGIN_RC);
+    format!(
+        "cd -- {dir} && export MINMO_WORKTREE={dir} && case \"${{SHELL##*/}}\" in bash) exec \"$SHELL\" -c 'exec \"$0\" --rcfile /dev/fd/3 -i 3<<<\"$1\"' \"$SHELL\" {rc} ;; *) exec \"${{SHELL:-sh}}\" -l ;; esac"
+    )
+}
+
 /// 원격 셸에서 실행할 한 줄. tmux 서버는 처음 실행한 cwd 를 가진 채 남으므로(그 worktree 를 지울 때 걸린다)
 /// 홈에서 시작하고 세션의 시작 폴더만 worktree 로 준다 — 원격 CLI(packages/cli/src/host/tmux.ts)와 같은 규칙
 pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, String> {
@@ -273,7 +286,7 @@ pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, 
     }
     let dir = ssh::quote(path);
     match &r.session {
-        None => Ok(format!("cd -- {dir} && exec \"${{SHELL:-sh}}\" -l")),
+        None => Ok(worktree_shell(&dir)),
         Some(name) => {
             if name.is_empty()
                 || !name
@@ -293,8 +306,11 @@ pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, 
             // 종류와 상태를 안다(tmux 는 기본으로 안쪽 프로그램의 제목을 바깥 터미널에 전달하지 않는다). 이 세션에만 켠다 —
             // 전용 서버 전체(-g)에 켜면 같은 서버에 붙은 원격 CLI(minmo open)의 터미널 제목까지 바뀐다
             let titles = ssh::quote(TMUX_TITLE_FORMAT);
+            // 세션을 새로 만들 때 첫 창의 셸(이미 있는 세션에 붙을 때는 tmux 가 무시한다). tmux 는 이 명령을 기본 셸로
+            // 실행하므로 sh 에 넘긴다
+            let shell = ssh::quote(&ssh::sh_wrap(&worktree_shell(&dir)));
             Ok(format!(
-                "cd && exec tmux -u -L minmo new-session -A -s {name} -c {dir} \\; set-option @minmo_worktree {tag}{ephemeral} \\; set-option set-titles on \\; set-option set-titles-string {titles}"
+                "cd && exec tmux -u -L minmo new-session -A -s {name} -c {dir} {shell} \\; set-option @minmo_worktree {tag}{ephemeral} \\; set-option set-titles on \\; set-option set-titles-string {titles}"
             ))
         }
     }
@@ -695,13 +711,19 @@ mod tests {
 
     #[test]
     fn remote_shell_command_attaches_tmux_or_opens_a_login_shell() {
-        assert_eq!(
-            remote_shell_command(&remote(None, false), "/w/it's").unwrap(),
-            "cd -- '/w/it'\\''s' && exec \"${SHELL:-sh}\" -l"
+        // bash 는 시작 파일을 읽은 뒤 worktree 로 돌아오고, 그 밖의 셸은 로그인 셸 그대로다
+        let plain = remote_shell_command(&remote(None, false), "/w/it's").unwrap();
+        assert!(plain.starts_with(
+            "cd -- '/w/it'\\''s' && export MINMO_WORKTREE='/w/it'\\''s' && case \"${SHELL##*/}\" in bash) exec \"$SHELL\" -c 'exec \"$0\" --rcfile /dev/fd/3 -i 3<<<\"$1\"' \"$SHELL\" 'exec 3<&-; [ -r /etc/profile ] && . /etc/profile; "
+        ));
+        assert!(
+            plain.ends_with("cd -- \"$MINMO_WORKTREE\"' ;; *) exec \"${SHELL:-sh}\" -l ;; esac")
         );
+        // tmux 의 첫 창도 같은 명령으로 연다(sh 에 넘기고 한 번 더 인용한다)
+        let shell = ssh::quote(&ssh::sh_wrap(&worktree_shell("'/w/t/'")));
         assert_eq!(
             remote_shell_command(&remote(Some("minmo-0a1b2c3d4e"), false), "/w/t/").unwrap(),
-            "cd && exec tmux -u -L minmo new-session -A -s minmo-0a1b2c3d4e -c '/w/t/' \\; set-option @minmo_worktree '/w/t' \\; set-option set-titles on \\; set-option set-titles-string 'minmo:#{pane_current_command}:#{pane_title}'"
+            format!("cd && exec tmux -u -L minmo new-session -A -s minmo-0a1b2c3d4e -c '/w/t/' {shell} \\; set-option @minmo_worktree '/w/t' \\; set-option set-titles on \\; set-option set-titles-string 'minmo:#{{pane_current_command}}:#{{pane_title}}'")
         );
         assert!(
             remote_shell_command(&remote(Some("minmo-0a1b2c3d4e-p2"), true), "/w/t")
