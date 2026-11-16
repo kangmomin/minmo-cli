@@ -2,7 +2,7 @@
 import { Command } from 'commander'
 
 import { doctor, login, logout, revokeSession, sessions } from './commands/account'
-import { ls, note, openIssue, rm } from './commands/issues'
+import { ls, newIssue, note, openIssue, rm } from './commands/issues'
 import { modeCmd } from './commands/mode'
 import { configGet, configSet, reposAdd, reposAll, reposList, reposRemove, reposReset } from './commands/settings'
 import { terminalCmd } from './commands/terminal'
@@ -65,6 +65,16 @@ export function buildProgram(deps: ProgramDeps): Command {
     .option('--json', 'JSON 으로 출력')
     .description('저장소·이슈 목록')
     .action(withCtx((ctx, target: string | undefined, opts: { all?: boolean; json?: boolean }) => ls(ctx, target, opts)))
+
+  program
+    .command('new')
+    .argument('<repo>', 'owner/repo')
+    .argument('<title>', '이슈 제목')
+    .option('-b, --body <text>', '본문 · @파일(여러 줄)')
+    .option('-e, --edit', '본문을 $EDITOR 로 작성')
+    .option('--json', 'JSON 으로 출력')
+    .description('GitHub 이슈 등록(worktree 는 `minmo open` 으로 준비)')
+    .action(withCtx((ctx, repo: string, title: string, opts: { body?: string; edit?: boolean; json?: boolean }) => newIssue(ctx, repo, title, opts)))
 
   program
     .command('open')

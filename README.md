@@ -379,8 +379,9 @@ CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인�
 
 | 명령 | 내용 |
 |------|------|
-| `minmo` | TUI — 트리(보일 저장소 필터)·상세. `Enter` 준비 · `t` 터미널 · `n` 메모 · `d` 삭제 · `f` 보이기/숨기기 · `a` 숨긴 것 보기 · `s` 설정 · `/` 검색 · `q` 종료 |
+| `minmo` | TUI — 트리(보일 저장소 필터)·상세. `Enter` 준비 · `t` 터미널 · `i` 이슈 등록(제목 → 본문 한 줄) · `n` 메모 · `d` 삭제 · `f` 보이기/숨기기 · `a` 숨긴 것 보기 · `s` 설정 · `/` 검색 · `q` 종료 |
 | `minmo ls [owner[/repo]] [--all] [--json]` | 저장소·이슈 목록 |
+| `minmo new owner/repo "제목" [-b 본문] [-e] [--json]` | GitHub 이슈 등록 — `-b @파일` 은 파일 내용을 본문으로, `-e` 는 본문을 `$EDITOR` 로 작성. 등록만 하고 worktree 는 만들지 않는다 |
 | `minmo open owner/repo#42` | worktree 준비 후 터미널(`--no-attach` 면 경로만) |
 | `minmo rm owner/repo#42 [--yes]` | worktree 삭제 — 그 안의 터미널(tmux 세션 포함)·프로세스도 정리 |
 | `minmo note owner/repo#42` | 메모를 `$EDITOR` 로 편집(다른 기기와 충돌하면 내 내용을 파일로 보존) |

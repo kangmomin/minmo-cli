@@ -284,6 +284,21 @@ describe('저장소·이슈 만들기(로컬 저장소를 GitHub 에 올릴 때)
     ])
   })
 
+  it('createIssue: 본문이 있으면 body 를 보내고, 비어 있으면 title 만 보낸다', async () => {
+    const stdin: string[] = []
+    const t = setup({
+      ghAvailable: true,
+      ghRun: async (_args, opts) => {
+        stdin.push(opts?.stdin ?? '')
+        return ok(JSON.stringify(issue(1)))
+      },
+    })
+    await t.gh.createIssue('o', 'r', '제목', '본문\n둘째 줄')
+    await t.gh.createIssue('o', 'r', '제목', '')
+    await t.gh.createIssue('o', 'r', '제목')
+    expect(stdin.map((s) => JSON.parse(s))).toEqual([{ title: '제목', body: '본문\n둘째 줄' }, { title: '제목' }, { title: '제목' }])
+  })
+
   it('closeIssue: gh 는 -X PATCH', async () => {
     const t = setup({ ghAvailable: true, ghRun: async () => ok(JSON.stringify(issue(3, 'closed'))) })
     await t.gh.closeIssue('o', 'r', 3)

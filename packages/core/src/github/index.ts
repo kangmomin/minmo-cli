@@ -39,7 +39,8 @@ export interface GitHubClient {
   createPr(input: CreatePrInput): Promise<GitHubPr>
   /** 빈 저장소를 만든다(README 등 첫 커밋 없이 — 로컬 저장소를 그대로 push 할 수 있게) */
   createRepo(input: CreateRepoInput): Promise<GitHubRepo>
-  createIssue(owner: string, repo: string, title: string): Promise<GitHubIssue>
+  /** body 가 비어 있으면 보내지 않는다(본문 없는 이슈) */
+  createIssue(owner: string, repo: string, title: string, body?: string): Promise<GitHubIssue>
   closeIssue(owner: string, repo: string, number: number): Promise<void>
 }
 
@@ -187,8 +188,8 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
         return toRepo((await t.post(path, { name: input.name, private: input.private, auto_init: false })).data as RawRepo)
       }),
 
-    createIssue: (owner, repo, title) =>
-      withTransport(async (t) => toIssue((await t.post(`repos/${enc(owner)}/${enc(repo)}/issues`, { title })).data as RawIssue)),
+    createIssue: (owner, repo, title, body) =>
+      withTransport(async (t) => toIssue((await t.post(`repos/${enc(owner)}/${enc(repo)}/issues`, body ? { title, body } : { title })).data as RawIssue)),
 
     closeIssue: (owner, repo, number) =>
       withTransport(async (t) => {

@@ -31,6 +31,19 @@ test('이슈 열기 → 상단 바에 브랜치 표시(effective branchTemplate 
   await expect(page.getByTestId('issue-row-42')).toHaveAttribute('data-worktree', 'true')
 })
 
+test('이슈 등록 → 목록에 추가(선택·worktree 는 그대로)', async ({ page }) => {
+  await expandWidgets(page)
+  await page.getByTestId('add-issue').click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('제목').fill('새 기능')
+  await dialog.getByLabel('본문(선택)').fill('설명')
+  await dialog.getByRole('button', { name: '등록' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByTestId('issue-row-43')).toContainText('새 기능')
+  await expect(page.getByTestId('issue-row-43')).not.toHaveAttribute('data-worktree', 'true')
+  await expect(page.getByTestId('issue-branch')).toHaveCount(0)
+})
+
 test('새로고침 버튼 → 트리 재조회', async ({ page }) => {
   let issueCalls = 0
   page.on('request', (r) => {

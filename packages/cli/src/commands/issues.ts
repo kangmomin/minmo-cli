@@ -1,4 +1,4 @@
-// 트리 조회·이슈 열기·worktree 삭제·메모
+// 트리 조회·이슈 등록·이슈 열기·worktree 삭제·메모
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, rm as rmFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -6,14 +6,14 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 
 import { ApiError } from '@minmo/api-client'
-import { isOwnerVisible, isRepoVisible, worktreeId } from '@minmo/core'
+import { GitHubError, isOwnerVisible, isRepoVisible, worktreeId } from '@minmo/core'
 import type { GitHubOwner, IssueTarget, RepoSelection, SetupLogEvent } from '@minmo/core'
 
 import { CliError, requireLogin, serverErrorMessage, toCliError } from '../context'
 import type { Ctx } from '../context'
 import { NOTES_SERVER_ONLY } from '../errors'
 import { openTerminal, terminalAvailable } from '../host/terminal'
-import { parseRef, resolveTarget } from '../refs'
+import { parseRef, parseRepo, resolveTarget } from '../refs'
 
 /** tmux 방식인데 tmux 가 없을 때의 안내 */
 export const NO_TMUX = 'tmux 가 없어 터미널을 열 수 없습니다(일반 셸로 바꾸려면 `minmo terminal shell`)'
@@ -84,6 +84,45 @@ export async function ls(ctx: Ctx, target: string | undefined, opts: { json?: bo
     else ctx.out.log(`${r.worktree ? '●' : ' '} #${r.key.padEnd(6)} ${r.state === 'closed' ? '[closed] ' : ''}${r.title}${r.worktree ? `  → ${r.worktree}` : ''}`)
   }
   if (rows.length === 0) ctx.out.log('(표시할 항목 없음 — `minmo repos` 로 보일 저장소를 고르세요)')
+}
+
+export type NewIssueOpts = {
+  /** 본문 문자열 또는 `@파일` */
+  body?: string
+  /** 편집기로 본문을 쓴다 */
+  edit?: boolean
+  json?: boolean
+  /** 테스트 주입용(기본: $EDITOR) */
+  editor?: (initial: string) => Promise<string>
+}
+
+/** GitHub 이슈 등록 — 등록만 한다(worktree 는 `minmo open` 으로 준비) */
+export async function newIssue(ctx: Ctx, repoText: string, titleText: string, opts: NewIssueOpts = {}): Promise<void> {
+  const ref = parseRepo(repoText)
+  const title = titleText.trim()
+  if (title === '') throw new CliError('제목을 입력하세요', 2)
+  if (opts.body !== undefined && opts.edit) throw new CliError('--body 와 --edit 는 함께 쓸 수 없습니다', 2)
+  let body = ''
+  if (opts.body?.startsWith('@')) {
+    const file = opts.body.slice(1)
+    body = await readFile(file, 'utf8').catch(() => {
+      throw new CliError(`본문 파일을 읽을 수 없습니다: ${file}`)
+    })
+  } else if (opts.body !== undefined) body = opts.body
+  else if (opts.edit) body = await (opts.editor ?? editInEditor)('')
+  body = body.replace(/\r\n/g, '\n').trim()
+  await ctx.data.ready()
+  try {
+    // 대소문자를 GitHub 표기로 맞춘다(없는 저장소는 여기서 걸린다)
+    const repo = await ctx.github.getRepo(ref.owner, ref.repo)
+    const issue = await ctx.github.createIssue(repo.owner, repo.name, title, body)
+    if (opts.json) return ctx.out.log(JSON.stringify({ owner: repo.owner, repo: repo.name, ...issue }, null, 2))
+    ctx.out.log(`등록했습니다: ${repo.owner}/${repo.name}#${issue.number} ${issue.title}`)
+    if (issue.htmlUrl) ctx.out.log(`  ${issue.htmlUrl}`)
+  } catch (e) {
+    if (e instanceof GitHubError && e.code === 'not_found') throw new CliError(`저장소를 찾을 수 없습니다: ${ref.owner}/${ref.repo}`)
+    throw toCliError(e, ctx.server)
+  }
 }
 
 function printLog(ctx: Ctx) {

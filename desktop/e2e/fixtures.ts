@@ -89,6 +89,10 @@ export async function routeGitHub(page: Page) {
     if (path === '/user/repos') return json(route, 200, [])
     if (path === '/orgs/my-org/repos') return json(route, 200, [{ name: 'widgets', owner: { login: 'my-org' }, default_branch: 'main' }])
     if (path === '/repos/my-org/widgets') return json(route, 200, { name: 'widgets', owner: { login: 'my-org' }, default_branch: 'main' })
+    if (path === '/repos/my-org/widgets/issues' && req.method() === 'POST') {
+      const input = req.postDataJSON() as { title: string }
+      return json(route, 201, issue(43, input.title))
+    }
     if (path === '/repos/my-org/widgets/issues') return json(route, 200, [issue(42, 'Add login'), issue(7, 'Old bug', 'closed')])
     if (path.startsWith('/repos/my-org/widgets/pulls')) return json(route, 200, [])
     return json(route, 404, { message: 'Not Found' })
