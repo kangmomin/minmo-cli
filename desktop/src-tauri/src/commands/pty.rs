@@ -90,24 +90,113 @@ impl PtySession {
 /// 보관하는 최근 출력의 상한(바이트)
 const SCROLLBACK_LIMIT: usize = 256 * 1024;
 
+/// 대체 화면을 켜는 DEC private mode — 전체 화면 프로그램(Claude Code 등)이 쓴다
+const ALT_SCREEN_MODES: [u16; 3] = [47, 1047, 1049];
+/// 조각 끝에서 잘린 모드 시퀀스(`ESC[?…`)로 보고 다음 조각까지 넘기는 길이의 상한
+const MODE_CARRY_LIMIT: usize = 32;
+
 #[derive(Default)]
-/// (보관한 글, 지금까지 나온 전체 길이) — 길이는 붙는 화면이 "어디까지 받았는지" 맞추는 데 쓴다
-pub(crate) struct Scrollback(String, u64);
+pub(crate) struct Scrollback {
+    /// 보관한 최근 출력
+    text: String,
+    /// 지금까지 나온 전체 길이 — 붙는 화면이 "어디까지 받았는지" 맞추는 데 쓴다
+    total: u64,
+    /// 앞을 버린 적이 있는가 — 그 뒤로는 text 만 다시 그려서는 화면을 되살릴 수 없다
+    truncated: bool,
+    /// 출력 전체에서 본 DEC private mode 의 지금 상태(번호 → 켜짐). 앞을 버려도 남는다
+    modes: std::collections::BTreeMap<u16, bool>,
+    /// 조각 끝에서 잘린 모드 시퀀스 — 다음 조각 앞에 붙여 읽는다
+    carry: String,
+}
 
 impl Scrollback {
     fn push(&mut self, text: &str) -> u64 {
-        self.1 += text.len() as u64;
-        self.0.push_str(text);
-        if self.0.len() > SCROLLBACK_LIMIT {
+        self.track_modes(text);
+        self.total += text.len() as u64;
+        self.text.push_str(text);
+        if self.text.len() > SCROLLBACK_LIMIT {
             // 넘친 만큼 앞을 버리되 줄 경계에서 자른다 — 제어 문자열 중간부터 다시 그리면 화면이 깨진다
-            let mut cut = self.0.len() - SCROLLBACK_LIMIT;
-            while !self.0.is_char_boundary(cut) {
+            let mut cut = self.text.len() - SCROLLBACK_LIMIT;
+            while !self.text.is_char_boundary(cut) {
                 cut += 1;
             }
-            let cut = self.0[cut..].find('\n').map_or(cut, |i| cut + i + 1);
-            self.0.drain(..cut);
+            let cut = self.text[cut..].find('\n').map_or(cut, |i| cut + i + 1);
+            self.text.drain(..cut);
+            self.truncated = true;
         }
-        self.1
+        self.total
+    }
+
+    /// `ESC[?<번호>[;<번호>…]h|l` 을 읽어 모드의 지금 상태를 기록한다
+    fn track_modes(&mut self, text: &str) {
+        let joined;
+        let text = if self.carry.is_empty() {
+            text
+        } else {
+            joined = std::mem::take(&mut self.carry) + text;
+            &joined
+        };
+        let mut rest = text;
+        while let Some(at) = rest.find('\x1b') {
+            let seq = &rest[at..];
+            let Some(params) = seq.strip_prefix("\x1b[?") else {
+                // 조각이 `ESC` 나 `ESC[` 에서 끝났으면 뒤가 다음 조각에 온다
+                if seq == "\x1b" || seq == "\x1b[" {
+                    self.carry = seq.to_string();
+                    return;
+                }
+                rest = &seq[1..];
+                continue;
+            };
+            let len = params
+                .bytes()
+                .take_while(|b| b.is_ascii_digit() || *b == b';')
+                .count();
+            match params.as_bytes().get(len) {
+                Some(end @ (b'h' | b'l')) => {
+                    for mode in params[..len].split(';').filter_map(|m| m.parse().ok()) {
+                        self.modes.insert(mode, *end == b'h');
+                    }
+                }
+                // 끝 글자가 아직 오지 않았다 — 너무 길면 모드 시퀀스가 아니므로 버린다
+                None if seq.len() <= MODE_CARRY_LIMIT => {
+                    self.carry = seq.to_string();
+                    return;
+                }
+                _ => {}
+            }
+            rest = &params[len..];
+        }
+    }
+
+    fn alt_screen(&self) -> bool {
+        ALT_SCREEN_MODES
+            .iter()
+            .any(|m| self.modes.get(m) == Some(&true))
+    }
+
+    /// 나중에 붙는 화면이 먼저 그릴 글과, 프로그램에 화면 전체를 다시 그리게 해야 하는지를 돌려준다.
+    /// 앞을 버린 적이 없으면 보관한 출력이 전부이므로 그대로 다시 그리면 정확하다. 버린 뒤에는 모드(대체 화면·마우스 등)를
+    /// 켠 시퀀스가 사라졌을 수 있어 지금 상태를 앞에 붙인다. 대체 화면의 프로그램은 바뀐 칸만 보내므로, 남은 꼬리는
+    /// 사라진 화면에 대한 변경분이다 — 그리면 잔상이 남는다. 그래서 꼬리는 버리고 빈 대체 화면에서 다시 그리게 한다.
+    fn restore(&self) -> (String, bool) {
+        if !self.truncated {
+            return (self.text.clone(), false);
+        }
+        let alt = self.alt_screen();
+        let mut out = String::new();
+        if alt {
+            out.push_str("\x1b[?1049h\x1b[2J\x1b[H");
+        }
+        for (mode, on) in &self.modes {
+            if !ALT_SCREEN_MODES.contains(mode) {
+                out.push_str(&format!("\x1b[?{mode}{}", if *on { 'h' } else { 'l' }));
+            }
+        }
+        if !alt {
+            out.push_str(&self.text);
+        }
+        (out, alt)
     }
 }
 
@@ -275,10 +364,23 @@ fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
         };
         let s = sessions.get_mut(&id).ok_or("pty 없음")?;
         if matches!(s.child.try_wait(), Ok(None)) {
-            let (scrollback, offset) = {
+            let (scrollback, offset, repaint) = {
                 let sb = s.scrollback.lock().map_err(err)?;
-                (sb.0.clone(), sb.1)
+                let (text, repaint) = sb.restore();
+                (text, sb.total, repaint)
             };
+            // 크기를 한 줄 줄였다 되돌리면 ConPTY 와 전체 화면 프로그램이 화면 전체를 다시 보낸다. 그 출력은 offset 뒤의
+            // pty-data 로 가므로 붙는 화면이 이어서 그린다. 크기는 그대로이므로 pty-resized 는 알리지 않는다
+            if repaint && s.rows > 1 {
+                for rows in [s.rows - 1, s.rows] {
+                    let _ = s.master.resize(PtySize {
+                        rows,
+                        cols: s.cols,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    });
+                }
+            }
             return Ok(Some(PtyFound {
                 id,
                 scrollback,
@@ -619,22 +721,87 @@ mod tests {
     fn scrollback_keeps_recent_output_and_cuts_at_a_line_boundary() {
         let mut sb = Scrollback::default();
         sb.push("first\n");
-        assert_eq!(sb.0, "first\n");
+        assert_eq!(sb.text, "first\n");
         // 상한을 넘기면 앞에서 버리고, 남은 것은 줄의 처음부터 시작한다(한글이 잘리지 않는다)
         let line = "가나다라마바사아자차카타파하\n";
         for _ in 0..(SCROLLBACK_LIMIT / line.len() + 50) {
             sb.push(line);
         }
-        assert!(sb.0.len() <= SCROLLBACK_LIMIT);
-        assert!(sb.0.len() > SCROLLBACK_LIMIT - 2 * line.len());
-        assert!(sb.0.starts_with(line));
-        assert!(!sb.0.contains("first"));
+        assert!(sb.text.len() <= SCROLLBACK_LIMIT);
+        assert!(sb.text.len() > SCROLLBACK_LIMIT - 2 * line.len());
+        assert!(sb.text.starts_with(line));
+        assert!(!sb.text.contains("first"));
         // 줄바꿈이 없는 긴 출력도 상한을 지킨다
         let mut sb = Scrollback::default();
         let end = sb.push(&"x".repeat(SCROLLBACK_LIMIT + 10));
-        assert_eq!(sb.0.len(), SCROLLBACK_LIMIT);
+        assert_eq!(sb.text.len(), SCROLLBACK_LIMIT);
         // 버린 것까지 센 전체 길이를 돌려준다
         assert_eq!(end, SCROLLBACK_LIMIT as u64 + 10);
+    }
+
+    #[test]
+    fn scrollback_tracks_modes_across_chunks() {
+        let mut sb = Scrollback::default();
+        sb.push("a\x1b[?1049h\x1b[?1000;1006hb\x1b[?25l");
+        assert!(sb.alt_screen());
+        assert_eq!(sb.modes.get(&1000), Some(&true));
+        assert_eq!(sb.modes.get(&1006), Some(&true));
+        assert_eq!(sb.modes.get(&25), Some(&false));
+        // 조각 경계에서 잘린 시퀀스: ESC 뒤, `ESC[` 뒤, 번호 중간
+        for (head, tail) in [
+            ("x\x1b", "[?1049l"),
+            ("x\x1b[", "?25h"),
+            ("x\x1b[?20", "04h"),
+        ] {
+            sb.push(head);
+            sb.push(tail);
+        }
+        assert!(!sb.alt_screen());
+        assert_eq!(sb.modes.get(&25), Some(&true));
+        assert_eq!(sb.modes.get(&2004), Some(&true));
+        // 모드가 아닌 시퀀스(색·커서 이동)와 끝나지 않는 긴 시퀀스는 무시하고 다음 것을 계속 읽는다
+        sb.push("\x1b[31m\x1b[2;3H\x1b[?1;2c");
+        sb.push(&format!("\x1b[?{}", "1;".repeat(MODE_CARRY_LIMIT)));
+        sb.push("\x1b[?1004h");
+        assert_eq!(sb.modes.get(&1004), Some(&true));
+        assert_eq!(sb.modes.get(&1), None);
+    }
+
+    #[test]
+    fn scrollback_restore_replays_everything_until_output_is_dropped() {
+        let mut sb = Scrollback::default();
+        sb.push("\x1b[?1049h\x1b[2;1Hmenu");
+        // 버린 것이 없으면 보관한 출력이 전부다 — 그대로 다시 그린다
+        assert_eq!(
+            sb.restore(),
+            ("\x1b[?1049h\x1b[2;1Hmenu".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn scrollback_restore_after_drop_rebuilds_modes_and_asks_alt_screen_to_repaint() {
+        let filler = "x".repeat(SCROLLBACK_LIMIT);
+        // 대체 화면: 꼬리(사라진 화면에 대한 변경분)는 버리고, 빈 대체 화면 + 모드만 돌려주며 다시 그리게 한다
+        let mut sb = Scrollback::default();
+        sb.push("\x1b[?1049h\x1b[?1000h\x1b[?25l");
+        sb.push(&filler);
+        sb.push("\x1b[5;1Hdiff");
+        let (text, repaint) = sb.restore();
+        assert!(repaint);
+        assert_eq!(text, "\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1000h");
+        // 일반 화면: 모드를 앞에 붙이고 꼬리를 그대로 그린다
+        let mut sb = Scrollback::default();
+        sb.push("\x1b[?2004h");
+        sb.push(&filler);
+        sb.push("\nprompt> ");
+        let (text, repaint) = sb.restore();
+        assert!(!repaint);
+        // 꼬리는 줄 경계에서 시작한다(앞의 줄바꿈까지 버린다)
+        assert_eq!(text, "\x1b[?2004hprompt> ");
+        // 대체 화면에서 나온 뒤에는 일반 화면으로 다룬다
+        sb.push("\x1b[?1049h");
+        sb.push("\x1b[?1049l");
+        assert!(!sb.restore().1);
     }
 
     #[test]
