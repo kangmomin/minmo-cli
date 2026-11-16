@@ -7,7 +7,7 @@ import type { Effective, SettingsValues } from '@minmo/api-client'
 
 import { createFakeHost, deferred, fail, flush, ok } from './testing'
 import type { CmdResult, RunOptions, ScriptRunResult } from './host'
-import { createWorktreeService, ignoredCopyNames, ignoredPathsToCopy, isAbsoluteFor, localFilesDir, scriptFor, sparseDirs, worktreeId } from './worktree'
+import { applyBaseDir, createWorktreeService, ignoredCopyNames, ignoredPathsToCopy, isAbsoluteFor, localFilesDir, scriptFor, sparseDirs, worktreeId } from './worktree'
 import type { IssueTarget, SetupLogEvent, WorktreeEntry } from './worktree'
 
 const HOME = '/home/u'
@@ -231,6 +231,7 @@ type SetupOpts = {
   copyPaths?: (src: string, dst: string, rels: string[], skipNames: string[]) => Promise<number>
   localDirFor?: (main: string) => string | undefined
   defaultBranch?: (owner: string, repo: string) => Promise<string>
+  baseDir?: string
 }
 
 function setup(o: SetupOpts = {}) {
@@ -283,6 +284,7 @@ function setup(o: SetupOpts = {}) {
     onLog: (e) => logs.push(e),
     newRunId: () => `run-${++n}`,
     ...(o.localDirFor ? { localDirFor: o.localDirFor } : {}),
+    ...(o.baseDir ? { baseDir: () => o.baseDir } : {}),
   })
   const cmds = () => tauri.gitRun.mock.calls.map(([args, opts]) => normalize(args, opts)[0])
   const find = (pred: (a: string[]) => boolean) => cmds().filter(pred)
@@ -1046,6 +1048,30 @@ describe('F-4 EC-15 삭제 전 검사 실패 → 개수 불명으로 확인 요�
 describe('openIssue — 설정 경로가 이 OS 의 절대 경로가 아니면 중단(기기 간 설정 공유)', () => {
   it('Linux 에서 Windows 경로 → path_not_absolute, clone 하지 않음', async () => {
     const t = setup({ values: { mainClonePath: 'C:/ws/{owner}/{repo}/_main' } })
+    await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'path_not_absolute' })
+    expect(t.find((a) => a[0] === 'clone')).toHaveLength(0)
+  })
+
+  it('applyBaseDir: 기본 뿌리(~/minmo-workspaces)로 시작하는 템플릿만 기본 폴더로 바꾼다', () => {
+    expect(applyBaseDir('~/minmo-workspaces/{owner}/{repo}/_main', '/workspace')).toBe('/workspace/{owner}/{repo}/_main')
+    expect(applyBaseDir('~/minmo-workspaces', '/workspace/')).toBe('/workspace')
+    expect(applyBaseDir('~/minmo-workspaces\\{repo}', 'D:\\w\\')).toBe('D:\\w\\{repo}')
+    // 이름만 같은 앞부분·사용자가 바꾼 뿌리는 그대로
+    expect(applyBaseDir('~/minmo-workspaces2/{repo}', '/workspace')).toBe('~/minmo-workspaces2/{repo}')
+    expect(applyBaseDir('~/work/{repo}/{branch}', '/workspace')).toBe('~/work/{repo}/{branch}')
+    // 기본 폴더가 없으면 그대로
+    for (const none of [undefined, null, '', '  ']) expect(applyBaseDir('~/minmo-workspaces/{repo}', none)).toBe('~/minmo-workspaces/{repo}')
+  })
+
+  it('기본 폴더가 있으면 메인 clone 과 worktree 를 그 아래에 만든다(~ 도 풀린다)', async () => {
+    const t = setup({ baseDir: '~/ws' })
+    await t.svc.openIssue(ISSUE42)
+    expect(t.find((a) => a[0] === 'clone')[0]).toContain('/home/u/ws/MyOrg/Repo-A/_main')
+    expect(t.find(t.isAdd)[0]).toContain('/home/u/ws/MyOrg/Repo-A/issue--42-add-login')
+  })
+
+  it('기본 폴더가 이 OS 의 절대 경로가 아니면 path_not_absolute', async () => {
+    const t = setup({ baseDir: 'D:\\ws' })
     await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'path_not_absolute' })
     expect(t.find((a) => a[0] === 'clone')).toHaveLength(0)
   })
