@@ -1,6 +1,6 @@
 // 원격 호스트에 남기는 것:
 // - credentials.json(0600): 로그인 세션
-// - config.json: 모드(server|local)와 로컬 모드에서 바꾼 설정·보일 저장소(사용자가 고친 값)
+// - config.json: 모드(server|local)와 로컬 모드에서 바꾼 설정·보일 저장소, 이 기기의 기본 폴더·저장소별 원본 위치(사용자가 고친 값)
 // - state.json: worktree 경로·서버에서 받은 값의 사본(지워도 다시 받으면 되는 기계 상태)
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
@@ -54,7 +54,15 @@ export type LocalSettings = {
 /** worktree 터미널 방식 — shell: 일반 셸(기본) · tmux: 전용 tmux 세션(Linux·macOS, 접속이 끊겨도 유지) */
 export type TerminalMode = 'shell' | 'tmux'
 
-export type Config = { mode: Mode; terminal: TerminalMode; local: LocalSettings }
+export type Config = {
+  mode: Mode
+  terminal: TerminalMode
+  local: LocalSettings
+  /** 이 기기의 기본 폴더 — 경로 설정의 ~/minmo-workspaces 를 대신한다(core applyBaseDir). 서버에 올리지 않는다 */
+  baseDir?: string
+  /** 소문자 "owner/repo" → 이 기기에 이미 있는 저장소 폴더(원본 위치). 새로 clone 하지 않고 여기서 worktree 를 만든다 */
+  baseRepos?: Record<string, string>
+}
 
 /** 서버 모드에서 받은 값 — 로컬 모드의 기본값이 된다 */
 export type ServerCopy = {
@@ -105,7 +113,7 @@ export async function loadState(p: Paths): Promise<State> {
 }
 
 export async function loadConfig(p: Paths): Promise<Config> {
-  let c: ({ mode?: unknown; terminal?: unknown; local?: Partial<LocalSettings> } & Record<string, unknown>) | null
+  let c: ({ mode?: unknown; terminal?: unknown; local?: Partial<LocalSettings>; baseDir?: unknown; baseRepos?: unknown } & Record<string, unknown>) | null
   try {
     c = await readJson(p.config)
   } catch (e) {
@@ -116,7 +124,11 @@ export async function loadConfig(p: Paths): Promise<Config> {
   const local: LocalSettings = { global: l.global ?? {}, orgs: l.orgs ?? {}, projects: l.projects ?? {} }
   if (l.visibleRepos !== undefined) local.visibleRepos = l.visibleRepos
   // 모르는 키는 그대로 둔다(다시 쓸 때 지우지 않게)
-  return { ...c, mode: c?.mode === 'local' ? 'local' : 'server', terminal: c?.terminal === 'tmux' ? 'tmux' : 'shell', local }
+  // 손으로 고친 파일의 잘못된 값이 경로로 쓰이지 않게 모양이 맞는 것만 받는다
+  const baseDir = typeof c?.baseDir === 'string' && c.baseDir.trim() !== '' ? c.baseDir : undefined
+  const repos = c?.baseRepos
+  const baseRepos = typeof repos === 'object' && repos !== null && !Array.isArray(repos) ? Object.fromEntries(Object.entries(repos).filter((e): e is [string, string] => typeof e[1] === 'string')) : undefined
+  return { ...c, mode: c?.mode === 'local' ? 'local' : 'server', terminal: c?.terminal === 'tmux' ? 'tmux' : 'shell', local, baseDir, baseRepos }
 }
 
 let writes: Promise<void> = Promise.resolve()
@@ -147,6 +159,8 @@ export async function reloadState(p: Paths, state: State, config?: Config): Prom
     const fresh = await loadConfig(p)
     config.local = fresh.local
     config.terminal = fresh.terminal
+    config.baseDir = fresh.baseDir
+    config.baseRepos = fresh.baseRepos
   }
 }
 

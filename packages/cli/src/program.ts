@@ -2,6 +2,7 @@
 import { Command } from 'commander'
 
 import { doctor, login, logout, revokeSession, sessions } from './commands/account'
+import { baseDirCmd, baseRepoCmd } from './commands/base'
 import { ls, newIssue, note, openIssue, rm } from './commands/issues'
 import { modeCmd } from './commands/mode'
 import { configGet, configSet, reposAdd, reposAll, reposList, reposRemove, reposReset } from './commands/settings'
@@ -57,6 +58,17 @@ export function buildProgram(deps: ProgramDeps): Command {
     .argument('[kind]', 'shell(일반 셸, 기본) 또는 tmux(전용 tmux 세션 — 접속이 끊겨도 유지, Linux·macOS)')
     .description('worktree 터미널 방식 보기·바꾸기')
     .action(withCtx((ctx, kind: string | undefined) => terminalCmd(ctx, kind)))
+  program
+    .command('base-dir')
+    .argument('[path]', '절대 경로 또는 ~ 로 시작하는 경로 · -(해제)')
+    .description('이 기기의 기본 폴더 보기·바꾸기 — 경로 설정의 ~/minmo-workspaces 를 대신합니다(서버에 올리지 않음)')
+    .action(withCtx((ctx, path: string | undefined) => baseDirCmd(ctx, path)))
+  program
+    .command('base-repo')
+    .argument('[repo]', 'owner/repo — 없으면 정해 둔 목록')
+    .argument('[path]', '이 기기에 이미 있는 저장소 폴더 · -(해제)')
+    .description('저장소의 원본 위치 보기·바꾸기 — 새로 clone 하지 않고 그 저장소에서 worktree 를 만듭니다(이 기기만)')
+    .action(withCtx((ctx, repo: string | undefined, path: string | undefined) => baseRepoCmd(ctx, repo, path)))
 
   program
     .command('ls')
