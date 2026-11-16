@@ -38,8 +38,9 @@ test('Claude Code 의 작업 중 → 끝남을 이슈 행·패널·상단 버튼
   await expect(page.getByTestId('agents-button')).toHaveAccessibleName('에이전트 현황 — 작업 중 0 · 확인 필요 1')
   expect(await page.evaluate(() => window.__MINMO_MOCK__!.notifications)).toEqual([{ title: 'Claude Code — 끝남', body: 'widgets #42 Add login' }])
 
-  // 그 터미널을 다시 보면 "대기 중"으로 바뀐다
-  await page.getByTestId('issue-row-42').click()
+  // 알림을 누르면 그 터미널로 간다 → 보았으므로 "대기 중"으로 바뀐다
+  await page.evaluate(() => window.__MINMO_MOCK__!.clickNotification(1))
+  await expect(page.getByTestId('issue-header')).toContainText('#42 Add login')
   await expect(page.getByTestId('issue-row-42').getByRole('img', { name: '에이전트 대기 중' })).toBeVisible()
   await expect(page.getByTestId('pane-agent').first()).toHaveText('Claude Code · 대기 중 — 로그인 수정')
 })

@@ -20,6 +20,12 @@ pub fn show_main(app: &AppHandle) {
     }
 }
 
+/// 알림을 눌렀을 때 화면이 부른다 — 트레이로 숨긴 창도 앞으로 가져온다
+#[tauri::command]
+pub fn app_show(app: AppHandle) {
+    show_main(&app);
+}
+
 fn hide_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();

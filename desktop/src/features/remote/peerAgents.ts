@@ -141,7 +141,7 @@ export function usePeerAgents(tauri: TauriApi, connect: (url: string, token: str
         if (!useUiStore.getState().agentNotify) return
         for (const r of urgent) {
           if (!allowNotify(notified, Date.now())) break
-          void tauri.notify(`${peer.name}: ${r.agentLabel} — ${STATUS_LABEL[r.status]}`, [r.repo, r.issue].filter(Boolean).join(' ')).catch(() => undefined)
+          void tauri.notify(`${peer.name}: ${r.agentLabel} — ${STATUS_LABEL[r.status]}`, [r.repo, r.issue].filter(Boolean).join(' '), { kind: 'peer', peerId: peer.id, paneId: r.paneId, target: r.target }).catch(() => undefined)
         }
       }
       const open = () => {

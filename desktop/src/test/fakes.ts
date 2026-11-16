@@ -99,6 +99,8 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     ptyProcesses: async () => [],
     claudeSubagents: async () => [],
     notify: async () => {},
+    onNotifyClick: async () => () => {},
+    appShow: async () => {},
     openUrl: async () => {},
     pickFolder: async () => null,
     serverStatus: async () => ({ state: 'running', port: 8787, message: null }),
