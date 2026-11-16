@@ -62,6 +62,11 @@ export interface UiState {
   /** 트리에 에이전트가 있는 이슈만 보인다(저장하지 않는다 — 에이전트 현황은 실행 중에만 있다) */
   treeAgentsOnly: boolean
   panes: Record<string, IssuePanes>
+  /**
+   * 터미널을 띄우기로 한 이슈. 이슈를 고르기만 해서는 터미널(셸 프로세스)을 만들지 않는다 — 잘못 고른 이슈마다 터미널이 생기지 않게,
+   * 사용자가 열 때(Ctrl+T·[터미널 열기]·에이전트 실행)만 만든다. 프로세스 수명과 같아 persist 하지 않는다
+   */
+  startedTerminals: Record<string, true>
   /** 사용자가 분할·닫기를 했을 때만 포커스를 옮긴다 — token 이 바뀐 요청만 처리(자동 포커스 금지 AX-02) */
   focusRequest: { paneId: string; token: number } | null
 
@@ -87,6 +92,12 @@ export interface UiState {
    * 거기서 돌고 있을지 모르는 프로그램에 명령이 입력되지 않게 항상 새 패널을 만든다.
    */
   launchPane(issueId: string, keepFirst?: boolean): string
+  /** 이슈의 터미널을 연다(Ctrl+T·[터미널 열기]): 아직 없으면 첫 터미널을 시작하고, 이미 있으면 오른쪽에 새 패널을 만든다 */
+  openTerminal(issueId: string): void
+  /** 이미 떠 있는 터미널에 붙을 때 — 패널 구성·포커스는 건드리지 않고 터미널만 보이게 한다 */
+  markTerminalStarted(issueId: string): void
+  /** 터미널을 유지하는 이슈(keep)가 아닌 것은 시작 표시를 지운다 — 다시 나타나도 사용자가 열 때까지 만들지 않게 */
+  pruneStartedTerminals(keep: ReadonlySet<string>): void
   /**
    * 저장소 식별이 바뀔 때(로컬 저장소를 GitHub 에 올림) 이슈 id 와 트리 노드 id 를 옮긴다.
    * 패널 id 에는 이슈 id 가 들어 있어 옮길 수 없다 — 그 이슈의 터미널 패널은 닫고 다시 열 때 새로 만든다.
@@ -118,6 +129,7 @@ export const useUiStore = create<UiState>()(
       peerSync: true,
       launchRequest: null,
       panes: {},
+      startedTerminals: {},
       focusRequest: null,
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
       selectIssue: (selectedIssueId) => set({ selectedIssueId }),
@@ -131,9 +143,11 @@ export const useUiStore = create<UiState>()(
           for (const pane of leafIds(s.panes[id]?.tree ?? null)) delete terminalIds[pane]
           const panes = { ...s.panes }
           delete panes[id]
+          const startedTerminals = { ...s.startedTerminals }
+          delete startedTerminals[id]
           // 다시 만들면 패널 번호가 1부터 다시 시작한다 — 남은 요청이 새 터미널을 자동 포커스하지 않게 지운다
           const focusRequest = s.focusRequest?.paneId.startsWith(`${id}::`) ? null : s.focusRequest
-          return { worktreePathMap, terminalIds, panes, focusRequest }
+          return { worktreePathMap, terminalIds, panes, startedTerminals, focusRequest }
         }),
       setTheme: (theme) => set({ theme }),
       setFontSize: (n) => set({ fontSize: clampFontSize(n) }),
@@ -149,7 +163,11 @@ export const useUiStore = create<UiState>()(
         let cur = s.panes[issueId]
         const leaves = leafIds(cur?.tree ?? null)
         const commit = (next: NonNullable<typeof cur>, id: string) => {
-          set({ panes: { ...s.panes, [issueId]: next }, focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 } })
+          set({
+            panes: { ...s.panes, [issueId]: next },
+            startedTerminals: { ...s.startedTerminals, [issueId]: true },
+            focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 },
+          })
           return id
         }
         if (!cur || leaves.length === 0) {
@@ -168,11 +186,30 @@ export const useUiStore = create<UiState>()(
         const id = paneIdOf(issueId, seq)
         return commit({ tree: splitPane(cur.tree!, from, 'row', id), focused: id, seq }, id)
       },
+      openTerminal: (issueId) => {
+        const s = get()
+        const cur = s.panes[issueId]
+        const leaves = leafIds(cur?.tree ?? null)
+        // 이미 연 이슈는 항상 새 패널 — 첫 터미널이 아직 뜨는 중(terminalIds 에 없음)이어도 그 자리를 다시 쓰지 않는다
+        if (s.startedTerminals[issueId] && cur && leaves.length > 0) {
+          s.splitPane(issueId, cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[leaves.length - 1], 'row')
+          return
+        }
+        s.launchPane(issueId)
+      },
+      markTerminalStarted: (issueId) => set((s) => (s.startedTerminals[issueId] ? s : { startedTerminals: { ...s.startedTerminals, [issueId]: true } })),
+      pruneStartedTerminals: (keep) =>
+        set((s) => {
+          const ids = Object.keys(s.startedTerminals)
+          const kept = ids.filter((id) => keep.has(id))
+          return kept.length === ids.length ? s : { startedTerminals: Object.fromEntries(kept.map((id) => [id, true as const])) }
+        }),
       rekey: (issues, nodes) =>
         set((s) => {
           const worktreePathMap = { ...s.worktreePathMap }
           const terminalIds = { ...s.terminalIds }
           const panes = { ...s.panes }
+          const startedTerminals = { ...s.startedTerminals }
           for (const [from, to] of Object.entries(issues)) {
             if (worktreePathMap[from]) {
               worktreePathMap[to] = worktreePathMap[from]
@@ -180,6 +217,7 @@ export const useUiStore = create<UiState>()(
             }
             for (const pane of leafIds(panes[from]?.tree ?? null)) delete terminalIds[pane]
             delete panes[from]
+            delete startedTerminals[from]
           }
           const expanded = { ...s.expanded }
           for (const [from, to] of Object.entries(nodes)) {
@@ -191,7 +229,7 @@ export const useUiStore = create<UiState>()(
           const moved = s.selectedIssueId !== null && s.selectedIssueId in issues
           const focusRequest = Object.keys(issues).some((id) => s.focusRequest?.paneId.startsWith(`${id}::`)) ? null : s.focusRequest
           // 열려 있던 이슈는 선택을 풀어 둔다 — 옛 id 로 잡힌 열기 상태(터미널 등)를 새 id 로 다시 열게
-          return { worktreePathMap, terminalIds, panes, expanded, focusRequest, selectedIssueId: moved ? null : s.selectedIssueId }
+          return { worktreePathMap, terminalIds, panes, startedTerminals, expanded, focusRequest, selectedIssueId: moved ? null : s.selectedIssueId }
         }),
       ensurePanes: (issueId) =>
         set((s) => (s.panes[issueId] ? s : { panes: { ...s.panes, [issueId]: { tree: leaf(paneIdOf(issueId, 1)), focused: null, seq: 1 } } })),

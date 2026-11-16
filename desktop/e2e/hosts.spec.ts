@@ -1,7 +1,7 @@
 // 원격 호스트(SSH 프로필) — 호스트 추가·전환, 원격에서 이슈 열기(mock ssh), 호스트별 ● 표시
 import { expect, test } from '@playwright/test'
 
-import { expandWidgets, login, routeGitHub, routeServer } from './fixtures'
+import { expandWidgets, login, openTerminal, routeGitHub, routeServer } from './fixtures'
 
 test.beforeEach(async ({ page }) => {
   await routeServer(page)
@@ -25,6 +25,7 @@ test('호스트를 추가해 전환하고 원격에서 이슈를 연다 — work
   await expect(page.getByTestId('issue-branch')).toHaveText('feat/42')
   await expect(page.getByTestId('issue-row-42')).toHaveAttribute('data-worktree', 'true')
   // 원격 터미널은 기본으로 일반 로그인 셸이다(tmux 가 있는 호스트여도)
+  await openTerminal(page)
   await expect(page.getByTestId('terminal-pane')).toContainText(/mock-server:/)
   await expect(page.getByTestId('terminal-pane')).not.toContainText('[tmux')
 
@@ -44,6 +45,7 @@ test('"원격 터미널에 tmux 사용"을 켜면 그 호스트의 worktree 전�
   await page.getByRole('combobox', { name: '작업 호스트' }).selectOption('mock-server')
   await expandWidgets(page)
   await page.getByTestId('issue-row-42').click()
+  await openTerminal(page)
   await expect(page.getByTestId('terminal-pane')).toContainText(/mock-server:.*\[tmux minmo-[0-9a-f]{10}\]/)
 })
 

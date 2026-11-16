@@ -1,6 +1,6 @@
 // 작업 탭·준비 로그 접근성 — AX-02(터미널 탈출), AX-07(tabpanel 연결), AX-08(준비 로그 live region),
 // AX-19(보이지 않는 Tab 정지점), AX-20/31(live region 패턴·접기 버튼), CR-12/13(로그 key·접힘 상태)
-import { act, screen, within } from '@testing-library/react'
+import { act, fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -53,7 +53,7 @@ beforeEach(() => {
   xterm.handlers.length = 0
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online' })
-  useUiStore.setState({ tab: 'terminal', terminalIds: {} })
+  useUiStore.setState({ tab: 'terminal', terminalIds: {}, panes: {}, startedTerminals: {}, focusRequest: null })
   useSetupStore.setState({
     targets: {},
     open: { [ID]: { phase: 'ready', path: '/w/42', branch: 'b', pathChanged: false } },
@@ -146,6 +146,8 @@ describe('AX-37 세션이 없으면 터미널 패널은 Tab 정지점(tabIndex=0
 describe('AX-02 터미널에서 Ctrl+Shift+M → 탭 목록으로 포커스 이동', () => {
   it('xterm 키 핸들러 → 현재 "터미널" 탭 버튼에 포커스', async () => {
     renderTabs()
+    // 터미널은 사용자가 열 때 만든다
+    fireEvent.click(screen.getByRole('button', { name: '터미널 열기' }))
     await vi.waitFor(() => expect(xterm.handlers.length).toBeGreaterThan(0))
     act(() => {
       xterm.handlers[0](new KeyboardEvent('keydown', { key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true }))
@@ -296,6 +298,8 @@ describe('원격 터미널 방식(원격 호스트 대화상자의 "원격 터�
   async function spawnRemote(useTmux: boolean, tmuxOnHost = true) {
     useHostsStore.setState({ probes: { srv: { platform: 'linux', home: '/home/dev', git: 'git', tmux: tmuxOnHost } }, useTmux })
     useSetupStore.setState({ open: { [REMOTE_ID]: { phase: 'ready', path: '/home/dev/w/42', branch: 'b', pathChanged: false } } })
+    // 한 테스트에서 두 번 열 때 앞에서 연 터미널이 남지 않게
+    useUiStore.setState({ panes: {}, startedTerminals: {}, terminalIds: {}, focusRequest: null })
     const fake = createFakeTauri()
     const r = renderWithDeps(
       <TooltipProvider>
@@ -307,6 +311,8 @@ describe('원격 터미널 방식(원격 호스트 대화상자의 "원격 터�
       </TooltipProvider>,
       makeDeps({ api: createFakeApi({ getNotes: async () => ({ body: '', updatedAt: null }) }), tauri: fake.tauri }),
     )
+    // 터미널은 사용자가 열 때 만든다
+    fireEvent.click(screen.getByRole('button', { name: '터미널 열기' }))
     await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(1))
     const remote = fake.tauri.ptySpawn.mock.calls[0][0].remote
     r.unmount()

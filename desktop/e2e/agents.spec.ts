@@ -2,7 +2,7 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
-import { expandWidgets, login, routeGitHub, routeServer } from './fixtures'
+import { expandWidgets, login, openTerminal, routeGitHub, routeServer } from './fixtures'
 
 const title = (t: string) => `\x1b]0;${t}\x07`
 
@@ -18,6 +18,7 @@ test.beforeEach(async ({ page }) => {
 
 test('Claude Code 의 작업 중 → 끝남을 이슈 행·패널·상단 버튼에 보이고, 다른 이슈를 보는 동안 끝나면 알린다', async ({ page }) => {
   await page.getByTestId('issue-row-42').click()
+  await openTerminal(page)
   await expect(page.getByTestId('terminal-pane')).toContainText('minmo mock terminal')
   // 에이전트가 없을 때는 표시가 없다
   await expect(page.getByTestId('pane-agent')).toHaveCount(0)
@@ -46,10 +47,12 @@ test('Claude Code 의 작업 중 → 끝남을 이슈 행·패널·상단 버튼
 test('전체 현황: 여러 이슈의 에이전트를 모아 보고 필터·정렬·묶기, 줄을 누르면 그 터미널로 이동한다', async ({ page }) => {
   // #42: Claude Code 작업 중, 기타: Codex(프로세스 이름으로 감지, 출력이 나오는 동안 작업 중)
   await page.getByTestId('issue-row-42').click()
+  await openTerminal(page)
   await expect(page.getByTestId('terminal-pane')).toContainText('minmo mock terminal')
   await page.evaluate(() => window.__MINMO_MOCK__!.setPtyProcesses(1, ['claude.exe']))
   await emit(page, 1, title('◐ 로그인 수정'))
   await page.getByTestId('issue-row-etc').click()
+  await openTerminal(page)
   await expect(page.locator('[data-testid="terminal-pane"]:visible')).toContainText('minmo mock terminal')
   await page.evaluate(() => window.__MINMO_MOCK__!.setPtyProcesses(2, ['node.exe', 'codex.exe']))
   await emit(page, 2, 'Thinking about the task…')
@@ -106,6 +109,7 @@ test('전체 현황: 여러 이슈의 에이전트를 모아 보고 필터·정�
 
 test('Claude Code 의 하위 에이전트: 패널 머리줄에 실행 중인 수, 전체 현황에 목록 — 실행 중인 것만 필터', async ({ page }) => {
   await page.getByTestId('issue-row-42').click()
+  await openTerminal(page)
   await expect(page.getByTestId('terminal-pane')).toContainText('minmo mock terminal')
   // 작업 폴더(worktree)의 경로로 세션 기록을 찾는다
   const cwd = await page.evaluate(() => {
@@ -150,6 +154,7 @@ test('Claude Code 의 하위 에이전트: 패널 머리줄에 실행 중인 수
 
 test('[에이전트 실행]: 지시문과 에이전트를 정하면 새 터미널 패널에서 명령을 실행한다 — 쓰던 터미널은 건드리지 않는다', async ({ page }) => {
   await page.getByTestId('issue-row-42').click()
+  await openTerminal(page)
   await expect(page.getByTestId('terminal-pane')).toContainText('minmo mock terminal')
   await page.getByRole('button', { name: '에이전트 실행' }).click()
   const dialog = page.getByRole('dialog', { name: '에이전트 실행' })
@@ -183,7 +188,7 @@ test('트리 메뉴의 [에이전트 실행…]: 이슈를 열고 작업 폴더�
   await dialog.getByLabel('지시문').fill('')
   await expect(dialog.getByTestId('launch-preview')).toHaveText('claude')
   await dialog.getByRole('button', { name: '실행' }).click()
-  // 이슈를 열면서 뜬 첫 터미널은 그대로 두고 새 패널에서 실행한다
-  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(2)
+  // 이슈를 여는 것만으로는 터미널이 뜨지 않는다 — 실행할 때 첫 터미널을 만들어 거기서 실행한다
+  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(1)
   await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__!.ptyWrites)).toEqual(['claude\r'])
 })

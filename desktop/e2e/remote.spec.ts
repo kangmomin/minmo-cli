@@ -2,7 +2,7 @@
 // 실제 호스트 서버·다른 기기의 접속은 Rust 테스트(src-tauri/src/remote.rs)와 실제 앱 검증으로 본다.
 import { devices, expect, test } from '@playwright/test'
 
-import { expandWidgets, login, routeGitHub, routeServer } from './fixtures'
+import { expandWidgets, login, openTerminal, routeGitHub, routeServer } from './fixtures'
 
 test.beforeEach(async ({ page }) => {
   await routeServer(page)
@@ -74,6 +74,7 @@ test.describe('휴대폰 크기', () => {
     // 이슈를 고르면 작업 화면으로 넘어가고 목록은 가려진다
     await expect(page.getByTestId('issue-branch')).toBeVisible()
     await expect(page.getByTestId('issue-row-42')).toBeHidden()
+    await openTerminal(page)
     await expect(page.locator('[data-testid="terminal-pane"]:visible')).toContainText('minmo mock terminal')
 
     // 화면 키보드에 없는 키를 누를 수 있다
