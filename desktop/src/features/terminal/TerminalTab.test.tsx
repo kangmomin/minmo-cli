@@ -6,9 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PtyDataEvent, TauriApi } from '../../lib/tauri'
 import { createFakeTauri, deferred, flush } from '../../test/fakes'
+import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
+import { TERMINAL_EXIT_HINT, createTerminalKeyHandler, useTerminalOpenShortcut } from './keys'
 import { MAX_PENDING_PTY_CHARS, TerminalTab } from './TerminalTab'
 import type { TerminalSessionSpec } from './TerminalTab'
 
@@ -91,11 +92,14 @@ vi.mock('@xterm/addon-fit', () => ({
 }))
 
 const A: TerminalSessionSpec = { issueId: 'o/r#1', cwd: '/w/1' }
+const R: TerminalSessionSpec = { issueId: 'ssh:my-server|o/r#1', cwd: '/home/dev/w/1', remote: { host: 'my-server', tmux: true } }
+/** 사용자가 이미 터미널을 연 상태 — 이 파일의 대부분은 열린 터미널의 동작을 본다 */
+const STARTED = { [A.issueId]: true, [R.issueId]: true } as const
 
 beforeEach(() => {
   xterm.instances.length = 0
   xterm.strings.promptLabel = 'Terminal input'
-  useUiStore.setState({ panes: {}, focusRequest: null, terminalIds: {}, theme: 'black' })
+  useUiStore.setState({ panes: {}, focusRequest: null, terminalIds: {}, startedTerminals: { ...STARTED }, tab: 'terminal', selectedIssueId: null, theme: 'black' })
 })
 
 function setup(tauriOverrides: Partial<TauriApi> = {}) {
@@ -551,13 +555,16 @@ describe('패널 분할 (Ctrl+D / Ctrl+Shift+D / Ctrl+W)', () => {
     expect(xterm.instances.at(-1)!.focus).toHaveBeenCalledTimes(1)
   })
 
-  it('패널 상태가 지워져도(마운트 유지) 새 패널을 다시 만든다 — 빈 화면에 갇히지 않음', async () => {
+  it('패널 상태가 지워져도(마운트 유지) [터미널 열기] 로 다시 만든다 — 빈 화면에 갇히지 않음', async () => {
     let n = 0
     const t = setup({ ptySpawn: async () => `pty-${++n}` })
     await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
     act(() => useUiStore.getState().removeWorktree(A.issueId))
+    // 기록이 지워진 이슈의 터미널은 끝내고, 다시 열 수 있는 버튼을 보인다(자동으로 다시 띄우지 않는다)
+    await vi.waitFor(() => expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1'))
+    expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: '터미널 열기' }))
     await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
-    expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1')
     expect(screen.getAllByTestId('terminal-pane')).toHaveLength(1)
   })
 
@@ -571,6 +578,7 @@ describe('패널 분할 (Ctrl+D / Ctrl+Shift+D / Ctrl+W)', () => {
     const s = useUiStore.getState()
     expect(s.panes).toEqual({})
     expect(s.terminalIds).toEqual({ 'x::1': 'pty-1' })
+    expect(s.startedTerminals).not.toHaveProperty([A.issueId])
     expect(s.focusRequest).toBeNull()
   })
 
@@ -596,8 +604,6 @@ describe('패널 분할 (Ctrl+D / Ctrl+Shift+D / Ctrl+W)', () => {
 })
 
 describe('원격 호스트 터미널', () => {
-  const R: TerminalSessionSpec = { issueId: 'ssh:my-server|o/r#1', cwd: '/home/dev/w/1', remote: { host: 'my-server', tmux: true } }
-
   it('첫 패널은 worktree 의 기본 tmux 세션, 분할 패널은 떼면 사라지는 세션으로 연다', async () => {
     const fake = createFakeTauri()
     renderWithDeps(<TerminalTab sessions={[R]} activeId={R.issueId} visible />, makeDeps({ tauri: fake.tauri }))
@@ -938,5 +944,136 @@ describe('함께 쓰는 터미널 — 이미 떠 있는 터미널에 붙기(원�
     expect(screen.queryByText('터미널 세션이 종료되었습니다')).toBeNull()
     act(() => exits.emit('pty-1'))
     expect(await screen.findByText('터미널 세션이 종료되었습니다')).toBeInTheDocument()
+  })
+})
+
+describe('터미널은 사용자가 열 때만 만든다 (Ctrl+T · [터미널 열기])', () => {
+  const ctrlT = (init: KeyboardEventInit = {}) => new KeyboardEvent('keydown', { ctrlKey: true, key: 't', code: 'KeyT', cancelable: true, bubbles: true, ...init })
+  const READY = { phase: 'ready', path: A.cwd, branch: 'b', pathChanged: false } as const
+
+  function Shortcut() {
+    useTerminalOpenShortcut()
+    return null
+  }
+
+  /** 이슈를 골라 작업 폴더가 준비된 화면(터미널은 아직 열지 않음) */
+  function setupIdle(tauriOverrides: Partial<TauriApi> = {}) {
+    useUiStore.setState({ startedTerminals: {}, selectedIssueId: A.issueId })
+    useSetupStore.setState({ open: { [A.issueId]: READY } })
+    const fake = createFakeTauri(tauriOverrides)
+    const r = renderWithDeps(
+      <>
+        <Shortcut />
+        <TerminalTab sessions={[A]} activeId={A.issueId} visible />
+      </>,
+      makeDeps({ tauri: fake.tauri }),
+    )
+    return { ...r, tauri: fake.tauri }
+  }
+
+  afterEach(() => useSetupStore.setState({ open: {} }))
+
+  it('준비된 이슈를 보기만 해서는 터미널을 만들지 않고, 여는 방법을 안내한다', async () => {
+    const t = setupIdle()
+    await flush()
+    expect(t.tauri.ptySpawn).not.toHaveBeenCalled()
+    expect(t.tauri.ptyFind).not.toHaveBeenCalled()
+    expect(xterm.instances).toHaveLength(0)
+    expect(screen.getByRole('button', { name: '터미널 열기' })).toBeInTheDocument()
+    // 터미널이 없으면 탈출 안내(단축키 줄)도 없다
+    expect(screen.getByRole('region', { name: '터미널' })).not.toHaveAttribute('aria-describedby')
+  })
+
+  it('[터미널 열기] → 터미널 하나를 만들고 그쪽으로 포커스를 옮긴다', async () => {
+    const t = setupIdle()
+    fireEvent.click(screen.getByRole('button', { name: '터미널 열기' }))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('button', { name: '터미널 열기' })).toBeNull()
+    expect(screen.getAllByTestId('terminal-pane')).toHaveLength(1)
+    expect(xterm.instances[0].focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl+T → 없으면 첫 터미널, 이미 있으면 오른쪽에 새 패널(첫 터미널이 뜨는 중이어도)', async () => {
+    let n = 0
+    const t = setupIdle({ ptySpawn: async () => `pty-${++n}` })
+    useUiStore.setState({ tab: 'notes' })
+    const first = ctrlT()
+    act(() => void window.dispatchEvent(first))
+    expect(first.defaultPrevented).toBe(true)
+    expect(useUiStore.getState().tab).toBe('terminal')
+    act(() => void window.dispatchEvent(ctrlT()))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(screen.getAllByTestId('terminal-pane').map((p) => [p.style.left, p.style.width])).toEqual([
+      ['0%', '50%'],
+      ['50%', '50%'],
+    ])
+    expect(t.tauri.ptyKill).not.toHaveBeenCalled()
+  })
+
+  it('Ctrl+T 는 작업 폴더가 준비되지 않았거나 대화상자가 열려 있으면 아무것도 하지 않는다 · 누르고 있어도 한 번만', async () => {
+    const t = setupIdle()
+    useSetupStore.setState({ open: { [A.issueId]: { phase: 'opening' } } })
+    const early = ctrlT()
+    act(() => void window.dispatchEvent(early))
+    expect(early.defaultPrevented).toBe(false)
+    useSetupStore.setState({ open: { [A.issueId]: READY } })
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+    try {
+      act(() => void window.dispatchEvent(ctrlT()))
+    } finally {
+      dialog.remove()
+    }
+    act(() => void window.dispatchEvent(ctrlT({ shiftKey: true })))
+    await flush()
+    expect(t.tauri.ptySpawn).not.toHaveBeenCalled()
+    act(() => void window.dispatchEvent(ctrlT()))
+    act(() => void window.dispatchEvent(ctrlT({ repeat: true })))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    await flush()
+    expect(screen.getAllByTestId('terminal-pane')).toHaveLength(1)
+  })
+
+  it('터미널 안에서 누른 Ctrl+T 는 셸로 보내지 않는다(앱이 처리) · Ctrl+Shift+T 는 그대로', () => {
+    const h = createTerminalKeyHandler(vi.fn())
+    expect(h(ctrlT())).toBe(false)
+    expect(h(new KeyboardEvent('keyup', { ctrlKey: true, key: 't', code: 'KeyT' }))).toBe(false)
+    expect(h(ctrlT({ key: 'ㅅ' }))).toBe(false)
+    expect(h(ctrlT({ key: 'T', shiftKey: true }))).toBe(true)
+  })
+
+  it('이미 떠 있는 터미널(다른 화면이 연 것)에는 열지 않아도 붙는다 — 새로 만들지 않는다', async () => {
+    const FOUND = { id: 'pty-9', scrollback: 'hi', offset: 10, cols: 100, rows: 30 }
+    useUiStore.setState({
+      panes: { [A.issueId]: { tree: { kind: 'leaf', id: `${A.issueId}::1` }, focused: null, seq: 1 } },
+      terminalIds: { [`${A.issueId}::1`]: 'pty-9' },
+    })
+    const t = setupIdle({ ptyFind: async () => FOUND })
+    await vi.waitFor(() => expect(xterm.instances[0]?.written).toEqual([FOUND.scrollback]))
+    expect(t.tauri.ptySpawn).not.toHaveBeenCalled()
+    // 붙기만 했으므로 포커스는 옮기지 않는다(AX-02)
+    expect(xterm.instances[0].focus).not.toHaveBeenCalled()
+  })
+
+  it('다른 이슈를 보고 와도 연 터미널은 그대로, 열지 않은 이슈에는 만들지 않는다', async () => {
+    const B: TerminalSessionSpec = { issueId: 'o/r#2', cwd: '/w/2' }
+    // 처음 그린 것과 같은 모양으로 다시 그린다(모양이 바뀌면 터미널 탭이 새로 마운트된다)
+    const view = (activeId: string) => (
+      <>
+        <Shortcut />
+        <TerminalTab sessions={[A, B]} activeId={activeId} visible />
+      </>
+    )
+    const t = setupIdle()
+    fireEvent.click(screen.getByRole('button', { name: '터미널 열기' }))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    t.rerender(view(B.issueId))
+    await flush()
+    expect(screen.getByRole('button', { name: '터미널 열기' })).toBeInTheDocument()
+    t.rerender(view(A.issueId))
+    await flush()
+    expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1)
+    expect(t.tauri.ptyKill).not.toHaveBeenCalled()
   })
 })

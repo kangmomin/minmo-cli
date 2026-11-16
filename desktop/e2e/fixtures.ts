@@ -106,6 +106,11 @@ export async function login(page: Page) {
   await expect(page).toHaveURL(/\/$/)
 }
 
+/** 지금 고른 이슈의 터미널을 연다 — 이슈를 고르기만 해서는 터미널을 만들지 않는다 */
+export async function openTerminal(page: Page) {
+  await page.getByRole('button', { name: '터미널 열기' }).click()
+}
+
 /** 트리에서 my-org → widgets 펼치기 */
 export async function expandWidgets(page: Page) {
   await page.getByTestId('org-node-my-org').click()

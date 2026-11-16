@@ -69,20 +69,23 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
     }
   }, [])
   const hintId = useId()
-  // PTY 는 터미널 탭에서 처음 볼 때 만들고, 이후에는 이슈를 전환해도 유지한다
-  const [started, setStarted] = useState<ReadonlySet<string>>(() => new Set())
+  // PTY 는 사용자가 터미널을 열 때(Ctrl+T·[터미널 열기]·에이전트 실행) 만들고, 이후에는 이슈를 전환해도 유지한다.
+  // 이슈를 고르기만 해서는 만들지 않는다 — 잘못 고른 이슈마다 셸이 뜨지 않게
+  const started = useUiStore((s) => s.startedTerminals)
+  const openTerminal = useUiStore((s) => s.openTerminal)
+  // 브라우저로 붙은 화면에서는 Ctrl+T 를 브라우저(새 탭)가 가져간다 — 되지 않는 단축키는 안내하지 않는다
+  const openKeyWorks = useBaseDeps().tauri.runtime !== 'remote'
+  const activeStarted = activeId !== null && activeHasSession && activeId in started
+  // 이미 떠 있는 터미널(다른 화면이 열었거나, 이 화면을 다시 불러온 경우)에는 열라고 하지 않아도 붙는다 — 새 프로세스를 만들지 않는다
+  const activeAlive = useUiStore((s) => activeId !== null && leafIds(s.panes[activeId]?.tree ?? null).some((p) => p in s.terminalIds))
   useEffect(() => {
-    if (visible && activeId && activeHasSession && !started.has(activeId)) setStarted((s) => new Set(s).add(activeId))
-  }, [visible, activeId, activeHasSession, started])
+    if (visible && activeId && activeHasSession && !activeStarted && activeAlive) useUiStore.getState().markTerminalStarted(activeId)
+  }, [visible, activeId, activeHasSession, activeStarted, activeAlive])
 
-  // 세션이 사라지면(worktree 삭제 등) started 에서도 뺀다 — 다시 나타나도 탭을 볼 때까지 PTY 를 만들지 않도록
+  // 세션이 사라지면(worktree 삭제 등) started 에서도 뺀다 — 다시 나타나도 사용자가 열 때까지 PTY 를 만들지 않도록
   const sessionIds = sessions.map((s) => s.issueId).join('\n')
   useEffect(() => {
-    const present = new Set(sessionIds.split('\n'))
-    setStarted((s) => {
-      const next = new Set([...s].filter((id) => present.has(id)))
-      return next.size === s.size ? s : next
-    })
+    useUiStore.getState().pruneStartedTerminals(new Set(sessionIds.split('\n')))
   }, [sessionIds])
 
   const theme = useUiStore((s) => s.theme)
@@ -102,24 +105,35 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
         data-testid="terminal-tab"
         role="region"
         aria-label="터미널"
-        aria-describedby={activeHasSession ? hintId : undefined}
+        aria-describedby={activeStarted ? hintId : undefined}
       >
-        {activeHasSession && (
+        {activeStarted && (
           <div className="flex shrink-0 flex-wrap gap-x-4 px-3 pt-1.5 text-xs text-neutral-400 max-md:hidden">
             <p id={hintId}>{TERMINAL_EXIT_HINT}: 터미널 밖으로 이동</p>
             <p>
+              {openKeyWorks && `${PANE_KEYS.open}: 새 터미널 · `}
               {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기 · {CLIPBOARD_KEYS.copy}:
               복사(선택했을 때) · {CLIPBOARD_KEYS.paste}: 붙여넣기 · {EDIT_KEYS.deleteWord}: 단어 지우기 · {EDIT_KEYS.newline}: 줄바꿈
             </p>
           </div>
         )}
-        {touch && activeHasSession && <TerminalKeyBar paneId={activePane} />}
+        {touch && activeStarted && <TerminalKeyBar paneId={activePane} />}
         <div className="relative min-h-0 flex-1">
           {sessions
-            .filter((s) => started.has(s.issueId))
+            .filter((s) => s.issueId in started)
             .map((s) => (
               <IssuePanes key={sessionKey(s)} spec={s} active={visible && s.issueId === activeId} hintId={hintId} onExit={onExit} />
             ))}
+          {visible && activeId !== null && activeHasSession && !activeStarted && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-neutral-400">
+              <p>
+                {openKeyWorks && <span className="max-md:hidden">{PANE_KEYS.open} 또는 </span>}아래 버튼으로 터미널을 엽니다
+              </p>
+              <Button size="sm" variant="secondary" onClick={() => openTerminal(activeId)}>
+                터미널 열기
+              </Button>
+            </div>
+          )}
           {visible && !activeHasSession && (
             <p className="p-4 text-sm text-neutral-400">worktree 가 준비되면 터미널을 사용할 수 있습니다.</p>
           )}

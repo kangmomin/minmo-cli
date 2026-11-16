@@ -24,6 +24,7 @@ import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
 import type { PreviewIssue } from '../features/settings/SettingsDialog'
 import { Sidebar } from '../features/tree/Sidebar'
+import { useTerminalOpenShortcut } from '../features/terminal/keys'
 import { useFontSizeShortcuts } from '../lib/fontSize'
 import { openServerSettings } from '../store/server'
 import { HostScope, aliasOfIssue, useHostConnection } from './host'
@@ -51,6 +52,7 @@ export function Workspace() {
     if (selectedId) setShowTree(false)
   }, [selectedId])
   useFontSizeShortcuts()
+  useTerminalOpenShortcut()
   const baseDeps = useBaseDeps()
   const baseTauri = baseDeps.tauri
   const queryClient = useQueryClient()

@@ -2,7 +2,7 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
-import { expandWidgets, login, routeGitHub, routeServer } from './fixtures'
+import { expandWidgets, login, openTerminal, routeGitHub, routeServer } from './fixtures'
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] })
 
@@ -12,12 +12,37 @@ test.beforeEach(async ({ page }) => {
   await login(page)
   await expandWidgets(page)
   await page.getByTestId('issue-row-42').click()
+  await openTerminal(page)
   await expect(page.getByTestId('terminal-pane')).toContainText('minmo mock terminal')
 })
 
 /** 터미널(PTY)로 간 입력 전체 */
 const sent = (page: Page) => page.evaluate(() => window.__MINMO_MOCK__!.ptyWrites)
 const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText())
+
+test('이슈를 고르기만 해서는 터미널이 뜨지 않는다 · Ctrl+T 로 열고, 다시 누르면 새 패널(^T 는 보내지 않는다)', async ({ page }) => {
+  // 다른 이슈(기타)를 고른다 — 작업 폴더는 준비되지만 터미널은 만들지 않는다
+  await page.getByTestId('issue-row-etc').click()
+  await expect(page.getByTestId('issue-branch')).toBeVisible()
+  await expect(page.getByRole('button', { name: '터미널 열기' })).toBeVisible()
+  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(0)
+  // 만든 터미널은 #42 의 하나뿐이다
+  await expect(page.getByTestId('terminal-pane')).toHaveCount(1)
+
+  // 포커스가 터미널 밖에 있어도 Ctrl+T 로 연다
+  await page.keyboard.press('Control+t')
+  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(1)
+  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toContainText('minmo mock terminal')
+  // 터미널 안에서 다시 누르면 오른쪽에 새 패널
+  await page.locator('[data-testid="terminal-pane"]:visible').getByLabel('터미널 입력').focus()
+  await page.keyboard.press('Control+t')
+  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(2)
+  expect(await sent(page)).toEqual([])
+
+  // 먼저 연 이슈(#42)의 터미널은 그대로다
+  await page.getByTestId('issue-row-42').click()
+  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(1)
+})
 
 test('Ctrl+V · Ctrl+Shift+V 로 클립보드 내용을 한 번만 붙여 넣는다(^V 는 보내지 않는다)', async ({ page }) => {
   await page.evaluate(() => navigator.clipboard.writeText('echo pasted-by-ctrl-v'))
@@ -76,6 +101,7 @@ test('Ctrl + / Ctrl - / Ctrl 0 으로 터미널과 파일 편집기의 글자 �
   await page.reload()
   await page.getByTestId('issue-row-42').click()
   await page.getByRole('tab', { name: '터미널' }).click()
+  await openTerminal(page)
   await expect(page.getByTestId('terminal-pane')).toContainText('minmo mock terminal')
   await expect.poll(termSize).toBe('14px')
   await page.getByLabel('터미널 입력').focus()

@@ -55,6 +55,9 @@ export function applySharedUi(value: unknown) {
         panes[id] = { tree, seq: p.seq, focused: focused !== null && leafIds(tree).includes(focused) ? focused : null }
       }
       next.panes = panes
+      // 다른 기기가 패널 구성을 지운 이슈(작업 폴더 삭제 등)는 터미널 시작 표시도 지운다 — 지워진 폴더에서 셸을 다시 띄우지 않게
+      const started = Object.keys(s.startedTerminals).filter((id) => id in panes)
+      if (started.length !== Object.keys(s.startedTerminals).length) next.startedTerminals = Object.fromEntries(started.map((id) => [id, true as const]))
     }
     return next
   })
