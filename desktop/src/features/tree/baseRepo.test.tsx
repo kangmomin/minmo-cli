@@ -173,4 +173,37 @@ describe('worktree 서비스에 반영', () => {
     // 보관 폴더는 옆 폴더(_local)가 아니라 그 저장소의 .git 안
     expect(copied).toEqual(['/home/dev/src/app/.git/minmo-local'])
   })
+
+  it('호스트의 기본 폴더가 있으면 메인 clone 과 worktree 를 그 아래에 만든다(다른 호스트의 값은 쓰지 않는다)', async () => {
+    useHostsStore.setState({ probes: { srv: PROBE }, baseDirs: { 'ssh:srv': '/workspace', local: 'D:/ws' } })
+    const host = hostOf('srv', true)
+    const { tauri } = createFakeTauri({
+      sshExec: async (_h, argv) => {
+        // 아직 아무 폴더도 없다 → 새로 clone 한다
+        if (argv[0] === 'test') return fail('', 1)
+        if (argv[0] === 'sh' && argv[1] === '-s') return ok('0')
+        const args = argv[0] === 'git' ? argv.slice(1) : argv
+        if (args.includes('rev-parse') && args.includes('--verify')) return fail('', 1)
+        return ok('')
+      },
+    })
+    const api = createFakeApi({ getEffective: async () => ({ values: { ...DEFAULT_SETTINGS }, sources: {} }) as unknown as Effective })
+    const deps = makeDeps({ tauri, api, github: createFakeGitHub({ defaultBranch: async () => 'main' }) })
+    const Base = makeWrapper(deps)
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <Base>
+        <WorktreeProvider>
+          <HostScope alias="srv">{children}</HostScope>
+        </WorktreeProvider>
+      </Base>
+    )
+    const { result } = renderHook(() => useIssueActions(), { wrapper })
+    await result.current.open({ owner: 'acme', repo: 'app', key: '7', number: 7, title: 'Fix' })
+
+    const id = host.issueId('acme', 'app', '7')
+    await waitFor(() => expect(useSetupStore.getState().open[id]).toMatchObject({ phase: 'ready', path: '/workspace/acme/app/issue--7-fix' }))
+    const gitCalls = tauri.sshExec.mock.calls.map(([, argv]) => argv).filter((a) => a[0] === 'git')
+    expect(gitCalls.find((a) => a.includes('clone'))).toContain('/workspace/acme/app/_main')
+    useHostsStore.setState({ baseDirs: {} })
+  })
 })

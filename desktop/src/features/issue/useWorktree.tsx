@@ -10,15 +10,13 @@ import { useHost, useHostDeps } from '../../app/host'
 import type { Host } from '../../app/host'
 import { fetchEffective } from '../../lib/effective'
 import { GitHubError } from '@minmo/core'
-import { WorktreeError, createWorktreeService } from '@minmo/core'
+import { WorktreeError, baseRepoLocalDir, createWorktreeService } from '@minmo/core'
 import type { DeleteResult, IssueTarget, WorktreeService } from '@minmo/core'
-import { baseRepoOf, useHostsStore } from '../../store/hosts'
+import { baseDirOf, baseRepoOf, useHostsStore } from '../../store/hosts'
 import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { fileDrafts } from '../files/fileDrafts'
 import { uiWorktreePathStore, useUiStore } from '../../store/ui'
-
-const trimSep = (p: string) => p.replace(/[\\/]+$/, '')
 
 /** main 이 이 호스트에 등록된 기준 저장소 폴더인가 — git 이 돌려준 경로(구분자·대소문자가 다를 수 있다)와도 맞게 비교한다 */
 function isBaseRepo(hostId: string, main: string, platform: Platform): boolean {
@@ -56,7 +54,9 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
           return { ...eff, values: { ...eff.values, mainClonePath: base } }
         },
         // 기존 저장소의 옆 폴더는 다른 저장소와 겹칠 수 있어, 보관 폴더를 그 저장소의 .git 안에 둔다
-        localDirFor: (main) => (isBaseRepo(host.id, main, deps.platform) ? `${trimSep(main)}${deps.platform === 'win32' ? '\\' : '/'}.git${deps.platform === 'win32' ? '\\' : '/'}minmo-local` : undefined),
+        localDirFor: (main) => (isBaseRepo(host.id, main, deps.platform) ? baseRepoLocalDir(main, deps.platform) : undefined),
+        // 이 호스트의 기본 폴더 — 설정을 바꾸면 다음에 여는 이슈부터 쓴다
+        baseDir: () => baseDirOf(useHostsStore.getState(), host.id),
         // 로컬 저장소(GitHub 아님)는 물어볼 곳이 없다 — core 가 저장소의 origin/HEAD 나 현재 브랜치로 정한다
         defaultBranch: (o, r) => (isLocalOwner(o) ? Promise.reject(new Error('GitHub 저장소가 아닙니다')) : deps.github.defaultBranch(o, r)),
         // core 는 호스트를 모른다 — 기록·로그의 id 만 이 호스트의 것으로 바꿔 준다

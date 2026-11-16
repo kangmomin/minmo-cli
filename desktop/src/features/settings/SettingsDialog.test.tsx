@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { SettingsInput, SettingsRecord, SettingsScope } from '@minmo/api-client'
 
+import { useHostsStore } from '../../store/hosts'
 import { useSessionStore } from '../../store/session'
 import { apiError, createFakeApi } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
@@ -64,6 +65,39 @@ async function replace(user: ReturnType<typeof userEvent.setup>, el: HTMLElement
 beforeEach(() => {
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online' })
+  useHostsStore.setState({ baseRepos: {}, baseDirs: {} })
+})
+
+describe('호스트별 값(이 PC 에 저장) — 원본 위치·기본 폴더', () => {
+  it('프로젝트 설정에 원본 위치가 보이고 [변경…] 으로 기준 저장소 폴더를 연다', async () => {
+    useHostsStore.setState({ baseRepos: { local: { 'myorg/repo-a': '/src/repo-a' } } })
+    const { user } = setup({ scope: PROJECT })
+    const section = within(await screen.findByTestId('base-repo-section'))
+    expect(section.getByText('원본 위치 (이 PC)')).toBeInTheDocument()
+    expect(section.getByTestId('base-repo-current')).toHaveTextContent('/src/repo-a')
+    await user.click(section.getByRole('button', { name: '변경…' }))
+    expect(await screen.findByRole('dialog', { name: '기준 저장소 폴더 — MyOrg/Repo-A' })).toBeInTheDocument()
+    expect(screen.getByLabelText('저장소 폴더')).toHaveValue('/src/repo-a')
+  })
+
+  it('원본 위치를 정하지 않은 저장소는 메인 clone 경로를 쓴다고 알린다', async () => {
+    setup({ scope: PROJECT })
+    expect(await screen.findByTestId('base-repo-current')).toHaveTextContent('지정 안 함')
+  })
+
+  it('조직 설정에는 원본 위치 구역이 없다', async () => {
+    setup({ scope: ORG })
+    await field('브랜치 템플릿')
+    expect(screen.queryByTestId('base-repo-section')).not.toBeInTheDocument()
+  })
+
+  it('미리보기 경로는 이 호스트의 기본 폴더를 쓴다 — 뿌리를 바꾼 경로 설정에는 쓰지 않는다', async () => {
+    useHostsStore.setState({ baseDirs: { local: '/workspace' } })
+    const { user } = setup({ scope: PROJECT })
+    await waitFor(() => expect(screen.getByTestId('preview-path')).toHaveTextContent('/workspace/MyOrg/Repo-A/issue--42-add-login'))
+    await replace(user, await field('worktree 경로'), '~/work/{repo}/{key}')
+    await waitFor(() => expect(screen.getByTestId('preview-path')).toHaveTextContent('/home/u/work/Repo-A/42'))
+  })
 })
 
 describe('CT-22 행 없는 org/project → 모든 필드 "상속"', () => {

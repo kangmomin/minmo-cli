@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SHARED_CONFLICT, SHARED_PUSH_DELAY_MS, bindShared, merge3 } from '../../lib/sharedState'
 import type { SharedChangedEvent } from '../../lib/tauri'
 import { DEVICE_HEADER, PairError, RemoteConnection, SESSION_PLACEHOLDER, TOKEN_SENTINEL, createRemoteTauri, pairDevice, remoteFetch } from '../../lib/tauri.remote'
+import { useHostsStore } from '../../store/hosts'
 import { useReposStore } from '../../store/repos'
-import { applySharedRepos, applySharedUi, pickSharedUi } from '../../store/shared'
+import { applySharedHosts, applySharedRepos, applySharedUi, pickSharedUi } from '../../store/shared'
 import { useUiStore } from '../../store/ui'
 import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
@@ -412,6 +413,16 @@ describe('store 의 함께 쓰는 부분', () => {
     applySharedRepos({ added: ['a/b', 3], local: 'x' })
     expect(useReposStore.getState().added).toEqual(['a/b'])
     expect(useReposStore.getState().local).toEqual({})
+  })
+
+  it('호스트별 기준 저장소 폴더·기본 폴더: 모양이 맞는 부분만 받고, 기기마다 다른 값(호스트 목록·tmux)은 건드리지 않는다', () => {
+    useHostsStore.setState({ aliases: ['mine'], useTmux: true, baseRepos: { local: { 'a/b': '/old' } }, baseDirs: { local: '/old' } })
+    applySharedHosts(null)
+    applySharedHosts({ baseRepos: 'nope', baseDirs: [] })
+    expect(useHostsStore.getState()).toMatchObject({ baseRepos: { local: { 'a/b': '/old' } }, baseDirs: { local: '/old' } })
+    applySharedHosts({ baseRepos: { 'ssh:srv': { 'a/b': '/src/b' }, bad: { 'a/b': 3 }, worse: 'x' }, baseDirs: { 'ssh:srv': '/workspace', bad: 1 }, aliases: ['theirs'], useTmux: false })
+    expect(useHostsStore.getState()).toMatchObject({ aliases: ['mine'], useTmux: true, baseRepos: { 'ssh:srv': { 'a/b': '/src/b' } }, baseDirs: { 'ssh:srv': '/workspace' } })
+    useHostsStore.setState({ aliases: [], useTmux: false, baseRepos: {}, baseDirs: {} })
   })
 })
 

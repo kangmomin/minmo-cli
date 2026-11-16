@@ -13,9 +13,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../components/ui/dropdown-menu'
 import type { GitHubRepo } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
-import { issueBranchContext, lacksOrigin } from '@minmo/core'
+import { applyBaseDir, issueBranchContext, lacksOrigin } from '@minmo/core'
 import { useHost } from '../../app/host'
-import { baseRepoOf, useHostsStore } from '../../store/hosts'
+import { baseDirOf, baseRepoOf, useHostsStore } from '../../store/hosts'
 import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
@@ -42,6 +42,7 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
   const host = useHost()
   const worktreeId = host.issueId
   const baseRepo = useHostsStore((s) => baseRepoOf(s, host.id, repo.owner, repo.name))
+  const baseDir = useHostsStore((s) => baseDirOf(s, host.id))
   const [baseOpen, setBaseOpen] = useState(false)
   // 로컬 저장소(GitHub 아님): 이슈 대신 앱 안의 작업을 쓰고, 폴더 자체가 기준 저장소다
   const local = isLocalOwner(repo.owner)
@@ -95,14 +96,14 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
           { home, platform },
           { checkEtcConflict: false },
         )
-        const expected = renderPath(v.worktreePath, ctx)
+        const expected = renderPath(applyBaseDir(v.worktreePath, baseDir), ctx)
         if (normalizePath(expected, platform) !== normalizePath(entry.path, platform)) out.add(issue.key)
       } catch {
         // 템플릿 오류는 배지 판단에서 제외
       }
     }
     return out
-  }, [effective.data, entries, repo.owner, repo.name, home, platform])
+  }, [effective.data, entries, repo.owner, repo.name, home, platform, baseDir])
 
   // origin 이 없는 로컬 저장소만 GitHub 에 올릴 수 있다
   const noOrigin = useQuery({

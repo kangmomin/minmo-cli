@@ -1,4 +1,5 @@
-// 함께 쓰는 상태를 호스트와 맞춘다(lib/sharedState.ts) — 저장소 목록, 작업 폴더 위치, 터미널 패널 구성, 에이전트 실행 명령.
+// 함께 쓰는 상태를 호스트와 맞춘다(lib/sharedState.ts) — 저장소 목록, 작업 폴더 위치, 터미널 패널 구성, 에이전트 실행 명령,
+// 호스트별 기준 저장소 폴더·기본 폴더.
 // 테마·글자 크기·지금 보는 이슈·포커스처럼 기기마다 다른 것은 맞추지 않는다.
 import { LAUNCH_KINDS } from '../features/agents/launch'
 import type { LaunchKind } from '../features/agents/launch'
@@ -6,6 +7,8 @@ import { leafIds } from '../features/terminal/panes'
 import type { PaneNode } from '../features/terminal/panes'
 import { bindShared } from '../lib/sharedState'
 import type { TauriApi } from '../lib/tauri'
+import { useHostsStore } from './hosts'
+import type { HostsState } from './hosts'
 import { useReposStore } from './repos'
 import type { ReposState } from './repos'
 import { useSetupStore } from './setup'
@@ -14,6 +17,8 @@ import { useUiStore } from './ui'
 import type { IssuePanes, UiState } from './ui'
 
 type SharedRepos = Pick<ReposState, 'added' | 'local'>
+/** 작업 호스트 목록·지금 고른 호스트·tmux 사용은 기기마다 다르므로 뺀다 */
+type SharedHosts = Pick<HostsState, 'baseRepos' | 'baseDirs'>
 type SharedUi = {
   worktreePathMap: UiState['worktreePathMap']
   agentCommands: UiState['agentCommands']
@@ -83,6 +88,17 @@ export function applySharedRepos(value: unknown) {
   useReposStore.setState(next)
 }
 
+const isStringMap = (v: unknown): v is Record<string, string> => isRecord(v) && Object.values(v).every((x) => typeof x === 'string')
+
+/** 호스트별 기준 저장소 폴더·기본 폴더 — 모양이 맞는 부분만 받는다(잘못된 값이 경로로 쓰이지 않게) */
+export function applySharedHosts(value: unknown) {
+  if (!isRecord(value)) return
+  const next: Partial<SharedHosts> = {}
+  if (isRecord(value.baseRepos)) next.baseRepos = Object.fromEntries(Object.entries(value.baseRepos).filter((e): e is [string, Record<string, string>] => isStringMap(e[1])))
+  if (isRecord(value.baseDirs)) next.baseDirs = Object.fromEntries(Object.entries(value.baseDirs).filter((e): e is [string, string] => typeof e[1] === 'string'))
+  useHostsStore.setState(next)
+}
+
 /** 앱이 뜬 뒤 한 번 묶는다. 푸는 함수를 돌려준다 */
 export function bindSharedStores(tauri: Pick<TauriApi, 'sharedGet' | 'sharedSet' | 'onSharedChanged'>): () => void {
   const stops = [
@@ -94,6 +110,15 @@ export function bindSharedStores(tauri: Pick<TauriApi, 'sharedGet' | 'sharedSet'
       },
       apply: applySharedRepos,
       subscribe: (cb) => useReposStore.subscribe(cb),
+    }),
+    bindShared<SharedHosts>(tauri, {
+      key: 'hosts',
+      pick: () => {
+        const s = useHostsStore.getState()
+        return { baseRepos: s.baseRepos, baseDirs: s.baseDirs }
+      },
+      apply: applySharedHosts,
+      subscribe: (cb) => useHostsStore.subscribe(cb),
     }),
     bindShared<SharedUi>(tauri, {
       key: 'ui',
