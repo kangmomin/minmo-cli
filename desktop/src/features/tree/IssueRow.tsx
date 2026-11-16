@@ -40,7 +40,7 @@ function countText(label: string, n: number | null) {
   )
 }
 
-/** 이슈 행: 클릭 = 열기, ● = 로컬 worktree 있음, 닫힘·경로 변경 배지, 컨텍스트 메뉴 "worktree 삭제" */
+/** 이슈 행: 클릭 = 열기, 왼쪽 점 = 에이전트 상태, 닫힘·경로 변경 배지, 컨텍스트 메뉴 "worktree 삭제" */
 export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged, selected }: IssueRowProps) {
   const actions = useIssueActions()
   const isEtc = issue.key === 'etc'
@@ -77,6 +77,8 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
           <button
             type="button"
             data-testid={`issue-row-${issue.key}`}
+            // worktree 유무는 화면에 표시하지 않는다 — 테스트가 읽는 값이다
+            data-worktree={hasWorktree ? 'true' : undefined}
             aria-current={selected ? 'true' : undefined}
             aria-describedby={pathChanged ? pathChangedId : undefined}
             onClick={() => void actions.open(target)}
@@ -86,16 +88,10 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
               issue.state === 'closed' && 'text-muted-foreground',
             )}
           >
-            {/* ● 기호 자체는 읽지 않고 의미만 이름으로 전달한다(AX-05) */}
-            {hasWorktree ? (
-              <span role="img" aria-label="worktree 있음" className="w-2 text-center text-xs text-emerald-600 dark:text-emerald-400">
-                ●
-              </span>
-            ) : (
-              <span aria-hidden="true" className="w-2 text-center text-xs text-transparent">
-                ●
-              </span>
-            )}
+            {/* 에이전트가 없어도 칸의 폭은 유지한다 — 행마다 제목의 시작 위치가 같아야 한다 */}
+            <span className="flex w-2 shrink-0 justify-center">
+              <IssueAgentDot issueId={issueId} />
+            </span>
             {isEtc ? (
               <>
                 <StarIcon className="size-3.5 fill-amber-400 text-amber-500" />
@@ -107,7 +103,6 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
                 <span className="min-w-0 flex-1 truncate">{issue.title}</span>
               </>
             )}
-            <IssueAgentDot issueId={issueId} />
             {issue.state === 'closed' && <Badge variant="secondary">닫힘</Badge>}
             {pathChanged && (
               <Tooltip>

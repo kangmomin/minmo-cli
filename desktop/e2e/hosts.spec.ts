@@ -23,7 +23,7 @@ test('호스트를 추가해 전환하고 원격에서 이슈를 연다 — work
   await page.getByTestId('issue-row-42').click()
   await expect(page.getByTestId('issue-host')).toHaveText('mock-server')
   await expect(page.getByTestId('issue-branch')).toHaveText('feat/42')
-  await expect(page.getByTestId('issue-row-42').getByLabel('worktree 있음')).toBeVisible()
+  await expect(page.getByTestId('issue-row-42')).toHaveAttribute('data-worktree', 'true')
   // 원격 터미널은 기본으로 일반 로그인 셸이다(tmux 가 있는 호스트여도)
   await expect(page.getByTestId('terminal-pane')).toContainText(/mock-server:/)
   await expect(page.getByTestId('terminal-pane')).not.toContainText('[tmux')
@@ -31,7 +31,7 @@ test('호스트를 추가해 전환하고 원격에서 이슈를 연다 — work
   // 이 PC 로 바꾸면 원격 worktree 는 표시되지 않고, 열어 둔 원격 이슈는 그대로 남는다
   await page.getByRole('combobox', { name: '작업 호스트' }).selectOption('')
   await expect(page.getByTestId('issue-row-42')).toBeVisible()
-  await expect(page.getByTestId('issue-row-42').getByLabel('worktree 있음')).toHaveCount(0)
+  await expect(page.getByTestId('issue-row-42')).not.toHaveAttribute('data-worktree', 'true')
   await expect(page.getByTestId('issue-host')).toHaveText('mock-server')
 })
 

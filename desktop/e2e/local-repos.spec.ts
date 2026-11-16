@@ -45,7 +45,7 @@ test('새 프로젝트 → 로컬 저장소로 보이고, 작업을 추가해 �
   await expect(page.getByTestId('issue-branch')).toHaveText('feat/1')
   // 저장소 이름 자리에는 내부 id(_local/…)가 아니라 폴더명이 보인다
   await expect(page.getByTestId('issue-header').locator('span').first()).toHaveText('my-app')
-  await expect(page.getByTestId('issue-row-1').getByLabel('worktree 있음')).toBeVisible()
+  await expect(page.getByTestId('issue-row-1')).toHaveAttribute('data-worktree', 'true')
   // origin 이 없는 저장소: fetch 하지 않고 로컬 브랜치에서 만든다
   const after = await page.evaluate(() => window.__MINMO_MOCK__!.gitCalls)
   expect(after.some((a) => a.includes('fetch') || a.includes('clone'))).toBe(false)
@@ -132,7 +132,7 @@ test('GitHub 에 올리기 → 저장소·이슈를 만들고 GitHub 저장소�
   await expect(repo).toBeVisible()
   await expect(repo.getByTestId('base-repo-badge')).toBeVisible()
   await expect(page.getByTestId('issue-row-1')).toContainText('첫 작업')
-  await expect(page.getByTestId('issue-row-1').getByLabel('worktree 있음')).toBeVisible()
+  await expect(page.getByTestId('issue-row-1')).toHaveAttribute('data-worktree', 'true')
   // 닫은 작업은 닫힌 이슈가 되어(작업 폴더 없음) 숨는다
   await expect(page.getByTestId('issue-row-2')).toHaveCount(0)
 })
