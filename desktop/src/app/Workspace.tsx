@@ -8,6 +8,7 @@ import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { AgentsButton, AgentsOverview, useLocalRows } from '../features/agents/AgentsOverview'
+import { useNotifyClick } from '../features/agents/navigate'
 import { useAgentTracker } from '../features/agents/useAgentTracker'
 import { useDeepLinkOpen } from '../features/remote/deepLink'
 import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
@@ -66,6 +67,8 @@ export function Workspace() {
   useDeepLinkOpen()
   // 열어 둔 모든 터미널의 에이전트 상태를 추적한다(이슈 행·패널·현황·알림)
   useAgentTracker()
+  // 그 알림을 누르면 해당 터미널로 간다
+  useNotifyClick()
   const connection = useHostConnection()
 
   const selectedPreview: PreviewIssue | null = target ?? null

@@ -79,7 +79,7 @@ export function useAgentTracker() {
       if (event && next && next.agent !== 'other' && useUiStore.getState().agentNotify) {
         const target = useSetupStore.getState().targets[issueId]
         const where = target ? `${target.repo} ${target.number === null ? '기타' : `#${target.number} ${target.title}`}` : issueId
-        void tauri.notify(`${AGENT_LABEL[next.agent]} — ${STATUS_LABEL[event]}`, where).catch(() => undefined)
+        void tauri.notify(`${AGENT_LABEL[next.agent]} — ${STATUS_LABEL[event]}`, where, { kind: 'local', issueId, paneId }).catch(() => undefined)
       }
     }
 

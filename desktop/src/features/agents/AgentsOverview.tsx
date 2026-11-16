@@ -19,6 +19,7 @@ import { STATUS_LABEL, STATUS_ORDER, useAgentStore } from './agentStore'
 import type { AgentStatus } from './agentStore'
 import { AGENT_LABEL } from './detect'
 import type { AgentKind } from './detect'
+import { goToPane } from './navigate'
 import { GROUP_LABEL, SORT_LABEL, ago, filterRows, groupRows, rowKey, sortRows, toRows } from './overview'
 import type { AgentRow } from './overview'
 import type { Subagent } from './subagents'
@@ -144,10 +145,7 @@ function OverviewBody({ onDone }: { onDone(): void }) {
       void tauri.peerOpen(row.peer.id, row.target ? { target: row.target, paneId: row.paneId } : undefined).catch(() => undefined)
       return onDone()
     }
-    const ui = useUiStore.getState()
-    ui.selectIssue(row.issueId)
-    ui.setTab('terminal')
-    ui.focusPane(row.issueId, row.paneId)
+    goToPane(row.issueId, row.paneId)
     onDone()
   }
 

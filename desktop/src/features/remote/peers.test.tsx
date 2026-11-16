@@ -100,7 +100,7 @@ describe('usePeerAgents: 등록한 PC 에 붙어 현황을 받는다', () => {
 
     act(() => c.emit('agents-changed', [raw({ status: 'done' })]))
     expect(usePeerAgentsStore.getState().rows.p1[0].status).toBe('done')
-    expect(fake.tauri.notify).toHaveBeenCalledWith('회사 PC: Claude Code — 끝남', 'acme/app #42 Add login')
+    expect(fake.tauri.notify).toHaveBeenCalledWith('회사 PC: Claude Code — 끝남', 'acme/app #42 Add login', { kind: 'peer', peerId: 'p1', paneId: 'acme/app#42::1', target: TARGET })
     // 알림을 꺼 두었으면 알리지 않는다
     useUiStore.setState({ agentNotify: false })
     act(() => c.emit('agents-changed', [raw({ status: 'working' })]))

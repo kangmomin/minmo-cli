@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 브라우저 열기 등은 window.__MINMO_MOCK__ 로 노출해 E2E 가 확인한다.
-import type { CloseAction, CmdResult, DirEntry, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus, TailscaleLogEvent, TailscaleStatus } from './tauri'
+import type { CloseAction, CmdResult, DirEntry, NotifyTarget, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus, TailscaleLogEvent, TailscaleStatus } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -39,6 +39,8 @@ export interface MinmoMockHandle {
   setSubagents(cwd: string, files: SubagentFile[]): void
   /** notify 로 띄운 알림 */
   notifications: { title: string; body: string }[]
+  /** n 번째(1부터)로 띄운 알림을 누른 것처럼 알린다 */
+  clickNotification(n: number): void
   /** Tailscale 상태를 정한다(기본: 설치 안 됨) */
   setTailscale(patch: Partial<TailscaleStatus>): void
   /** 다음 [HTTPS 로 열기] 가 "tailnet 에서 먼저 켜야 한다"고 답하게 한다 */
@@ -150,6 +152,9 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   let ptySeq = 0
   const cancelled = new Set<string>()
   const closeListeners = new Set<() => void>()
+  // notifications 와 같은 순서 — 갈 곳 없이 띄운 알림은 null
+  const notifyTargets: (NotifyTarget | null)[] = []
+  const notifyClickListeners = new Set<(target: NotifyTarget) => void>()
   const serverListeners = new Set<(s: ServerStatus) => void>()
   let serverStatus: ServerStatus = { state: 'running', port: mockServerPort(), message: null }
   const server = { port: serverStatus.port, closeAction: 'ask' as CloseAction }
@@ -190,6 +195,10 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     setPtyProcesses: (n, names) => void ptyProcs.set(`mock-pty-${n}`, names),
     setSubagents: (cwd, files) => void subagents.set(cwd, files),
     notifications: [],
+    clickNotification: (n) => {
+      const target = notifyTargets[n - 1]
+      if (target) for (const l of [...notifyClickListeners]) l(target)
+    },
     setTailscale: (patch) => {
       tailscale = { ...tailscale, ...patch }
     },
@@ -387,9 +396,17 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     },
     ptyProcesses: async (id) => ptyProcs.get(id) ?? [],
     claudeSubagents: async (cwd) => subagents.get(cwd) ?? [],
-    notify: async (title, body) => {
+    notify: async (title, body, target) => {
       handle.notifications.push({ title, body })
+      notifyTargets.push(target ?? null)
     },
+    onNotifyClick: async (cb) => {
+      notifyClickListeners.add(cb)
+      return () => {
+        notifyClickListeners.delete(cb)
+      }
+    },
+    appShow: async () => {},
     ptyKill: async (id) => {
       ptyCwd.delete(id)
     },

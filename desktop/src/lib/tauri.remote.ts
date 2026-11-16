@@ -1,6 +1,6 @@
 // 원격 화면용 TauriApi — 다른 PC·휴대폰의 브라우저가 호스트(minmo 데스크톱 앱, src-tauri/src/remote.rs)에 붙어
 // 같은 화면을 쓴다. 호출은 WebSocket 으로 호스트에 보내고, 터미널 출력 같은 이벤트도 그 연결로 받는다.
-import type { TauriApi, Unlisten } from './tauri'
+import type { NotifyTarget, TauriApi, Unlisten } from './tauri'
 import { KEYCHAIN_KEYS, TAURI_EVENTS } from './tauri'
 
 /** GitHub 토큰 자리에 넣어 보내는 표식 — 호스트가 실제 토큰으로 바꾼다(토큰은 호스트 밖으로 나오지 않는다). remote.rs 와 같아야 한다 */
@@ -175,19 +175,31 @@ const hostOnly = (what: string) => async (): Promise<never> => {
  * 여기서 직접 처리하는 것은 이 기기에서 일어나야 하는 일(알림·링크 열기)과 호스트 화면에서만 할 수 있는 일이다.
  */
 export function createRemoteTauri(conn: RemoteConnection): TauriApi {
+  const notifyClicks = new Set<(target: NotifyTarget) => void>()
   const local: Partial<TauriApi> = {
     runtime: 'remote',
     // 세션·GitHub 토큰은 호스트가 갖는다 — 이 기기는 자리 표시만 쓴다
     keychainGet: async (key) => (key === KEYCHAIN_KEYS.session ? SESSION_PLACEHOLDER : key === KEYCHAIN_KEYS.githubToken ? TOKEN_SENTINEL : null),
     keychainSet: async () => undefined,
     keychainDelete: async () => undefined,
-    notify: async (title, body) => {
+    notify: async (title, body, target) => {
       // 브라우저 알림은 HTTPS(또는 localhost)에서만 된다 — 안 되면 조용히 넘어간다
       if (typeof Notification === 'undefined') return
       let permission = Notification.permission
       if (permission === 'default') permission = await Notification.requestPermission().catch(() => 'denied' as const)
-      if (permission === 'granted') new Notification(title, { body })
+      if (permission !== 'granted') return
+      const n = new Notification(title, { body })
+      if (target)
+        n.onclick = () => {
+          window.focus()
+          for (const cb of [...notifyClicks]) cb(target)
+        }
     },
+    onNotifyClick: async (cb) => {
+      notifyClicks.add(cb)
+      return () => void notifyClicks.delete(cb)
+    },
+    appShow: async () => window.focus(),
     openUrl: async (url) => {
       window.open(url, '_blank', 'noopener,noreferrer')
     },

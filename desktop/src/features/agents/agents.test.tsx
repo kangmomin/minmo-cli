@@ -377,7 +377,7 @@ describe('추적기(useAgentTracker)', () => {
     expect(t.tauri.notify).not.toHaveBeenCalled()
     t.out(osc('✳ 로그인 수정'))
     expect(statusOf(t.pane())).toBe('done')
-    expect(t.tauri.notify).toHaveBeenCalledWith('Claude Code — 끝남', 'app #1 로그인')
+    expect(t.tauri.notify).toHaveBeenCalledWith('Claude Code — 끝남', 'app #1 로그인', { kind: 'local', issueId: ISSUE, paneId: PANE })
     // 그 터미널을 보면 "대기 중"으로
     useUiStore.setState({ selectedIssueId: ISSUE, tab: 'terminal' })
     vi.spyOn(document, 'hasFocus').mockReturnValue(true)
@@ -414,7 +414,7 @@ describe('추적기(useAgentTracker)', () => {
     expect(t.pane().activity).toBe('working')
     await t.tick(QUIET_MS + 1000)
     expect(statusOf(t.pane())).toBe('done')
-    expect(t.tauri.notify).toHaveBeenCalledWith('Codex — 끝남', 'app #1 로그인')
+    expect(t.tauri.notify).toHaveBeenCalledWith('Codex — 끝남', 'app #1 로그인', { kind: 'local', issueId: ISSUE, paneId: PANE })
   })
 
   it('에이전트가 끝나 셸만 남으면 제목이 남아 있어도 현황에서 뺀다', async () => {
@@ -446,7 +446,7 @@ describe('추적기(useAgentTracker)', () => {
     await t.tick(DONE_BELL_MS + 500)
     t.out('\x07') // 한참 뒤의 벨 = 확인 요청
     expect(statusOf(t.pane())).toBe('attention')
-    expect(t.tauri.notify).toHaveBeenLastCalledWith('Claude Code — 입력 대기', 'app #1 로그인')
+    expect(t.tauri.notify).toHaveBeenLastCalledWith('Claude Code — 입력 대기', 'app #1 로그인', { kind: 'local', issueId: ISSUE, paneId: PANE })
     // 다시 작업을 시작하면 벨은 지난 일 — 끝나면 "끝남"
     t.out(osc('◐ x'))
     t.out(osc('✳ x'))

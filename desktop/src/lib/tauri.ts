@@ -57,6 +57,22 @@ export type Peer = { id: string; name: string; url: string; token: string | null
 export type PeerInput = { url: string; code: string; name: string }
 /** 그 PC 의 화면에서 바로 보여 줄 이슈·터미널 패널 */
 export type PeerOpen = { target: IssueTarget; paneId: string | null }
+/** 알림을 눌렀을 때 갈 곳 — 이 PC 의 터미널 패널, 또는 다른 PC 의 패널 */
+export type NotifyTarget = { kind: 'local'; issueId: string; paneId: string } | { kind: 'peer'; peerId: string; paneId: string; target: IssueTarget | null }
+
+/** 알림에 실어 둔 값을 되읽는다 — OS 를 거쳐 돌아오므로 모양이 맞을 때만 쓴다 */
+export function parseNotifyTarget(raw: unknown): NotifyTarget | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.paneId !== 'string') return null
+  if (o.kind === 'local' && typeof o.issueId === 'string') return { kind: 'local', issueId: o.issueId, paneId: o.paneId }
+  if (o.kind === 'peer' && typeof o.peerId === 'string') {
+    const t = o.target as Record<string, unknown> | null | undefined
+    const target = typeof t === 'object' && t !== null && typeof t.owner === 'string' && typeof t.repo === 'string' ? (t as unknown as IssueTarget) : null
+    return { kind: 'peer', peerId: o.peerId, paneId: o.paneId, target }
+  }
+  return null
+}
 /** Tailscale 설치·로그인·HTTPS 도우미(src-tauri/src/tailscale.rs). unavailable = 설치는 됐지만 서비스가 답하지 않음 */
 export type TailscaleState = 'missing' | 'needs-login' | 'needs-approval' | 'stopped' | 'starting' | 'running' | 'unknown' | 'unavailable'
 /** command 는 화면에 그대로 보여 주는 설치 명령, auto 면 앱이 그 명령을 대신 실행할 수 있다 */
@@ -227,7 +243,11 @@ export interface TauriApi extends WorktreeHost, GhHost {
    */
   claudeSubagents(cwd: string, sinceMs: number): Promise<SubagentFile[]>
   /** OS 알림을 띄운다(권한이 없으면 조용히 넘어간다) */
-  notify(title: string, body: string): Promise<void>
+  notify(title: string, body: string, target?: NotifyTarget): Promise<void>
+  /** 사용자가 알림을 눌렀다(target 을 실어 보낸 알림만) */
+  onNotifyClick(cb: (target: NotifyTarget) => void): Promise<Unlisten>
+  /** 메인 창을 앞으로 가져온다(트레이로 숨겼거나 최소화했어도) */
+  appShow(): Promise<void>
   /** opener: 외부 브라우저로 URL 열기 */
   openUrl(url: string): Promise<void>
   /** 이 PC 의 폴더 선택 창. 취소하면 null (원격 호스트의 폴더는 고를 수 없다) */
@@ -302,6 +322,7 @@ export const TAURI_COMMANDS = {
   serverRestart: 'server_restart',
   serverOpenLogDir: 'server_open_log_dir',
   appClose: 'app_close',
+  appShow: 'app_show',
   appUpdateCheck: 'app_update_check',
   appUpdateInstall: 'app_update_install',
   ptyFind: 'pty_find',
@@ -427,12 +448,24 @@ export function createTauriApi(): TauriApi {
 
     ptyProcesses: (id) => call(C.ptyProcesses, { id }),
     claudeSubagents: (cwd, sinceMs) => call(C.claudeSubagents, { cwd, sinceMs: Math.max(0, Math.floor(sinceMs)) }),
-    notify: async (title, body) => {
+    notify: async (title, body, target) => {
       const n = await import('@tauri-apps/plugin-notification')
       let granted = await n.isPermissionGranted()
       if (!granted) granted = (await n.requestPermission()) === 'granted'
-      if (granted) n.sendNotification({ title, body })
+      // target 은 extra 에 실어 둔다 — 눌렀을 때 플러그인이 그대로 돌려준다
+      if (granted) n.sendNotification({ title, body, ...(target ? { extra: target } : {}) })
     },
+    // 플러그인은 듣는 쪽이 있을 때 띄운 알림의 클릭만 알려 준다 — 앱이 뜰 때 한 번 등록해 둔다
+    onNotifyClick: async (cb) => {
+      const n = await import('@tauri-apps/plugin-notification')
+      const listener = await n.onAction((e) => {
+        // tap = 알림 자체를 누름(버튼은 쓰지 않는다)
+        const target = e.actionId === 'tap' ? parseNotifyTarget(e.notification?.extra) : null
+        if (target) cb(target)
+      })
+      return () => void listener.unregister()
+    },
+    appShow: () => call(C.appShow),
     openUrl: async (url) => (await import('@tauri-apps/plugin-opener')).openUrl(url),
     pickFolder: async (defaultPath) => {
       const picked = await (await import('@tauri-apps/plugin-dialog')).open({ directory: true, multiple: false, ...(defaultPath ? { defaultPath } : {}) })

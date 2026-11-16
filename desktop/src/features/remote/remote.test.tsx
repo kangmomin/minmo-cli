@@ -218,7 +218,7 @@ describe('runRemoteCall: 붙은 기기의 호출을 이 PC 의 화면이 대신 
 
   it('이 PC 전용 호출과 없는 이름은 실행하지 않는다', async () => {
     const fake = createFakeTauri()
-    for (const m of ['keychainGet', 'serverSettingsSave', 'appClose', 'appUpdateInstall', 'remoteConfigure', 'remoteRpcReply', 'openUrl', 'openDir', 'pickFolder', 'notify', 'sshHostSave', 'onPtyData', 'runtime', 'nope', 'constructor']) {
+    for (const m of ['keychainGet', 'serverSettingsSave', 'appClose', 'appUpdateInstall', 'remoteConfigure', 'remoteRpcReply', 'openUrl', 'openDir', 'pickFolder', 'notify', 'onNotifyClick', 'appShow', 'sshHostSave', 'onPtyData', 'runtime', 'nope', 'constructor']) {
       await expect(runRemoteCall(fake.tauri, m, ['minmo.session'])).rejects.toThrow('원격에서 쓸 수 없는')
     }
     expect(fake.tauri.keychainGet).not.toHaveBeenCalled()

@@ -110,6 +110,7 @@ pub fn run() {
             server::server_restart,
             server::server_open_log_dir,
             shell::app_close,
+            shell::app_show,
             update::app_update_check,
             update::app_update_install,
             remote::remote_status,
