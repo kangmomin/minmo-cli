@@ -94,7 +94,7 @@ describe('TUI', () => {
     ui.unmount()
   })
 
-  it('t 는 tmux 로 넘기고(onExit attach, 상태 보존), q 는 종료', async () => {
+  it('t 는 터미널로 넘기고(onExit attach, 상태 보존), q 는 종료', async () => {
     const ctx = await createTestCtx()
     ctx.state.worktrees[worktreeId('octocat', 'dotfiles', 'etc')] = { path: '/ws/octocat/dotfiles/etc', branch: 'etc' }
     let result: ExitResult | null = null

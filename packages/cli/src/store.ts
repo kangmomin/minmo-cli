@@ -51,7 +51,10 @@ export type LocalSettings = {
   visibleRepos?: string[] | null
 }
 
-export type Config = { mode: Mode; local: LocalSettings }
+/** worktree 터미널 방식 — shell: 일반 셸(기본) · tmux: 전용 tmux 세션(Linux·macOS, 접속이 끊겨도 유지) */
+export type TerminalMode = 'shell' | 'tmux'
+
+export type Config = { mode: Mode; terminal: TerminalMode; local: LocalSettings }
 
 /** 서버 모드에서 받은 값 — 로컬 모드의 기본값이 된다 */
 export type ServerCopy = {
@@ -102,7 +105,7 @@ export async function loadState(p: Paths): Promise<State> {
 }
 
 export async function loadConfig(p: Paths): Promise<Config> {
-  let c: ({ mode?: unknown; local?: Partial<LocalSettings> } & Record<string, unknown>) | null
+  let c: ({ mode?: unknown; terminal?: unknown; local?: Partial<LocalSettings> } & Record<string, unknown>) | null
   try {
     c = await readJson(p.config)
   } catch (e) {
@@ -113,7 +116,7 @@ export async function loadConfig(p: Paths): Promise<Config> {
   const local: LocalSettings = { global: l.global ?? {}, orgs: l.orgs ?? {}, projects: l.projects ?? {} }
   if (l.visibleRepos !== undefined) local.visibleRepos = l.visibleRepos
   // 모르는 키는 그대로 둔다(다시 쓸 때 지우지 않게)
-  return { ...c, mode: c?.mode === 'local' ? 'local' : 'server', local }
+  return { ...c, mode: c?.mode === 'local' ? 'local' : 'server', terminal: c?.terminal === 'tmux' ? 'tmux' : 'shell', local }
 }
 
 let writes: Promise<void> = Promise.resolve()
@@ -140,7 +143,11 @@ export const updateConfig = (p: Paths, config: Config, change: (c: Config) => vo
 export async function reloadState(p: Paths, state: State, config?: Config): Promise<void> {
   await writes
   Object.assign(state, await loadState(p))
-  if (config) config.local = (await loadConfig(p)).local
+  if (config) {
+    const fresh = await loadConfig(p)
+    config.local = fresh.local
+    config.terminal = fresh.terminal
+  }
 }
 
 /** worktree 서비스용 경로 저장소 — 바뀔 때마다 파일에 쓴다 */

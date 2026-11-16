@@ -15,6 +15,9 @@ import { NOTES_SERVER_ONLY } from '../errors'
 import { openTerminal, terminalAvailable } from '../host/terminal'
 import { parseRef, resolveTarget } from '../refs'
 
+/** tmux 방식인데 tmux 가 없을 때의 안내 */
+export const NO_TMUX = 'tmux 가 없어 터미널을 열 수 없습니다(일반 셸로 바꾸려면 `minmo terminal shell`)'
+
 /** 보일 저장소 선택(모드에 따라 서버 값 또는 로컬 값·서버 사본) */
 export async function loadSelection(ctx: Ctx): Promise<RepoSelection> {
   return (await ctx.data.getSelection()).repos
@@ -107,11 +110,12 @@ export async function openIssue(ctx: Ctx, refText: string, opts: { attach: boole
   if (res.pathChanged) ctx.out.log('  (설정의 worktree 경로가 바뀌었지만 기존 위치를 그대로 씁니다)')
   if (res.script.status === 'failed') ctx.out.log(`  생성 후 스크립트 실패(종료 코드 ${res.script.exitCode ?? '?'}) — worktree 는 그대로입니다`)
   if (!opts.attach) return
-  if (!(await terminalAvailable())) {
-    ctx.out.log(`tmux 가 없어 터미널을 열 수 없습니다 — cd ${res.path}`)
+  const mode = ctx.config.terminal
+  if (!(await terminalAvailable(mode))) {
+    ctx.out.log(`${NO_TMUX} — cd ${res.path}`)
     return
   }
-  await openTerminal(res.path, `${target.repo}#${target.key}`)
+  await openTerminal(res.path, `${target.repo}#${target.key}`, { mode })
 }
 
 async function confirm(question: string): Promise<boolean> {

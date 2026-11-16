@@ -27,6 +27,7 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
   const setTab = useUiStore((s) => s.setTab)
   const open = useSetupStore((s) => s.open)
   const probes = useHostsStore((s) => s.probes)
+  const useTmux = useHostsStore((s) => s.useTmux)
   const id = useHost().issueId(target.owner, target.repo, target.key)
   const terminalTrigger = useRef<HTMLButtonElement>(null)
 
@@ -36,9 +37,9 @@ export function WorkTabs({ target, state }: WorkTabsProps) {
         if (s.phase !== 'ready') return []
         // 다른 호스트의 이슈도 세션을 유지한다 — 원격이면 그 호스트로 ssh 터미널을 연다
         const alias = aliasOfIssue(issueId)
-        return [{ issueId, cwd: s.path, remote: alias === null ? undefined : { host: alias, tmux: probes[alias]?.tmux ?? false } }]
+        return [{ issueId, cwd: s.path, remote: alias === null ? undefined : { host: alias, tmux: useTmux && (probes[alias]?.tmux ?? false) } }]
       }),
-    [open, probes],
+    [open, probes, useTmux],
   )
   const hasSession = sessions.some((s) => s.issueId === id)
 
