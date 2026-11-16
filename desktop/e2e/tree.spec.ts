@@ -28,7 +28,7 @@ test('이슈 열기 → 상단 바에 브랜치 표시(effective branchTemplate 
   await expandWidgets(page)
   await page.getByTestId('issue-row-42').click()
   await expect(page.getByTestId('issue-branch')).toHaveText('feat/42')
-  await expect(page.getByTestId('issue-row-42').getByLabel('worktree 있음')).toBeVisible()
+  await expect(page.getByTestId('issue-row-42')).toHaveAttribute('data-worktree', 'true')
 })
 
 test('새로고침 버튼 → 트리 재조회', async ({ page }) => {

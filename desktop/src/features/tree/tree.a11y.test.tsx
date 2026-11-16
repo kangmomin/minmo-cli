@@ -151,11 +151,13 @@ function renderRow(issue: TreeIssue, o: { hasWorktree?: boolean; pathChanged?: b
   )
 }
 
-describe('AX-05 ● 인디케이터 · 경로 변경 배지 설명', () => {
-  it('● 는 role=img + 이름 "worktree 있음"(시각 기호는 이름에 섞이지 않는다)', () => {
+describe('AX-05 worktree 표시 · 경로 변경 배지 설명', () => {
+  it('worktree 유무는 화면에 표시하지 않는다(data-worktree 속성만)', () => {
     renderRow(ISSUE, { hasWorktree: true })
     const row = screen.getByTestId('issue-row-42')
-    expect(within(row).getByRole('img', { name: 'worktree 있음' })).toBeInTheDocument()
+    expect(row).toHaveAttribute('data-worktree', 'true')
+    expect(within(row).queryByRole('img')).not.toBeInTheDocument()
+    expect(row).not.toHaveTextContent('●')
   })
 
   it('"경로 변경됨" 설명을 스크린 리더도 받는다(aria-describedby)', () => {
