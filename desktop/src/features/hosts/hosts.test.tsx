@@ -24,7 +24,7 @@ const cfg = (alias: string, hostName: string | null = null, user: string | null 
 
 beforeEach(() => {
   localStorage.clear()
-  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: null, error: null })
+  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: null, error: null, useTmux: false })
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online' })
   useUiStore.setState({ expanded: {}, worktreePathMap: {}, selectedIssueId: null })
@@ -283,5 +283,19 @@ describe('HostsDialog', () => {
     expect(row).toHaveTextContent('더 이상 없는 호스트')
     await user.click(within(row).getByRole('button', { name: '빼기' }))
     expect(useHostsStore.getState()).toMatchObject({ aliases: [], selected: null })
+  })
+
+  it('원격 터미널에 tmux 사용: 기본은 꺼짐 · 켜면 이 PC 에 저장한다', async () => {
+    const { tauri } = createFakeTauri({ sshHosts: async () => [] })
+    const user = userEvent.setup()
+    renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri }))
+    const box = await screen.findByRole('checkbox', { name: '원격 터미널에 tmux 사용' })
+    expect(box).not.toBeChecked()
+    expect(box).toHaveAccessibleDescription(/새로 여는\(또는 다시 시작한\) 터미널부터 적용/)
+    await user.click(box)
+    expect(useHostsStore.getState().useTmux).toBe(true)
+    expect(JSON.parse(localStorage.getItem('minmo-hosts')!).state.useTmux).toBe(true)
+    await user.click(box)
+    expect(useHostsStore.getState().useTmux).toBe(false)
   })
 })

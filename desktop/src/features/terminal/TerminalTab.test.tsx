@@ -612,7 +612,7 @@ describe('원격 호스트 터미널', () => {
     expect(fake.tauri.ptySpawn.mock.calls[1][0].remote).toEqual({ host: 'my-server', session: `${first.remote?.session}-p2`, ephemeral: true })
   })
 
-  it('tmux 가 없는 호스트는 로그인 셸 · 세션 목록이 다시 만들어져도 터미널을 새로 띄우지 않는다', async () => {
+  it('tmux 를 쓰지 않으면(설정 꺼짐·tmux 없는 호스트) 로그인 셸 · 세션 목록이 다시 만들어져도 터미널을 새로 띄우지 않는다', async () => {
     const fake = createFakeTauri()
     const plain = { ...R, remote: { host: 'my-server', tmux: false } }
     const r = renderWithDeps(<TerminalTab sessions={[plain]} activeId={R.issueId} visible />, makeDeps({ tauri: fake.tauri }))
@@ -622,6 +622,42 @@ describe('원격 호스트 터미널', () => {
     await flush()
     expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(1)
     expect(fake.tauri.ptyKill).not.toHaveBeenCalled()
+  })
+
+  it('열려 있는 터미널은 tmux 설정이 바뀌어도 다시 띄우지 않는다 — 새로 여는 패널부터 적용', async () => {
+    const fake = createFakeTauri()
+    const plain = { ...R, remote: { host: 'my-server', tmux: false } }
+    const r = renderWithDeps(<TerminalTab sessions={[plain]} activeId={R.issueId} visible />, makeDeps({ tauri: fake.tauri }))
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    r.rerender(<TerminalTab sessions={[R]} activeId={R.issueId} visible />)
+    await flush()
+    expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(1)
+    expect(fake.tauri.ptyKill).not.toHaveBeenCalled()
+    // 설정을 켠 뒤 분할한 패널은 tmux 세션으로 연다
+    act(() => useUiStore.getState().splitPane(R.issueId, `${R.issueId}::1`, 'row'))
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(fake.tauri.ptySpawn.mock.calls[1][0].remote).toMatchObject({ host: 'my-server', ephemeral: true })
+    expect(fake.tauri.ptySpawn.mock.calls[1][0].remote?.session).toMatch(/^minmo-[0-9a-f]{10}-p2$/)
+  })
+
+  it('끝난 터미널을 [다시 시작] 하면 지금 tmux 설정으로 연다', async () => {
+    const fake = createFakeTauri({
+      ptyWrite: async () => {
+        throw new Error('pty gone')
+      },
+    })
+    const plain = { ...R, remote: { host: 'my-server', tmux: false } }
+    const r = renderWithDeps(<TerminalTab sessions={[plain]} activeId={R.issueId} visible />, makeDeps({ tauri: fake.tauri }))
+    await vi.waitFor(() => expect(xterm.instances[0].dataHandler).not.toBeNull())
+    r.rerender(<TerminalTab sessions={[R]} activeId={R.issueId} visible />)
+    await act(async () => {
+      xterm.instances[0].dataHandler?.('ls')
+      await flush()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '다시 시작' }))
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(fake.tauri.ptySpawn.mock.calls[0][0].remote?.session).toBeNull()
+    expect(fake.tauri.ptySpawn.mock.calls[1][0].remote?.session).toMatch(/^minmo-[0-9a-f]{10}$/)
   })
 
   it('이 PC 의 터미널은 remote 없이 연다', async () => {

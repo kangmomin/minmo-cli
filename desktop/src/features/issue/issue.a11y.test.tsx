@@ -7,11 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import { worktreeId } from '@minmo/core'
 import type { IssueTarget } from '@minmo/core'
+import { HostScope } from '../../app/host'
+import { useHostsStore } from '../../store/hosts'
 import { useSessionStore } from '../../store/session'
 import { MAX_LOG_LINES, useSetupStore } from '../../store/setup'
 import type { SetupLogEntry } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
-import { createFakeApi } from '../../test/fakes'
+import { createFakeApi, createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { WorkTabs } from './WorkTabs'
 import { WorktreeSetupLog } from './WorktreeSetupLog'
@@ -285,5 +287,40 @@ describe('CR-13(b) 접었다 다시 펼치면 맨 아래로 스크롤', () => {
     expect(scroll).toHaveBeenLastCalledWith({ block: 'end' })
     const anchor = scroll.mock.contexts.at(-1) as HTMLElement
     expect(anchor.parentElement).toHaveAttribute('id', screen.getByRole('button', { name: '준비 로그' }).getAttribute('aria-controls'))
+  })
+})
+
+describe('원격 터미널 방식(원격 호스트 대화상자의 "원격 터미널에 tmux 사용")', () => {
+  const REMOTE_ID = `ssh:srv|${ID}`
+
+  async function spawnRemote(useTmux: boolean, tmuxOnHost = true) {
+    useHostsStore.setState({ probes: { srv: { platform: 'linux', home: '/home/dev', git: 'git', tmux: tmuxOnHost } }, useTmux })
+    useSetupStore.setState({ open: { [REMOTE_ID]: { phase: 'ready', path: '/home/dev/w/42', branch: 'b', pathChanged: false } } })
+    const fake = createFakeTauri()
+    const r = renderWithDeps(
+      <TooltipProvider>
+        <HostScope alias="srv">
+          <WorktreeProvider>
+            <WorkTabs target={T} state={useSetupStore.getState().open[REMOTE_ID]} />
+          </WorktreeProvider>
+        </HostScope>
+      </TooltipProvider>,
+      makeDeps({ api: createFakeApi({ getNotes: async () => ({ body: '', updatedAt: null }) }), tauri: fake.tauri }),
+    )
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    const remote = fake.tauri.ptySpawn.mock.calls[0][0].remote
+    r.unmount()
+    return remote
+  }
+
+  afterEach(() => useHostsStore.setState({ probes: {}, useTmux: false }))
+
+  it('기본(꺼짐)은 원격에 tmux 가 있어도 일반 로그인 셸로 연다', async () => {
+    expect(await spawnRemote(false)).toEqual({ host: 'srv', session: null, ephemeral: false })
+  })
+
+  it('켜면 전용 tmux 세션에 붙는다 — 원격에 tmux 가 없으면 로그인 셸', async () => {
+    expect((await spawnRemote(true))?.session).toMatch(/^minmo-[0-9a-f]{10}$/)
+    expect(await spawnRemote(true, false)).toEqual({ host: 'srv', session: null, ephemeral: false })
   })
 })

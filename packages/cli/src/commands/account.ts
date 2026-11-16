@@ -7,6 +7,7 @@ import { ApiError } from '@minmo/api-client'
 import { CliError, GITHUB_AUTH_REQUIRED, requireLogin, serverErrorMessage } from '../context'
 import type { Ctx } from '../context'
 import { run } from '../host/proc'
+import { posixShell } from '../host/terminal'
 import { tmuxAvailable } from '../host/tmux'
 import { listProcesses } from '../host/win'
 import { WINDOWS_SERVER_HINT, describeServer } from '../server'
@@ -145,8 +146,13 @@ export async function doctor(ctx: Ctx): Promise<void> {
     const procs = await listProcesses().then((l) => l.length, (e: unknown) => (e instanceof Error ? e.message : String(e)))
     add(typeof procs === 'number', typeof procs === 'number' ? `프로세스 목록(WMI) ${procs}개` : `프로세스 목록을 읽을 수 없음: ${procs}`, typeof procs === 'number' ? undefined : 'worktree 삭제 전 정리에 필요합니다 — PowerShell 의 Get-CimInstance 가 동작하는지 확인하세요')
   } else {
-    const tmux = await tmuxAvailable()
-    add(tmux, tmux ? 'tmux 있음' : 'tmux 없음', tmux ? undefined : '터미널(`minmo open`, TUI 의 t)에 tmux 가 필요합니다')
+    // tmux 는 `minmo terminal tmux` 로 켰을 때만 필요하다
+    if (ctx.config.terminal === 'tmux') {
+      const tmux = await tmuxAvailable()
+      add(tmux, tmux ? '터미널: tmux 있음' : '터미널: tmux 없음', tmux ? undefined : 'tmux 를 설치하거나 `minmo terminal shell` 로 일반 셸을 쓰세요')
+    } else {
+      add(true, `터미널: 일반 셸(${posixShell()})`)
+    }
   }
 
   for (const c of checks) {

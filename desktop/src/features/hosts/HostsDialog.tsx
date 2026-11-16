@@ -23,8 +23,7 @@ export function HostsDialog({ open, onOpenChange }: HostsDialogProps) {
         <DialogHeader>
           <DialogTitle>원격 호스트</DialogTitle>
           <DialogDescription>
-            ssh 로 접속해 그 호스트에서 worktree 를 만들고 터미널·파일을 씁니다. ~/.ssh/config 의 Host 를 고르거나 아래에서 직접 등록하세요. 원격에는 git 이 있어야 하며,
-            tmux 가 있으면 터미널이 연결이 끊겨도 유지됩니다.
+            ssh 로 접속해 그 호스트에서 worktree 를 만들고 터미널·파일을 씁니다. ~/.ssh/config 의 Host 를 고르거나 아래에서 직접 등록하세요. 원격에는 git 이 있어야 합니다.
           </DialogDescription>
         </DialogHeader>
         {open && <HostsBody />}
@@ -35,7 +34,7 @@ export function HostsDialog({ open, onOpenChange }: HostsDialogProps) {
 
 type Check = { state: 'checking' } | { state: 'ok'; probe: SshProbe } | { state: 'error'; text: string; hostKey: boolean }
 
-const probeText = (p: SshProbe) => `${p.platform === 'darwin' ? 'macOS' : 'Linux'} · ${p.git.replace(/^git version /, 'git ')} · ${p.tmux ? 'tmux 있음' : 'tmux 없음(일반 셸)'}`
+const probeText = (p: SshProbe) => `${p.platform === 'darwin' ? 'macOS' : 'Linux'} · ${p.git.replace(/^git version /, 'git ')} · ${p.tmux ? 'tmux 있음' : 'tmux 없음'}`
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 const EMPTY: SshHostInput = { alias: '', hostName: '', user: '', port: 22, identityFile: null }
@@ -45,6 +44,9 @@ function HostsBody() {
   const aliases = useHostsStore((s) => s.aliases)
   const add = useHostsStore((s) => s.add)
   const remove = useHostsStore((s) => s.remove)
+  const useTmux = useHostsStore((s) => s.useTmux)
+  const setUseTmux = useHostsStore((s) => s.setUseTmux)
+  const uid = useId()
   const [hosts, setHosts] = useState<SshHostInfo[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [checks, setChecks] = useState<Record<string, Check>>({})
@@ -177,6 +179,16 @@ function HostsBody() {
           </Button>
         </div>
       )}
+
+      <div className="grid gap-1 border-t pt-3">
+        <label htmlFor={`${uid}-tmux`} className="flex items-center gap-2 text-sm">
+          <input id={`${uid}-tmux`} type="checkbox" checked={useTmux} onChange={(e) => setUseTmux(e.target.checked)} aria-describedby={`${uid}-tmux-hint`} />
+          원격 터미널에 tmux 사용
+        </label>
+        <p id={`${uid}-tmux-hint`} className="text-xs text-muted-foreground">
+          끄면(기본) 일반 로그인 셸로 엽니다. 켜면 tmux 가 있는 호스트에서 앱을 끄거나 연결이 끊겨도 터미널이 유지됩니다. 새로 여는(또는 다시 시작한) 터미널부터 적용됩니다.
+        </p>
+      </div>
     </div>
   )
 }

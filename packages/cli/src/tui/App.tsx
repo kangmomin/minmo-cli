@@ -1,5 +1,5 @@
 // 전체 화면 TUI: 왼쪽 트리(보일 저장소 필터) · 오른쪽 상세(worktree·준비 로그·설정) · 아래 키 안내.
-// tmux·편집기로 넘어갈 때는 화면을 내리고(onExit) 돌아오면 snapshot 으로 같은 상태를 다시 그린다.
+// 터미널·편집기로 넘어갈 때는 화면을 내리고(onExit) 돌아오면 snapshot 으로 같은 상태를 다시 그린다.
 import { Box, Text, useApp, useInput } from 'ink'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -345,7 +345,7 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
       ? `검색: ${search}▏  Enter 적용 · Esc 지우기`
       : mode.kind === 'confirm'
         ? mode.text
-        : `↑↓ 이동 · Enter 열기/준비 · t 터미널(${terminalLabel()}) · n 메모 · d 삭제 · f 보이기/숨기기 · a 숨긴 것 보기 · s 설정 · / 검색 · r 새로고침 · q 종료`
+        : `↑↓ 이동 · Enter 열기/준비 · t 터미널(${terminalLabel(ctx.config.terminal)}) · n 메모 · d 삭제 · f 보이기/숨기기 · a 숨긴 것 보기 · s 설정 · / 검색 · r 새로고침 · q 종료`
 
   return (
     <Box flexDirection="column">

@@ -18,6 +18,7 @@ import { TerminalKeyBar, registerTerminalInput, useNarrow, useTouch } from './Te
 import { layoutPanes, leafIds } from './panes'
 
 /** remote 가 있으면 그 호스트(SSH 프로필)의 cwd 에서 터미널을 연다 */
+/** remote.tmux: 전용 tmux 세션으로 여는가(설정이 켜져 있고 원격에 tmux 가 있을 때) */
 export type TerminalSessionSpec = { issueId: string; cwd: string; remote?: { host: string; tmux: boolean } }
 
 /** 원격 tmux 세션 선택: 이슈의 첫 패널이 기본 세션(앱을 꺼도 유지), 나머지는 패널과 함께 사라지는 세션 */
@@ -224,7 +225,9 @@ function TerminalSession({
   const live = useContext(LiveSessionsContext)
   // 객체가 아니라 값으로 비교해야 세션 목록이 다시 만들어질 때 터미널을 새로 띄우지 않는다
   const remoteHost = spec.remote?.host
-  const remoteTmux = spec.remote?.tmux ?? false
+  // 패널을 처음 열 때의 값으로 고정한다 — 설정(원격 터미널에 tmux 사용)을 바꿔도 돌고 있는 터미널을 다시 띄우지 않게.
+  // 바꾼 값은 새로 여는 터미널과 [다시 시작] 한 터미널부터 쓴다
+  const [remoteTmux, setRemoteTmux] = useState(() => spec.remote?.tmux ?? false)
   const theme = useUiStore((s) => s.theme)
   const fontSize = useUiStore((s) => s.fontSize)
   const focusRequest = useUiStore((s) => s.focusRequest)
@@ -561,6 +564,8 @@ function TerminalSession({
     focusAfterRestart.current = true
     setEnded(false)
     setError(null)
+    // 어차피 새 PTY 를 만드므로 지금 설정을 따른다(예: 연결이 끊겨 tmux 를 켠 뒤 다시 시작)
+    setRemoteTmux(spec.remote?.tmux ?? false)
     setGen((g) => g + 1)
   }
 

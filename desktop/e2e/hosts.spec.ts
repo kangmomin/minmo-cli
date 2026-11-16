@@ -24,14 +24,27 @@ test('호스트를 추가해 전환하고 원격에서 이슈를 연다 — work
   await expect(page.getByTestId('issue-host')).toHaveText('mock-server')
   await expect(page.getByTestId('issue-branch')).toHaveText('feat/42')
   await expect(page.getByTestId('issue-row-42').getByLabel('worktree 있음')).toBeVisible()
-  // 원격 터미널은 그 호스트의 worktree 전용 tmux 세션으로 연다
-  await expect(page.getByTestId('terminal-pane')).toContainText(/mock-server:.*\[tmux minmo-[0-9a-f]{10}\]/)
+  // 원격 터미널은 기본으로 일반 로그인 셸이다(tmux 가 있는 호스트여도)
+  await expect(page.getByTestId('terminal-pane')).toContainText(/mock-server:/)
+  await expect(page.getByTestId('terminal-pane')).not.toContainText('[tmux')
 
   // 이 PC 로 바꾸면 원격 worktree 는 표시되지 않고, 열어 둔 원격 이슈는 그대로 남는다
   await page.getByRole('combobox', { name: '작업 호스트' }).selectOption('')
   await expect(page.getByTestId('issue-row-42')).toBeVisible()
   await expect(page.getByTestId('issue-row-42').getByLabel('worktree 있음')).toHaveCount(0)
   await expect(page.getByTestId('issue-host')).toHaveText('mock-server')
+})
+
+test('"원격 터미널에 tmux 사용"을 켜면 그 호스트의 worktree 전용 tmux 세션으로 연다', async ({ page }) => {
+  await page.getByRole('button', { name: '원격 호스트 관리' }).click()
+  await page.getByTestId('ssh-host-mock-server').getByRole('button', { name: '추가' }).click()
+  await page.getByRole('checkbox', { name: '원격 터미널에 tmux 사용' }).check()
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('combobox', { name: '작업 호스트' }).selectOption('mock-server')
+  await expandWidgets(page)
+  await page.getByTestId('issue-row-42').click()
+  await expect(page.getByTestId('terminal-pane')).toContainText(/mock-server:.*\[tmux minmo-[0-9a-f]{10}\]/)
 })
 
 test('연결할 수 없는 호스트 → 원인 안내와 [이 PC 로 전환]', async ({ page }) => {

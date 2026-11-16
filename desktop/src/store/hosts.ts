@@ -15,6 +15,8 @@ export interface HostsState {
   error: { alias: string; error: SshError } | null
   /** 기준 저장소: 호스트 id → "owner/repo"(소문자) → 그 호스트의 기존 저장소 폴더. 이슈 worktree 를 여기서 만든다 */
   baseRepos: Record<string, Record<string, string>>
+  /** 원격 터미널을 전용 tmux 세션으로 여는가(기본: 일반 로그인 셸). 원격에 tmux 가 있을 때만 쓴다 */
+  useTmux: boolean
 
   add(alias: string): void
   remove(alias: string): void
@@ -26,6 +28,7 @@ export interface HostsState {
   setError(e: HostsState['error']): void
   /** path 가 null 이면 해제 */
   setBaseRepo(hostId: string, owner: string, repo: string, path: string | null): void
+  setUseTmux(on: boolean): void
 }
 
 export const repoKey = (owner: string, repo: string) => `${owner}/${repo}`.toLowerCase()
@@ -43,6 +46,8 @@ export const useHostsStore = create<HostsState>()(
       connecting: null,
       error: null,
       baseRepos: {},
+      useTmux: false,
+      setUseTmux: (useTmux) => set({ useTmux }),
       setBaseRepo: (hostId, owner, repo, path) =>
         set((s) => {
           const forHost = { ...s.baseRepos[hostId] }
@@ -74,7 +79,7 @@ export const useHostsStore = create<HostsState>()(
     {
       name: 'minmo-hosts',
       storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({ aliases: s.aliases, selected: s.selected, baseRepos: s.baseRepos }),
+      partialize: (s) => ({ aliases: s.aliases, selected: s.selected, baseRepos: s.baseRepos, useTmux: s.useTmux }),
     },
   ),
 )

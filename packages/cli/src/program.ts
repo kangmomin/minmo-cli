@@ -5,6 +5,7 @@ import { doctor, login, logout, revokeSession, sessions } from './commands/accou
 import { ls, note, openIssue, rm } from './commands/issues'
 import { modeCmd } from './commands/mode'
 import { configGet, configSet, reposAdd, reposAll, reposList, reposRemove, reposReset } from './commands/settings'
+import { terminalCmd } from './commands/terminal'
 import type { Ctx } from './context'
 import { captureOutput, runInherited, updateCmd } from './update'
 
@@ -35,7 +36,7 @@ export function buildProgram(deps: ProgramDeps): Command {
     .description('데스크탑에서 발급한 코드로 로그인')
     .action(withCtx((ctx, code: string) => login(ctx, code)))
   program.command('logout').description('이 기기의 세션을 끊고 로그인 정보를 지웁니다').action(withCtx((ctx) => logout(ctx)))
-  program.command('doctor').description('모드·서버(역터널)·로그인·git·gh·tmux 점검').action(withCtx((ctx) => doctor(ctx)))
+  program.command('doctor').description('모드·서버(역터널)·로그인·git·gh·터미널 점검').action(withCtx((ctx) => doctor(ctx)))
   // 서버·로그인이 필요 없어 컨텍스트를 만들지 않는다
   const update =
     deps.update ??
@@ -51,6 +52,11 @@ export function buildProgram(deps: ProgramDeps): Command {
     .argument('[mode]', 'server(PC 의 minmo 서버, 역터널) 또는 local(서버 없이 이 기기에서)')
     .description('모드 보기·바꾸기 — local 로 바꿀 때 서버에 닿으면 서버 값을 사본으로 받아 둡니다')
     .action(withCtx((ctx, mode: string | undefined) => modeCmd(ctx, mode)))
+  program
+    .command('terminal')
+    .argument('[kind]', 'shell(일반 셸, 기본) 또는 tmux(전용 tmux 세션 — 접속이 끊겨도 유지, Linux·macOS)')
+    .description('worktree 터미널 방식 보기·바꾸기')
+    .action(withCtx((ctx, kind: string | undefined) => terminalCmd(ctx, kind)))
 
   program
     .command('ls')
@@ -63,8 +69,8 @@ export function buildProgram(deps: ProgramDeps): Command {
   program
     .command('open')
     .argument('<issue>', 'owner/repo#번호 또는 owner/repo#etc')
-    .option('--no-attach', '터미널(tmux)을 붙이지 않고 경로만 출력')
-    .description('이슈 worktree 를 준비하고 tmux 터미널을 붙입니다')
+    .option('--no-attach', '터미널을 붙이지 않고 경로만 출력')
+    .description('이슈 worktree 를 준비하고 터미널을 붙입니다')
     .action(withCtx((ctx, issue: string, opts: { attach: boolean }) => openIssue(ctx, issue, opts)))
 
   program
