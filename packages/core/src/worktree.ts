@@ -258,7 +258,8 @@ export const DEFAULT_WORKSPACE_ROOT = '~/minmo-workspaces'
  */
 export function applyBaseDir(template: string, baseDir: string | undefined | null): string {
   const base = baseDir?.trim().replace(/[\\/]+$/, '')
-  if (!base || !template.startsWith(DEFAULT_WORKSPACE_ROOT)) return template
+  // Windows 식 구분자로 적은 같은 뿌리(~\minmo-workspaces)도 받는다
+  if (!base || !template.replace(/^~\\/, '~/').startsWith(DEFAULT_WORKSPACE_ROOT)) return template
   const rest = template.slice(DEFAULT_WORKSPACE_ROOT.length)
   // ~/minmo-workspaces2 처럼 이름만 같은 앞부분은 다른 폴더다
   return rest === '' || rest[0] === '/' || rest[0] === '\\' ? base + rest : template
@@ -742,8 +743,10 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       const entry = deps.pathStore.get(issueId)
       if (!entry) throw new WorktreeError('not_found', { message: 'worktree 가 없습니다' })
       const p = await plan(t)
-      const defaultBranch = await resolveDefaultBranch(t, p.main, await lacksOrigin(tauri.gitRun, p.main))
-      return runScript(issueId, t, { cwd: entry.path, branch: entry.branch, main: p.main, defaultBranch }, scriptFor(p.values, platform))
+      // 지금 설정으로 계산한 위치가 아니라 이 worktree 가 실제로 딸린 메인 clone — 만든 뒤에 경로 설정·기본 폴더가 바뀌었을 수 있다
+      const main = await mainCloneFor(t, entry.path)
+      const defaultBranch = await resolveDefaultBranch(t, main, await lacksOrigin(tauri.gitRun, main))
+      return runScript(issueId, t, { cwd: entry.path, branch: entry.branch, main, defaultBranch }, scriptFor(p.values, platform))
     },
 
     inspect,

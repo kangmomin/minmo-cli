@@ -5,7 +5,7 @@ import { LAUNCH_KINDS } from '../features/agents/launch'
 import type { LaunchKind } from '../features/agents/launch'
 import { leafIds } from '../features/terminal/panes'
 import type { PaneNode } from '../features/terminal/panes'
-import { bindShared } from '../lib/sharedState'
+import { bindShared, merge3 } from '../lib/sharedState'
 import type { TauriApi } from '../lib/tauri'
 import { useHostsStore } from './hosts'
 import type { HostsState } from './hosts'
@@ -99,6 +99,26 @@ export function applySharedHosts(value: unknown) {
   useHostsStore.setState(next)
 }
 
+/** 이 화면의 기준 저장소 폴더를 함께 쓰는 값으로 옮겼는가(브라우저 저장소) */
+export const HOSTS_MIGRATED_KEY = 'minmo-hosts-shared'
+
+/**
+ * 기준 저장소 폴더는 함께 쓰기 전에는 화면마다 브라우저 저장소에만 있었다 — 먼저 뜬 화면의 값이 호스트의 값이 되면
+ * 다른 화면(원격으로 붙은 기기)에서 정해 둔 폴더가 사라져, 그 저장소를 새로 clone 하게 된다.
+ * 그래서 화면마다 한 번만 이 화면의 값을 호스트의 값에 합친다. 그 뒤로는 호스트의 값이 기준이다
+ * (매번 합치면 다른 화면에서 해제한 폴더가 이 화면의 옛 값으로 되살아난다).
+ */
+function mergeHostsOnce(mine: SharedHosts, theirs: SharedHosts): SharedHosts {
+  try {
+    if (localStorage.getItem(HOSTS_MIGRATED_KEY) !== null) return theirs
+    localStorage.setItem(HOSTS_MIGRATED_KEY, '1')
+  } catch {
+    // 저장소를 쓸 수 없으면 합치지 않는다(매번 합치게 되므로)
+    return theirs
+  }
+  return merge3({}, mine, theirs, 3) as SharedHosts
+}
+
 /** 앱이 뜬 뒤 한 번 묶는다. 푸는 함수를 돌려준다 */
 export function bindSharedStores(tauri: Pick<TauriApi, 'sharedGet' | 'sharedSet' | 'onSharedChanged'>): () => void {
   const stops = [
@@ -119,6 +139,9 @@ export function bindSharedStores(tauri: Pick<TauriApi, 'sharedGet' | 'sharedSet'
       },
       apply: applySharedHosts,
       subscribe: (cb) => useHostsStore.subscribe(cb),
+      // baseRepos 는 호스트 → 저장소 → 폴더라 한 단계 더 깊다 — 같은 호스트의 다른 저장소를 바꾼 두 화면의 변경이 모두 남게
+      depth: 3,
+      firstMerge: mergeHostsOnce,
     }),
     bindShared<SharedUi>(tauri, {
       key: 'ui',

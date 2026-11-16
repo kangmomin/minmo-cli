@@ -60,6 +60,9 @@ export function checkBaseDir(raw: string, platform: Platform): string | null {
   const v = raw.trim()
   if (v === '') return '경로를 입력하세요'
   if (/[{}]/.test(v)) return '경로에 { } 를 쓸 수 없습니다'
-  if (!(v === '~' || v.startsWith('~/') || v.startsWith('~\\') || isAbsoluteFor(v, platform))) return '절대 경로(또는 ~ 로 시작하는 경로)를 입력하세요'
+  const home = v === '~' || v.startsWith('~/') || (platform === 'win32' && v.startsWith('~\\'))
+  if (!home && !isAbsoluteFor(v, platform)) return '절대 경로(또는 ~ 로 시작하는 경로)를 입력하세요'
+  // 루트 바로 아래에 owner 폴더를 만들게 된다 — 실수일 가능성이 크고, 끝 구분자를 떼면 빈 값이 되어 적용되지도 않는다
+  if (/^([A-Za-z]:)?[\\/]+$/.test(v)) return '루트 폴더는 쓸 수 없습니다 — 그 아래의 폴더를 지정하세요'
   return null
 }

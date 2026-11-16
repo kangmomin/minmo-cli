@@ -612,6 +612,17 @@ describe('openIssue — 생성 후 스크립트 (AC-16, EC-19, EC-21)', () => {
     expect(t.tauri.scriptRun.mock.calls[1][0]).toMatchObject({ cwd: WT42, script: 'npm ci' })
     expect(again).toEqual({ status: 'succeeded', exitCode: 0 })
   })
+
+  it('[다시 실행]은 지금 설정이 아니라 그 worktree 가 딸린 메인 clone 을 넘긴다(만든 뒤 경로 설정·기본 폴더가 바뀌어도)', async () => {
+    const t = setup({ mainExists: true, values: { postCreateScriptPosix: 'npm ci' } })
+    await t.svc.openIssue(ISSUE42)
+    // 만든 뒤에 메인 clone 위치가 바뀌었다 — git 은 이 worktree 의 실제 저장소를 알려 준다
+    t.getEffective.mockResolvedValue(effective({ postCreateScriptPosix: 'npm ci', mainClonePath: '~/moved/{repo}/_main' }))
+    const real = t.tauri.gitRun.getMockImplementation()!
+    t.tauri.gitRun.mockImplementation(async (args, opts) => (args.includes('--git-common-dir') ? ok(`${MAIN}/.git\n`) : real(args, opts)))
+    await t.svc.rerunScript(ISSUE42)
+    expect(t.tauri.scriptRun.mock.calls[1][0].env).toMatchObject({ MINMO_MAIN_CLONE: MAIN })
+  })
 })
 
 // ── 삭제 ─────────────────────────────────────────────────────────
@@ -1056,6 +1067,7 @@ describe('openIssue — 설정 경로가 이 OS 의 절대 경로가 아니면 �
     expect(applyBaseDir('~/minmo-workspaces/{owner}/{repo}/_main', '/workspace')).toBe('/workspace/{owner}/{repo}/_main')
     expect(applyBaseDir('~/minmo-workspaces', '/workspace/')).toBe('/workspace')
     expect(applyBaseDir('~/minmo-workspaces\\{repo}', 'D:\\w\\')).toBe('D:\\w\\{repo}')
+    expect(applyBaseDir('~\\minmo-workspaces\\{repo}', 'D:\\w')).toBe('D:\\w\\{repo}')
     // 이름만 같은 앞부분·사용자가 바꾼 뿌리는 그대로
     expect(applyBaseDir('~/minmo-workspaces2/{repo}', '/workspace')).toBe('~/minmo-workspaces2/{repo}')
     expect(applyBaseDir('~/work/{repo}/{branch}', '/workspace')).toBe('~/work/{repo}/{branch}')

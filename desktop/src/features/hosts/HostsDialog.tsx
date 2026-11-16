@@ -221,6 +221,12 @@ function BaseDirRow({ alias, platform }: { alias: string | null; platform: Platf
   const setBaseDir = useHostsStore((s) => s.setBaseDir)
   const [value, setValue] = useState(saved ?? '')
   const [note, setNote] = useState<{ error: boolean; text: string } | null>(null)
+  // 저장된 값이 바뀌면(다른 화면이 바꾼 경우 포함) 입력란을 맞춘다 — 옛 글자가 남아 있으면 [저장] 한 번으로 그 변경을 되돌리게 된다
+  const [seen, setSeen] = useState(saved)
+  if (seen !== saved) {
+    setSeen(saved)
+    setValue(saved ?? '')
+  }
 
   function submit(e: FormEvent) {
     e.preventDefault()

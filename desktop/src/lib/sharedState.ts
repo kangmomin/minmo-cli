@@ -20,6 +20,13 @@ export interface SharedBinding<T> {
   apply(value: T): void
   /** store 가 바뀔 때마다 부른다 */
   subscribe(onChange: () => void): () => void
+  /** 키별로 합칠 깊이(merge3, 기본 2) — 값이 더 깊은 곳에서 항목별로 나뉘면 늘린다 */
+  depth?: number
+  /**
+   * 처음 맞출 때 호스트의 값(theirs) 대신 쓸 값. 기본은 호스트의 값 그대로다.
+   * 이 화면의 저장소에만 있던 값을 한 번 옮겨야 할 때(함께 쓰기 전부터 있던 값) 쓴다
+   */
+  firstMerge?(mine: T, theirs: T): T
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -87,7 +94,7 @@ export function bindShared<T>(tauri: Pick<TauriApi, 'sharedGet' | 'sharedSet' | 
     }
     const mine = b.pick()
     // 처음(맞춘 적이 없을 때)에는 호스트의 값이 기준이다 — 이 화면의 저장소에 남은 옛 값으로 덮지 않는다
-    const merged = synced === undefined ? theirs : (merge3(synced, mine, theirs) as T)
+    const merged = synced === undefined ? (b.firstMerge?.(mine, theirs) ?? theirs) : (merge3(synced, mine, theirs, b.depth) as T)
     synced = theirs
     if (!same(merged, mine)) b.apply(merged)
     return !same(b.pick(), theirs)

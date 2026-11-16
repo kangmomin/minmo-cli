@@ -56,6 +56,11 @@ describe('checkBaseDir', () => {
     for (const good of ['~', '~/ws', '/workspace', ' /workspace/ ']) expect(checkBaseDir(good, 'linux')).toBeNull()
     expect(checkBaseDir('D:\\ws', 'win32')).toBeNull()
     expect(checkBaseDir('~\\ws', 'win32')).toBeNull()
+    // ~\ 는 Windows 에서만 홈이다
+    expect(checkBaseDir('~\\ws', 'linux')).not.toBeNull()
+    // 루트는 받지 않는다(끝 구분자를 떼면 빈 값이 되어 적용되지 않는다)
+    for (const root of ['/', '//']) expect(checkBaseDir(root, 'linux')).toContain('루트')
+    for (const root of ['C:\\', 'c:/']) expect(checkBaseDir(root, 'win32')).toContain('루트')
     for (const bad of ['', 'ws', 'D:\\ws', '~user/ws', '/w/{owner}']) expect(checkBaseDir(bad, 'linux')).not.toBeNull()
     expect(checkBaseDir('/workspace', 'win32')).not.toBeNull()
   })
