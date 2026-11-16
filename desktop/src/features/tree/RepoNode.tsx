@@ -24,6 +24,7 @@ import { BaseRepoDialog } from './BaseRepoDialog'
 import { issueStatus, useAgentStore } from '../agents/agentStore'
 import { IssueRow } from './IssueRow'
 import { NewTaskDialog } from './LocalRepoDialogs'
+import { NewIssueDialog } from './NewIssueDialog'
 import { useOpenPublish } from './publishContext'
 import { isPublishing } from './publishRepo'
 import { unregisterLocalRepo } from './localRepos'
@@ -47,7 +48,7 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
   const localRepo = useReposStore((s) => (local ? s.local[repo.name] : undefined))
   const added = useReposStore((s) => !local && s.added.some((a) => a.toLowerCase() === `${repo.owner}/${repo.name}`.toLowerCase()))
   const label = localRepo?.displayName ?? repo.name
-  const [dialog, setDialog] = useState<null | 'task' | 'remove'>(null)
+  const [dialog, setDialog] = useState<null | 'task' | 'remove' | 'issue'>(null)
   const openPublish = useOpenPublish()
   const nodeId = `repo:${repo.owner}/${repo.name}`
   const expanded = useUiStore((s) => !!s.expanded[nodeId])
@@ -151,6 +152,7 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
           </ContextMenuTrigger>
           <ContextMenuContent>
             <ContextMenuItem onSelect={openSettings}>프로젝트 설정</ContextMenuItem>
+            {!local && <ContextMenuItem onSelect={() => setDialog('issue')}>이슈 등록…</ContextMenuItem>}
             {!local && <ContextMenuItem onSelect={() => setBaseOpen(true)}>기준 저장소 폴더…</ContextMenuItem>}
             {local && <ContextMenuItem onSelect={() => setDialog('task')}>작업 추가…</ContextMenuItem>}
             {canPublish && <ContextMenuItem onSelect={() => openPublish(repo.name)}>GitHub 에 올리기…</ContextMenuItem>}
@@ -169,6 +171,18 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
             <PlusIcon className="size-3.5" />
           </Button>
         ) : (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`${repo.name} 이슈 등록`}
+            title={`${repo.name} 이슈 등록`}
+            onClick={() => setDialog('issue')}
+            className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+          >
+            <PlusIcon className="size-3.5" />
+          </Button>
+        )}
+        {!local && (
           <Button
             size="icon-sm"
             variant="ghost"
@@ -212,6 +226,7 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
         </Button>
       </div>
       {!local && <BaseRepoDialog owner={repo.owner} repo={repo.name} open={baseOpen} onOpenChange={setBaseOpen} />}
+      {!local && <NewIssueDialog owner={repo.owner} repo={repo.name} open={dialog === 'issue'} onOpenChange={(o) => setDialog(o ? 'issue' : null)} />}
       {local && (
         <>
           <NewTaskDialog id={repo.name} open={dialog === 'task'} onOpenChange={(o) => setDialog(o ? 'task' : null)} />
@@ -267,16 +282,14 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
                 selected={selectedId === worktreeId(repo.owner, repo.name, issue.key)}
               />
             ))}
-            {local && (
-              <button
-                type="button"
-                data-testid="add-task"
-                onClick={() => setDialog('task')}
-                className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-sm text-muted-foreground hover:bg-accent"
-              >
-                <PlusIcon className="size-3.5" /> 작업 추가
-              </button>
-            )}
+            <button
+              type="button"
+              data-testid={local ? 'add-task' : 'add-issue'}
+              onClick={() => setDialog(local ? 'task' : 'issue')}
+              className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-sm text-muted-foreground hover:bg-accent"
+            >
+              <PlusIcon className="size-3.5" /> {local ? '작업 추가' : '이슈 등록'}
+            </button>
           </div>
         )}
       </div>

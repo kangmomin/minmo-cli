@@ -43,7 +43,12 @@ export interface AppProps {
   rows?: number
 }
 
-type Mode = { kind: 'normal' } | { kind: 'search' } | { kind: 'confirm'; text: string; run(): Promise<void> }
+type Mode =
+  | { kind: 'normal' }
+  | { kind: 'search' }
+  | { kind: 'confirm'; text: string; run(): Promise<void> }
+  /** 이슈 등록: 제목 → 본문(한 줄, 선택) 순서로 받는다. text 는 지금 단계에서 입력 중인 글자 */
+  | { kind: 'issue'; repo: GitHubRepo; step: 'title' | 'body'; title: string; text: string }
 
 const errText = (e: unknown, ctx: Ctx) => (e instanceof ApiError ? serverErrorMessage(e, ctx.server) : e instanceof Error ? e.message : String(e))
 
@@ -171,6 +176,35 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
     }
   }
 
+  async function registerIssue(repo: GitHubRepo, title: string, body: string) {
+    setBusy(true)
+    try {
+      const issue = await ctx.github.createIssue(repo.owner, repo.name, title, body)
+      const key = `${repo.owner}/${repo.name}`
+      // 목록에만 넣는다(커서는 그대로). 아직 불러오지 않은 저장소는 펼칠 때 조회한다
+      setData((d) => {
+        const list = d.issues[key]
+        if (!Array.isArray(list) || list.some((i) => i.number === issue.number)) return d
+        const item: IssueItem = { key: String(issue.number), number: issue.number, title: issue.title, state: issue.state }
+        const at = list.findIndex((i) => i.number !== null)
+        const next = at < 0 ? [...list, item] : [...list.slice(0, at), item, ...list.slice(at)]
+        return { ...d, issues: { ...d.issues, [key]: next } }
+      })
+      setMessage(`등록했습니다: ${key}#${issue.number} ${issue.title}`)
+    } catch (e) {
+      // 입력한 내용을 잃지 않게 본문 단계로 되돌린다
+      setMode({ kind: 'issue', repo, step: 'body', title, text: body })
+      setMessage(`이슈를 등록하지 못했습니다: ${errText(e, ctx)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const startIssue = (repo: GitHubRepo) => {
+    setMessage('')
+    setMode({ kind: 'issue', repo, step: 'title', title: '', text: '' })
+  }
+
   async function saveSelection(change: (cur: string[] | null) => string[] | null) {
     try {
       setSel(await ctx.data.updateSelection(change))
@@ -203,6 +237,28 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
       } else if (key.return) setMode({ kind: 'normal' })
       else if (key.backspace || key.delete) setSearch((s) => s.slice(0, -1))
       else if (input && !key.ctrl) setSearch((s) => s + input)
+      return
+    }
+    if (mode.kind === 'issue') {
+      if (key.escape) {
+        setMode({ kind: 'normal' })
+        setMessage('취소했습니다')
+      } else if (key.return) {
+        const text = mode.text.trim()
+        if (mode.step === 'title') {
+          if (text === '') return setMessage('제목을 입력하세요')
+          setMessage('')
+          setMode({ ...mode, step: 'body', title: text, text: '' })
+        } else {
+          setMode({ kind: 'normal' })
+          void registerIssue(mode.repo, mode.title, text)
+        }
+      } else if (key.backspace || key.delete) setMode((m) => (m.kind === 'issue' ? { ...m, text: [...m.text].slice(0, -1).join('') } : m))
+      else if (input && !key.ctrl && !key.meta) {
+        // 여러 줄을 붙여넣어도 한 줄로 — 제목에 줄바꿈이 들어가지 않게
+        const typed = input.replace(/[\r\n\t]+/g, ' ')
+        setMode((m) => (m.kind === 'issue' ? { ...m, text: m.text + typed } : m))
+      }
       return
     }
     if (mode.kind === 'confirm') {
@@ -263,12 +319,14 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
         )
       }
       if (input === 's' && row.kind === 'repo') return void showSettings(row.repo)
+      if (input === 'i' && row.kind === 'repo') return startIssue(row.repo)
       return
     }
     if (row.kind !== 'issue') return
     const t = targetOf(row.repo, row.issue)
     if (key.return) return void prepare(t)
     if (input === 's') return void showSettings(row.repo)
+    if (input === 'i') return startIssue(row.repo)
     if (input === 't') {
       void (async () => {
         const path = row.worktree?.path ?? (await prepare(t))
@@ -345,7 +403,9 @@ export function App({ ctx, login, initial, onExit, rows: termRows }: AppProps) {
       ? `검색: ${search}▏  Enter 적용 · Esc 지우기`
       : mode.kind === 'confirm'
         ? mode.text
-        : `↑↓ 이동 · Enter 열기/준비 · t 터미널(${terminalLabel(ctx.config.terminal)}) · n 메모 · d 삭제 · f 보이기/숨기기 · a 숨긴 것 보기 · s 설정 · / 검색 · r 새로고침 · q 종료`
+        : mode.kind === 'issue'
+          ? `이슈 등록 ${mode.repo.owner}/${mode.repo.name} · ${mode.step === 'title' ? '제목' : '본문(선택, 한 줄)'}: ${mode.text}▏  Enter ${mode.step === 'title' ? '다음' : '등록'} · Esc 취소`
+          : `↑↓ 이동 · Enter 열기/준비 · t 터미널(${terminalLabel(ctx.config.terminal)}) · i 이슈 등록 · n 메모 · d 삭제 · f 보이기/숨기기 · a 숨긴 것 보기 · s 설정 · / 검색 · r 새로고침 · q 종료`
 
   return (
     <Box flexDirection="column">

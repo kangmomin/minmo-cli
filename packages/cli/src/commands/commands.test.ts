@@ -1,15 +1,16 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@minmo/api-client'
-import { worktreeId } from '@minmo/core'
+import { GitHubError, worktreeId } from '@minmo/core'
 
 import { CliError, requireLogin } from '../context'
 import { buildProgram } from '../program'
 import { createTestCtx } from '../test/fakes'
 import { login } from './account'
-import { ls, note, removeWorktree } from './issues'
+import { ls, newIssue, note, removeWorktree } from './issues'
 import { configSet, reposAdd, reposRemove } from './settings'
 
 describe('로그인·계정 확인', () => {
@@ -139,6 +140,48 @@ describe('rm·note', () => {
   })
 })
 
+describe('new — GitHub 이슈 등록', () => {
+  it('저장소를 GitHub 표기로 맞춰 제목·본문으로 등록하고 번호·주소를 알린다', async () => {
+    const ctx = await createTestCtx({ github: { createIssue: async (_o, _r, title) => ({ number: 12, title, state: 'open', htmlUrl: 'https://gh/12' }) } })
+    await newIssue(ctx, 'acme/widgets', '  새 기능  ', { body: '설명\r\n둘째 줄\n' })
+    expect(ctx.github.createIssue).toHaveBeenCalledWith('Acme', 'Widgets', '새 기능', '설명\n둘째 줄')
+    expect(ctx.logs).toEqual(['등록했습니다: Acme/Widgets#12 새 기능', '  https://gh/12'])
+  })
+
+  it('--body @파일 · --edit(편집기) · --json', async () => {
+    const ctx = await createTestCtx()
+    const file = join(ctx.paths.configDir, 'body.md')
+    await writeFile(file, '파일 본문\n')
+    await newIssue(ctx, 'Acme/Widgets', 't', { body: `@${file}` })
+    expect(ctx.github.createIssue).toHaveBeenLastCalledWith('Acme', 'Widgets', 't', '파일 본문')
+    await newIssue(ctx, 'Acme/Widgets', 't', { edit: true, editor: async () => '편집기 본문', json: true })
+    expect(ctx.github.createIssue).toHaveBeenLastCalledWith('Acme', 'Widgets', 't', '편집기 본문')
+    expect(JSON.parse(ctx.logs.at(-1)!)).toMatchObject({ owner: 'Acme', repo: 'Widgets', number: 1, title: 't' })
+  })
+
+  it('빈 제목·잘못된 저장소·없는 파일·--body 와 --edit 동시 사용은 등록 전에 막는다', async () => {
+    const ctx = await createTestCtx()
+    await expect(newIssue(ctx, 'Acme/Widgets', '   ')).rejects.toThrow('제목을 입력하세요')
+    await expect(newIssue(ctx, 'widgets', 't')).rejects.toThrow('owner/repo')
+    await expect(newIssue(ctx, 'Acme/Widgets', 't', { body: '@/no/such/file.md' })).rejects.toThrow('본문 파일을 읽을 수 없습니다')
+    await expect(newIssue(ctx, 'Acme/Widgets', 't', { body: 'x', edit: true })).rejects.toThrow('함께 쓸 수 없습니다')
+    expect(ctx.github.createIssue).not.toHaveBeenCalled()
+  })
+
+  it('GitHub 오류는 스택 없이 안내(CliError)', async () => {
+    const ctx = await createTestCtx({
+      github: {
+        createIssue: async () => {
+          throw new GitHubError('forbidden', { message: 'Issues are disabled' })
+        },
+      },
+    })
+    const err = await newIssue(ctx, 'Acme/Widgets', 't').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(CliError)
+    expect((err as CliError).message).toContain('Issues are disabled')
+  })
+})
+
 describe('명령어 구성', () => {
   it('인자·옵션이 각 명령으로 간다', async () => {
     const ctx = await createTestCtx()
@@ -149,5 +192,7 @@ describe('명령어 구성', () => {
     await program.parseAsync(['node', 'minmo'])
     expect(runTui).toHaveBeenCalledTimes(1)
     await expect(program.parseAsync(['node', 'minmo', 'open', 'not-a-ref', '--no-attach'])).rejects.toThrow('owner/repo#번호')
+    await program.parseAsync(['node', 'minmo', 'new', 'acme/widgets', '새 기능', '-b', '설명'])
+    expect(ctx.github.createIssue).toHaveBeenLastCalledWith('Acme', 'Widgets', '새 기능', '설명')
   })
 })

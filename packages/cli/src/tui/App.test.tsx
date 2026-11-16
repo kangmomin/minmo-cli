@@ -11,6 +11,7 @@ import { buildRows, expandSelection } from './model'
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms))
 const DOWN = '\u001B[B'
 const ENTER = '\r'
+const ESC = '\u001B'
 
 async function waitFor(fn: () => boolean, ms = 2000) {
   const end = Date.now() + ms
@@ -140,6 +141,74 @@ describe('TUI', () => {
     ui.stdin.write('n')
     await waitFor(() => ui.lastFrame()!.includes('메모는 서버 모드에서만'))
     expect(onExit).not.toHaveBeenCalled()
+    ui.unmount()
+  })
+
+  it('i 로 이슈 등록: 제목 → 본문 → 목록에만 추가(커서 그대로), Esc 는 취소', async () => {
+    const ctx = await createTestCtx({ github: { createIssue: async (_o, _r, title) => ({ number: 9, title, state: 'open', htmlUrl: 'u9' }) } })
+    const ui = render(<App ctx={ctx} login="octocat" onExit={() => {}} rows={30} />)
+    await waitFor(() => ui.lastFrame()!.includes('▸ Acme'))
+    ui.stdin.write(DOWN)
+    await tick()
+    ui.stdin.write(ENTER) // Acme 펼침
+    await waitFor(() => ui.lastFrame()!.includes('Widgets'))
+    ui.stdin.write(DOWN)
+    await tick()
+    ui.stdin.write(ENTER) // Widgets 펼침
+    await waitFor(() => ui.lastFrame()!.includes('#7 Seven'))
+
+    ui.stdin.write('i')
+    await waitFor(() => ui.lastFrame()!.includes('이슈 등록 Acme/Widgets · 제목:'))
+    ui.stdin.write(ESC)
+    await waitFor(() => ui.lastFrame()!.includes('취소했습니다'))
+
+    ui.stdin.write('i')
+    await waitFor(() => ui.lastFrame()!.includes('제목:'))
+    ui.stdin.write(ENTER) // 빈 제목은 넘어가지 않는다
+    await waitFor(() => ui.lastFrame()!.includes('제목을 입력하세요'))
+    ui.stdin.write('quick fix') // 입력 중에는 단축키(q 종료)가 글자다
+    await waitFor(() => ui.lastFrame()!.includes('제목: quick fix'))
+    ui.stdin.write(ENTER)
+    await waitFor(() => ui.lastFrame()!.includes('본문(선택, 한 줄):'))
+    ui.stdin.write('details')
+    await waitFor(() => ui.lastFrame()!.includes('details'))
+    ui.stdin.write(ENTER)
+    await waitFor(() => ui.lastFrame()!.includes('등록했습니다: Acme/Widgets#9'))
+    expect(ctx.github.createIssue).toHaveBeenCalledWith('Acme', 'Widgets', 'quick fix', 'details')
+    const frame = ui.lastFrame()!
+    expect(frame.indexOf('#9 quick fix')).toBeGreaterThan(frame.indexOf('★기타'))
+    expect(frame.indexOf('#9 quick fix')).toBeLessThan(frame.indexOf('#7 Seven'))
+    expect(ctx.github.listIssues).toHaveBeenCalledTimes(1)
+    // 커서는 저장소 줄 그대로 — 상세 칸이 저장소 정보다
+    expect(frame).toContain('기본 브랜치 main')
+    ui.unmount()
+  })
+
+  it('이슈 등록 실패: 오류를 보여 주고 입력한 내용으로 되돌아간다', async () => {
+    const ctx = await createTestCtx({
+      github: {
+        createIssue: async () => {
+          throw new Error('Issues are disabled')
+        },
+      },
+    })
+    const ui = render(<App ctx={ctx} login="octocat" onExit={() => {}} rows={30} />)
+    await waitFor(() => ui.lastFrame()!.includes('▸ Acme'))
+    ui.stdin.write(DOWN)
+    await tick()
+    ui.stdin.write(ENTER)
+    await waitFor(() => ui.lastFrame()!.includes('Widgets'))
+    ui.stdin.write(DOWN)
+    await tick()
+    ui.stdin.write('i')
+    await waitFor(() => ui.lastFrame()!.includes('제목:'))
+    ui.stdin.write('title')
+    await waitFor(() => ui.lastFrame()!.includes('제목: title'))
+    ui.stdin.write(ENTER)
+    await waitFor(() => ui.lastFrame()!.includes('본문(선택, 한 줄):'))
+    ui.stdin.write(ENTER)
+    await waitFor(() => ui.lastFrame()!.includes('이슈를 등록하지 못했습니다: Issues are disabled'))
+    expect(ui.lastFrame()).toContain('본문(선택, 한 줄):')
     ui.unmount()
   })
 
