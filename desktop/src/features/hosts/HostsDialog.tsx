@@ -73,9 +73,12 @@ function HostsBody() {
     try {
       const probe = await tauri.sshProbe(alias, trustNew)
       useHostsStore.getState().setProbe(alias, probe)
+      // 트리·이슈 화면에 남은 이 호스트의 지난 오류도 지운다(같은 연결 상태를 쓴다)
+      useHostsStore.getState().setError(alias, null)
       setChecks((c) => ({ ...c, [alias]: { state: 'ok', probe } }))
     } catch (e) {
       const err = sshErrorOf(e)
+      useHostsStore.getState().setError(alias, err)
       setChecks((c) => ({ ...c, [alias]: { state: 'error', text: sshErrorText(alias, err), hostKey: err.kind === 'host_key' } }))
     }
   }

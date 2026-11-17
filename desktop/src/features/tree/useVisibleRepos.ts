@@ -7,8 +7,9 @@ import { isOwnerVisible, isRepoVisible } from '@minmo/core'
 import type { RepoSelection } from '@minmo/core'
 
 import { useDeps } from '../../app/deps'
-import { useHost } from '../../app/host'
+import { aliasOfIssue, coreIdOf, useHost } from '../../app/host'
 import { queryKeys } from '../../lib/queryKeys'
+import { repoAliasOf, useHostsStore } from '../../store/hosts'
 import { useUiStore } from '../../store/ui'
 
 export function useVisibleRepos() {
@@ -21,17 +22,31 @@ export function useRepoSelection(): RepoSelection {
   return useVisibleRepos().data?.repos ?? null
 }
 
-/** 로컬 worktree 가 있는 저장소는 숨김으로 골라도 보여 준다(작업 중인 것을 잃지 않게) */
+/**
+ * 로컬 worktree 가 있는 저장소는 숨김으로 골라도 보여 준다(작업 중인 것을 잃지 않게).
+ * 저장소가 지금 쓰는 호스트(연결 호스트, 없으면 작업 호스트)의 기록만 센다
+ */
 export function useHasWorktree() {
   const map = useUiStore((s) => s.worktreePathMap)
+  const repoHosts = useHostsStore((s) => s.repoHosts)
   const host = useHost()
   return useCallback(
     (owner: string, repo?: string) => {
-      const prefix = repo === undefined ? host.scope(`${owner}/`) : host.issueId(owner, repo, '')
-      const p = prefix.toLowerCase()
-      return Object.keys(map).some((id) => id.toLowerCase().startsWith(p))
+      const o = owner.toLowerCase()
+      const r = repo?.toLowerCase()
+      return Object.keys(map).some((id) => {
+        // core id 는 "owner/repo#key"
+        const core = coreIdOf(id).toLowerCase()
+        const slash = core.indexOf('/')
+        const hash = core.indexOf('#', slash)
+        if (slash < 0 || hash < 0 || core.slice(0, slash) !== o) return false
+        const name = core.slice(slash + 1, hash)
+        if (r !== undefined && name !== r) return false
+        const alias = repoAliasOf({ repoHosts }, owner, name)
+        return aliasOfIssue(id) === (alias === undefined ? host.alias : alias)
+      })
     },
-    [map, host],
+    [map, repoHosts, host],
   )
 }
 

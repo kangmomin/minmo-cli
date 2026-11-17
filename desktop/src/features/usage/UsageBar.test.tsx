@@ -24,7 +24,7 @@ const codex = (limits: CodexUsage['limits'], tokens = tok(0, 0)): CodexUsage => 
 beforeEach(() => {
   localStorage.clear()
   useUiStore.setState({ showUsage: true })
-  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: null, error: null })
+  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: {}, errors: {} })
 })
 
 describe('표시 글', () => {

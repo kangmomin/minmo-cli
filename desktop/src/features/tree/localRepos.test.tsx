@@ -28,7 +28,7 @@ type Git = (args: string[]) => Promise<ReturnType<typeof ok>>
 
 beforeEach(() => {
   localStorage.clear()
-  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: null, error: null, baseRepos: {} })
+  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: {}, errors: {}, baseRepos: {} })
   useReposStore.setState({ added: [], local: {}, lastParent: {} })
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online' })

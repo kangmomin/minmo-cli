@@ -5,7 +5,8 @@ import { ApiError, renderPath } from '@minmo/api-client'
 import type { SettingsInput, SettingsRecord, SettingsScope, SettingsValues } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
-import { useHost } from '../../app/host'
+import { HostStatusNotice } from '../../app/HostGate'
+import { HostScope, hostOf, useHost, useHostStatus } from '../../app/host'
 import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
@@ -13,7 +14,7 @@ import { Label } from '../../components/ui/label'
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { Textarea } from '../../components/ui/textarea'
 import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF, applyBaseDir, ignoredCopyNames, issueBranchContext } from '@minmo/core'
-import { baseDirOf, baseRepoOf, useHostsStore } from '../../store/hosts'
+import { LOCAL_HOST_ID, aliasOfHostId, baseDirOf, baseRepoOf, hostIdOf, repoAliasOf, repoHostOf, useHostsStore } from '../../store/hosts'
 import { isLocalOwner, repoLabelOf, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { BaseRepoDialog } from '../tree/BaseRepoDialog'
@@ -58,6 +59,12 @@ function scopeTitle(scope: SettingsScope): string {
 }
 
 export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: SettingsDialogProps) {
+  const project = scope.kind === 'project' && !isLocalOwner(scope.owner) ? scope : null
+  // 연결 호스트를 정한 저장소는 원본 위치·경로 미리보기를 그 호스트 기준으로 보인다. 정하지 않았으면 바깥(작업 호스트) 그대로
+  const bound = useHostsStore((s) => (project ? repoAliasOf(s, project.owner, project.repo) : undefined))
+  const outer = useHost().alias
+  const alias = bound === undefined ? outer : bound
+  const status = useHostStatus(bound ?? null)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
@@ -69,10 +76,66 @@ export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: Sett
               : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'}
           </DialogDescription>
         </DialogHeader>
-        {open && scope.kind === 'project' && !isLocalOwner(scope.owner) && <BaseRepoSection owner={scope.owner} repo={scope.repo} />}
-        {open && <SettingsBody scope={scope} previewIssue={previewIssue ?? null} onSaved={() => onOpenChange(false)} />}
+        {open && project && <RepoHostSection owner={project.owner} repo={project.repo} />}
+        {open &&
+          project &&
+          (status.ready ? (
+            <HostScope alias={alias}>
+              <BaseRepoSection owner={project.owner} repo={project.repo} />
+            </HostScope>
+          ) : (
+            // 연결 호스트에 닿기 전에는 그 호스트의 원본 위치를 보일 수 없다 — 아래 서버 설정은 호스트와 관계없으므로 그대로 쓴다
+            <HostStatusNotice alias={bound ?? ''} status={status} className="grid gap-2 rounded border p-3 text-sm" testId="settings-host-status" />
+          ))}
+        {/* 연결 호스트를 바꿔도 폼이 다시 마운트되지 않게(입력이 남게) 항상 같은 HostScope 아래에 둔다. 연결 전에는 미리보기를 감춘다 */}
+        {open && (
+          <HostScope alias={alias}>
+            <SettingsBody scope={scope} previewIssue={status.ready ? (previewIssue ?? null) : null} onSaved={() => onOpenChange(false)} />
+          </HostScope>
+        )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+const hostLabelOf = (hostId: string) => hostOf(aliasOfHostId(hostId) ?? null).label
+
+/**
+ * 연결 호스트 — 이 저장소의 이슈를 여는 호스트. 원본 위치처럼 이 PC 에 저장하는 값이라 바꾸면 바로 적용한다.
+ * 연결이 안 되는 호스트를 골랐어도 여기서 다시 바꿀 수 있게 아래 영역(호스트 연결 필요)과 따로 둔다
+ */
+function RepoHostSection({ owner, repo }: { owner: string; repo: string }) {
+  const uid = useId()
+  const aliases = useHostsStore((s) => s.aliases)
+  const current = useHostsStore((s) => repoHostOf(s, owner, repo))
+  const setRepoHost = useHostsStore((s) => s.setRepoHost)
+  const options = [LOCAL_HOST_ID, ...aliases.map(hostIdOf)]
+  // 목록에서 빠졌거나 이 기기의 목록에 없는 호스트(원격 접속 화면)에 묶여 있어도 값이 비지 않게
+  if (current !== undefined && !options.includes(current)) options.push(current)
+  return (
+    <div className="grid gap-1 rounded border p-3" data-testid="repo-host-section">
+      <div className="flex items-center gap-2">
+        <label htmlFor={uid} className="text-sm font-medium">
+          연결 호스트
+        </label>
+        <select
+          id={uid}
+          className="ml-auto h-7 min-w-0 rounded border bg-background px-1.5 text-sm"
+          value={current ?? ''}
+          onChange={(e) => setRepoHost(owner, repo, e.target.value === '' ? null : e.target.value)}
+        >
+          <option value="">작업 호스트 따름</option>
+          {options.map((id) => (
+            <option key={id} value={id}>
+              {hostLabelOf(id)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        이 저장소의 이슈를 여는 호스트입니다. 정하면 사이드바의 작업 호스트와 관계없이 이 호스트에서 worktree·터미널을 엽니다.
+      </p>
+    </div>
   )
 }
 

@@ -6,6 +6,8 @@ import { normalizePath, renderPath } from '@minmo/api-client'
 import type { SettingsScope } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
+import { HostGate, HostStatusNotice } from '../../app/HostGate'
+import type { HostStatus } from '../../app/host'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../../components/ui/context-menu'
@@ -16,7 +18,7 @@ import type { GitHubRepo } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
 import { applyBaseDir, issueBranchContext, lacksOrigin } from '@minmo/core'
 import { useHost } from '../../app/host'
-import { baseDirOf, baseRepoOf, useHostsStore } from '../../store/hosts'
+import { baseDirOf, baseRepoOf, repoAliasOf, useHostsStore } from '../../store/hosts'
 import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
@@ -39,7 +41,59 @@ export interface RepoNodeProps {
   onOpenSettings(scope: SettingsScope, preview: PreviewIssue | null): void
 }
 
-export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps) {
+/**
+ * 연결 호스트를 정한 저장소는 사이드바의 작업 호스트와 관계없이 그 호스트에서 연다. 연결을 확인하기 전에는
+ * 이슈 목록을 보이지 않는다 — HostScope 가 연결 안 된 원격을 이 PC 로 바꾸므로 이 PC 에 worktree 를 만들 수 있다
+ */
+export function RepoNode(props: RepoNodeProps) {
+  const { repo } = props
+  const alias = useHostsStore((s) => repoAliasOf(s, repo.owner, repo.name))
+  if (alias === undefined) return <RepoNodeBody {...props} />
+  return (
+    <HostGate alias={alias} pending={(status) => <PendingRepoNode {...props} alias={alias ?? ''} status={status} />}>
+      <RepoNodeBody {...props} bound />
+    </HostGate>
+  )
+}
+
+function RepoHostBadge({ label }: { label: string }) {
+  return (
+    <Badge variant="secondary" className="ml-1 px-1 py-0 text-[10px]" title={`연결 호스트: ${label}`} data-testid="repo-host-badge">
+      {label}
+    </Badge>
+  )
+}
+
+/** 연결 호스트에 아직 닿지 않은 저장소 — 이름·상태와 프로젝트 설정(연결 호스트 바꾸기)만 보인다 */
+function PendingRepoNode({ repo, onOpenSettings, alias, status }: RepoNodeProps & { alias: string; status: HostStatus }) {
+  const openSettings = () =>
+    onOpenSettings({ kind: 'project', owner: repo.owner, repo: repo.name }, { owner: repo.owner, repo: repo.name, key: 'etc', number: null, title: '' })
+  return (
+    <div data-testid={`repo-pending-${repo.owner}/${repo.name}`}>
+      <div className="group flex items-center">
+        <div className="flex min-w-0 flex-1 items-center gap-1 px-1 py-1 text-sm text-muted-foreground">
+          <ChevronRightIcon className="size-3.5 opacity-40" />
+          <FolderGit2Icon className="size-3.5" />
+          <span className="truncate">{repo.name}</span>
+          <RepoHostBadge label={alias} />
+        </div>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label={`${repo.name} 프로젝트 설정`}
+          title={`${repo.name} 프로젝트 설정`}
+          onClick={openSettings}
+          className="size-6 shrink-0 text-muted-foreground"
+        >
+          <SettingsIcon className="size-3.5" />
+        </Button>
+      </div>
+      <HostStatusNotice alias={alias} status={status} className="ml-4 grid gap-1.5 border-l py-1 pl-2 text-xs" testId="repo-host-status" />
+    </div>
+  )
+}
+
+function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: RepoNodeProps & { bound?: boolean }) {
   const { api, tauri, home, platform } = useDeps()
   const host = useHost()
   const worktreeId = host.issueId
@@ -148,6 +202,7 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
               <span className="truncate" title={localRepo?.path}>
                 {label}
               </span>
+              {bound && <RepoHostBadge label={host.label} />}
               {hidden && (
                 <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]" title="표시 목록에서 뺐지만 로컬 worktree 가 있어 보입니다">
                   숨김

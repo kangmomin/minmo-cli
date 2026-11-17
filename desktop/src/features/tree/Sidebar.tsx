@@ -5,12 +5,12 @@ import type { GitHubOwner, GitHubRepo } from '@minmo/core'
 
 import type { SettingsScope } from '@minmo/api-client'
 
+import { HostStatusNotice } from '../../app/HostGate'
 import { useHost } from '../../app/host'
 import type { useHostConnection } from '../../app/host'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { ScrollArea } from '../../components/ui/scroll-area'
-import { sshErrorText } from '../../lib/sshHost'
 import { useHostsStore } from '../../store/hosts'
 import { usePeersStore } from '../../store/peers'
 import { useBaseDeps } from '../../app/deps'
@@ -163,31 +163,14 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
       <VisibleReposDialog open={filterOpen} onOpenChange={setFilterOpen} />
       {publishId !== null && <PublishDialog id={publishId} open onOpenChange={(o) => !o && setPublishId(null)} />}
       {!connection.ready && selected !== null && (
-        <div className="grid gap-2 p-3 text-sm" data-testid="host-unavailable">
-          {connection.error ? (
-            <p role="alert" className="rounded bg-destructive/10 p-2 text-destructive">
-              {sshErrorText(selected, connection.error)}
-            </p>
-          ) : (
-            <p role="status" className="text-muted-foreground">
-              {selected} 에 연결하는 중…
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            {/* 처음 접속하는 호스트: 사용자가 고르면 호스트 키를 등록하고 연결한다 */}
-            {connection.error?.kind === 'host_key' && (
-              <Button size="sm" variant="outline" disabled={connection.connecting} onClick={() => void connection.connect(selected, true)}>
-                호스트 키 등록하고 연결
-              </Button>
-            )}
-            <Button size="sm" variant="outline" disabled={connection.connecting} onClick={() => void connection.connect(selected)}>
-              다시 시도
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => void connection.connect(null)}>
-              이 PC 로 전환
-            </Button>
-          </div>
-        </div>
+        <HostStatusNotice
+          alias={selected}
+          status={{ connecting: connection.connecting, error: connection.error, connect: (trustNew) => connection.connect(selected, trustNew) }}
+        >
+          <Button size="sm" variant="ghost" onClick={() => void connection.connect(null)}>
+            이 PC 로 전환
+          </Button>
+        </HostStatusNotice>
       )}
       <ScrollArea className={connection.ready ? 'min-h-0 flex-1' : 'hidden'}>
         <PublishContext.Provider value={setPublishId}>
