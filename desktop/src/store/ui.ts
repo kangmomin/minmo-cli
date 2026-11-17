@@ -49,6 +49,8 @@ export interface UiState {
   fontSize: number
   /** 에이전트가 끝났거나 입력을 기다릴 때 OS 알림을 띄운다(persist) */
   agentNotify: boolean
+  /** 하단 바에 AI 별 사용량을 보인다(persist) */
+  showUsage: boolean
   /** 전체 현황의 필터·정렬·그루핑(persist) */
   agentsView: AgentsView
   /** 에이전트별 실행 명령 틀(persist) — [에이전트 실행] 에서 고치면 저장된다 */
@@ -79,6 +81,7 @@ export interface UiState {
   /** 범위(FONT_SIZE)를 벗어나면 가까운 값으로 맞춘다 */
   setFontSize(n: number): void
   setAgentNotify(v: boolean): void
+  setShowUsage(v: boolean): void
   setAgentsView(patch: Partial<AgentsView>): void
   setTreeAgentsOnly(v: boolean): void
   setAgentCommand(kind: LaunchKind, command: string): void
@@ -122,6 +125,7 @@ export const useUiStore = create<UiState>()(
       theme: 'ghostty',
       fontSize: FONT_SIZE.default,
       agentNotify: true,
+      showUsage: true,
       agentsView: DEFAULT_AGENTS_VIEW,
       treeAgentsOnly: false,
       agentCommands: DEFAULT_AGENT_COMMANDS,
@@ -152,6 +156,7 @@ export const useUiStore = create<UiState>()(
       setTheme: (theme) => set({ theme }),
       setFontSize: (n) => set({ fontSize: clampFontSize(n) }),
       setAgentNotify: (agentNotify) => set({ agentNotify }),
+      setShowUsage: (showUsage) => set({ showUsage }),
       setAgentsView: (patch) => set((s) => ({ agentsView: { ...s.agentsView, ...patch } })),
       setTreeAgentsOnly: (treeAgentsOnly) => set({ treeAgentsOnly }),
       setAgentCommand: (kind, command) => set((s) => ({ agentCommands: { ...s.agentCommands, [kind]: command } })),
@@ -286,6 +291,7 @@ export const useUiStore = create<UiState>()(
         theme: s.theme,
         fontSize: s.fontSize,
         agentNotify: s.agentNotify,
+        showUsage: s.showUsage,
         agentsView: s.agentsView,
         agentCommands: s.agentCommands,
         lastLaunchKind: s.lastLaunchKind,

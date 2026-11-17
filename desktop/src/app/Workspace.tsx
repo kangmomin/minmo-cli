@@ -25,6 +25,7 @@ import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
 import type { PreviewIssue } from '../features/settings/SettingsDialog'
 import { Sidebar } from '../features/tree/Sidebar'
+import { UsageBar } from '../features/usage/UsageBar'
 import { useTerminalOpenShortcut } from '../features/terminal/keys'
 import { useFontSizeShortcuts } from '../lib/fontSize'
 import { openServerSettings } from '../store/server'
@@ -174,6 +175,8 @@ export function Workspace() {
           )}
         </main>
       </div>
+      {/* 사이드바에서 고른 호스트(바깥 HostScope)의 값을 보인다 */}
+      <UsageBar />
 
       <CliAccessDialog open={cliOpen} onOpenChange={setCliOpen} />
       <RemoteAccessDialog open={remoteOpen} onOpenChange={setRemoteOpen} />
