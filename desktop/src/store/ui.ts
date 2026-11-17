@@ -36,8 +36,8 @@ export const DEFAULT_AGENTS_VIEW: AgentsView = { statuses: [], agents: [], query
 
 export const clampFontSize = (n: unknown): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(FONT_SIZE.max, Math.max(FONT_SIZE.min, Math.round(n))) : FONT_SIZE.default
-// Red 스텁(#70) — 구현 단계에서 clampFontSize 와 같은 형태로 채운다
-export const clampSidebarWidth = (_n: unknown): number => SIDEBAR_WIDTH.default
+export const clampSidebarWidth = (n: unknown): number =>
+  typeof n === 'number' && Number.isFinite(n) ? Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, Math.round(n))) : SIDEBAR_WIDTH.default
 const isTheme = (v: unknown): v is Theme => THEME_VALUES.includes(v as Theme)
 
 export interface UiState {
@@ -51,7 +51,7 @@ export interface UiState {
   theme: Theme
   /** 터미널·파일 편집기의 글자 크기(px, persist) */
   fontSize: number
-  /** 사이드바 폭(px) */
+  /** 사이드바 폭(px, persist) */
   sidebarWidth: number
   /** 에이전트가 끝났거나 입력을 기다릴 때 OS 알림을 띄운다(persist) */
   agentNotify: boolean
@@ -164,8 +164,11 @@ export const useUiStore = create<UiState>()(
         }),
       setTheme: (theme) => set({ theme }),
       setFontSize: (n) => set({ fontSize: clampFontSize(n) }),
-      // Red 스텁(#70)
-      setSidebarWidth: () => {},
+      setSidebarWidth: (n) => {
+        const sidebarWidth = clampSidebarWidth(n)
+        // persist 는 set 만 불러도(값이 같아도) localStorage 에 쓴다 — 같은 값이면 set 하지 않는다
+        if (sidebarWidth !== get().sidebarWidth) set({ sidebarWidth })
+      },
       setAgentNotify: (agentNotify) => set({ agentNotify }),
       setShowUsage: (showUsage) => set({ showUsage }),
       setAgentsView: (patch) => set((s) => ({ agentsView: { ...s.agentsView, ...patch } })),
@@ -301,6 +304,7 @@ export const useUiStore = create<UiState>()(
         worktreePathMap: s.worktreePathMap,
         theme: s.theme,
         fontSize: s.fontSize,
+        sidebarWidth: s.sidebarWidth,
         agentNotify: s.agentNotify,
         showUsage: s.showUsage,
         agentsView: s.agentsView,
@@ -319,6 +323,7 @@ export const useUiStore = create<UiState>()(
       merge: (persisted, current) => {
         const state = (persisted ?? {}) as Partial<UiState>
         return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme, fontSize: state.fontSize === undefined ? current.fontSize : clampFontSize(state.fontSize),
+          sidebarWidth: state.sidebarWidth === undefined ? current.sidebarWidth : clampSidebarWidth(state.sidebarWidth),
           // 예전 버전의 저장 값에는 없거나 모양이 다를 수 있다 — 기본값 위에 얹는다
           agentsView: { ...current.agentsView, ...(typeof state.agentsView === 'object' && state.agentsView !== null ? state.agentsView : {}) },
           // 저장된 값이 글자가 아니면 버린다(대화상자가 그 값을 명령으로 쓴다)
