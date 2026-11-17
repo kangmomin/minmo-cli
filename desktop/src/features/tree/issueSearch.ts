@@ -8,9 +8,11 @@ export const ISSUE_SEARCH_MIN = 10
  * 번호는 `42` 와 `#42` 둘 다 받는다 — GitHub 에서 복사한 모양 그대로 찾을 수 있게.
  */
 export function matchesIssue(issue: { number: number | null; title: string }, query: string): boolean {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  // 한글은 같은 글자도 조합형(NFD, macOS 에서 붙여 넣은 글)과 완성형(NFC)이 다르다 — 맞춰서 비교한다
+  const fold = (s: string) => s.normalize('NFC').toLowerCase()
+  const words = fold(query).split(/\s+/).filter(Boolean)
   if (words.length === 0) return true
-  const title = issue.title.toLowerCase()
+  const title = fold(issue.title)
   const number = issue.number === null ? null : String(issue.number)
   return words.every((w) => title.includes(w) || (number !== null && number.includes(w.replace(/^#/, '')) && /^#?\d+$/.test(w)))
 }

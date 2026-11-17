@@ -62,6 +62,9 @@ describe('matchesIssue', () => {
     expect(matchesIssue({ number: 7, title: 'Upgrade to v42' }, '42')).toBe(true)
     expect(matchesIssue({ number: null, title: '기타' }, '기타')).toBe(true)
     expect(matchesIssue({ number: null, title: '기타' }, '1')).toBe(false)
+    // 조합형(NFD)으로 붙여 넣은 한글 제목도 완성형 검색어로 찾는다
+    expect(matchesIssue({ number: 1, title: '로그인'.normalize('NFD') }, '로그인')).toBe(true)
+    expect(matchesIssue({ number: 1, title: '로그인' }, '로그인'.normalize('NFD'))).toBe(true)
   })
 })
 
@@ -93,7 +96,7 @@ describe('이슈 검색', () => {
     const box = screen.getByRole('searchbox', { name: 'widgets 이슈 검색' })
     await user.type(box, 'LOGIN')
     expect(rows()).toEqual(['42'])
-    expect(screen.getByRole('status')).toHaveTextContent('이슈 1개')
+    expect(screen.getByRole('status')).toHaveTextContent('검색 결과 1개')
     await user.clear(box)
     await user.type(box, '#1')
     // 번호에 1 이 들어간 이슈(#10, #1) — ★기타와 #42 는 빠진다
@@ -123,6 +126,7 @@ describe('이슈 검색', () => {
     // 에이전트가 도는 이슈가 없으면 검색 결과도 없다
     useUiStore.setState({ treeAgentsOnly: true })
     await waitFor(() => expect(rows()).toEqual([]))
-    expect(screen.getByText('검색 결과 없음')).toBeInTheDocument()
+    // 무엇이 가렸는지 알린다(검색어가 아니라 에이전트 필터)
+    expect(screen.getByText('에이전트가 도는 이슈 중 검색 결과 없음')).toBeInTheDocument()
   })
 })

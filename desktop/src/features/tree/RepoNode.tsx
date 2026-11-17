@@ -82,6 +82,8 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
   const searching = search.trim() !== ''
   const searchable = entries.length - 1 > ISSUE_SEARCH_MIN || searching
   const shownEntries = searching ? agentEntries.filter(([i]) => matchesIssue(i, search)) : agentEntries
+  // 로컬 저장소(GitHub 아님)는 이슈 대신 작업이라고 부른다
+  const noun = local ? '작업' : '이슈'
 
   // F-08/EC-24: 펼칠 때 effective 로 현재 경로를 계산해 생성 당시 경로와 비교. 오프라인·캐시 없음이면 배지 생략
   const effective = useQuery({
@@ -290,8 +292,8 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
                       setSearch('')
                     }
                   }}
-                  placeholder="이슈 검색(번호·제목)"
-                  aria-label={`${label} 이슈 검색`}
+                  placeholder={`${noun} 검색(번호·제목)`}
+                  aria-label={`${label} ${noun} 검색`}
                   data-testid="issue-search"
                   spellCheck={false}
                   className="h-7 px-2 text-xs"
@@ -301,10 +303,12 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
             {/* 결과 수는 스크린 리더에만 알린다. live region 은 결과가 바뀌기 전에 있어야 변화가 읽힌다 */}
             {searchable && (
               <p role="status" className="sr-only">
-                {searching ? `이슈 ${shownEntries.length}개` : ''}
+                {searching ? `검색 결과 ${shownEntries.length}개` : ''}
               </p>
             )}
-            {searching && !issues.isLoading && shownEntries.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">검색 결과 없음</div>}
+            {searching && !issues.isLoading && shownEntries.length === 0 && (
+              <div className="px-2 py-1 text-xs text-muted-foreground">{agentsOnly ? '에이전트가 도는 이슈 중 검색 결과 없음' : '검색 결과 없음'}</div>
+            )}
             {agentsOnly && !searching && !issues.isLoading && shownEntries.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">에이전트가 도는 이슈 없음</div>}
             {shownEntries.map(([issue, entry]) => (
               <IssueRow

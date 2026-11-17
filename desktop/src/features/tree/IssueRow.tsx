@@ -1,5 +1,5 @@
 import { StarIcon } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
@@ -51,6 +51,15 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
   const [confirm, setConfirm] = useState<DeleteCheck | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // worktree 가 생기거나 없어지면 줄이 목록의 다른 묶음(작업 중 ↔ 나머지)으로 옮겨 간다 — 방금 누른(선택된) 줄이
+  // 화면 밖으로 밀려나지 않게 따라간다. 처음 그릴 때는 움직이지 않는다(사용자가 보던 위치를 바꾸지 않게)
+  const rowRef = useRef<HTMLButtonElement>(null)
+  const hadWorktree = useRef(hasWorktree)
+  useEffect(() => {
+    if (hadWorktree.current === hasWorktree) return
+    hadWorktree.current = hasWorktree
+    if (selected) rowRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [hasWorktree, selected])
   const pathChangedId = useId()
   const deleteReasonId = useId()
   // EC-16: 비활성 사유는 툴팁(마우스 전용)이 아니라 항목 안에 보이고 aria-describedby 로도 읽힌다(AX-04)
@@ -75,6 +84,7 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <button
+            ref={rowRef}
             type="button"
             data-testid={`issue-row-${issue.key}`}
             // worktree 유무는 화면에 표시하지 않는다 — 테스트가 읽는 값이다
