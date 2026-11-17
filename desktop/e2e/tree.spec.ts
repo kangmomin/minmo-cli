@@ -44,6 +44,38 @@ test('이슈 등록 → 목록에 추가(선택·worktree 는 그대로)', async
   await expect(page.getByTestId('issue-branch')).toHaveCount(0)
 })
 
+test('#64 머리줄에서 이슈 수정 → 머리줄·트리 제목이 바뀌고, 이유를 골라 닫으면 [닫힘](worktree 는 그대로)', async ({ page }) => {
+  const patches: unknown[] = []
+  page.on('request', (r) => {
+    if (r.method() === 'PATCH' && r.url().endsWith('/repos/my-org/widgets/issues/42')) patches.push(r.postDataJSON())
+  })
+  await expandWidgets(page)
+  await page.getByTestId('issue-row-42').click()
+  await expect(page.getByTestId('issue-branch')).toHaveText('feat/42')
+  const header = page.getByTestId('issue-header')
+  const dialog = page.getByRole('dialog')
+
+  await header.getByRole('button', { name: '이슈 수정' }).click()
+  await expect(dialog.getByLabel('본문')).toHaveValue('로그인 화면을 만든다')
+  await dialog.getByLabel('제목').fill('로그인 화면')
+  await dialog.getByRole('button', { name: '저장' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(header).toContainText('#42 로그인 화면')
+  await expect(page.getByTestId('issue-row-42')).toContainText('로그인 화면')
+
+  await header.getByRole('button', { name: '이슈 닫기' }).click()
+  await dialog.getByRole('radio', { name: '계획 없음' }).click()
+  await dialog.getByRole('button', { name: '이슈 닫기' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(header.getByTestId('issue-closed-badge')).toBeVisible()
+  await expect(header.getByRole('button', { name: '이슈 닫기' })).toHaveCount(0)
+  // worktree 가 있으므로 트리에 [닫힘] 으로 남는다(A-10)
+  await expect(page.getByTestId('issue-row-42')).toContainText('닫힘')
+  await expect(page.getByTestId('issue-row-42')).toHaveAttribute('data-worktree', 'true')
+  // 바뀐 필드만 보낸다
+  expect(patches).toEqual([{ title: '로그인 화면' }, { state: 'closed', state_reason: 'not_planned' }])
+})
+
 test('새로고침 버튼 → 트리 재조회', async ({ page }) => {
   let issueCalls = 0
   page.on('request', (r) => {
