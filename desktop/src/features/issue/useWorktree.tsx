@@ -1,6 +1,6 @@
 // worktree 서비스 배선(앱 수명 1개) + 이슈 열기/취소/재실행/삭제 액션
 import { useQueryClient } from '@tanstack/react-query'
-import { createContext, useContext, useMemo, useRef } from 'react'
+import { createContext, useCallback, useContext, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
 
 import { ApiError, normalizePath } from '@minmo/api-client'
@@ -118,80 +118,90 @@ export function describeOpenError(e: unknown): { code: string; message: string; 
   return { code: 'unknown', message: e instanceof Error ? e.message : String(e) }
 }
 
-export function useIssueActions() {
-  const { service, host } = useWorktreeService()
+/** 호스트의 worktree 서비스로 이슈를 다루는 동작들 */
+function issueActionsOf(service: WorktreeService, host: Host) {
   const worktreeId = host.issueId
+  return {
+    /** 이슈 선택 + worktree 준비(AC-05~07). 이미 있으면 전환(AC-06) */
+    async open(t: IssueTarget) {
+      const id = worktreeId(t.owner, t.repo, t.key)
+      const st = useSetupStore.getState()
+      st.setTarget(id, t)
+      useUiStore.getState().selectIssue(id)
+      const prev = st.open[id]
+      if (prev?.phase === 'opening') return
+      if (prev?.phase === 'ready') {
+        // 전환(AC-06): 터미널 세션을 유지하도록 상태를 바꾸지 않고, 배경에서 경로 변경 여부만 갱신
+        if (st.script[id]?.status === 'running') return
+        service
+          .openIssue(t)
+          .then((res) =>
+            useSetupStore.getState().setOpen(id, { phase: 'ready', path: res.path, branch: res.branch, pathChanged: res.pathChanged }),
+          )
+          .catch(() => undefined)
+        return
+      }
+      st.clearLog(id)
+      st.setOpen(id, { phase: 'opening' })
+      try {
+        const res = await service.openIssue(t)
+        useSetupStore.getState().setOpen(id, { phase: 'ready', path: res.path, branch: res.branch, pathChanged: res.pathChanged })
+        if (res.script.status !== 'skipped') useSetupStore.getState().setScript(id, res.script)
+      } catch (e) {
+        useSetupStore.getState().setOpen(id, { phase: 'error', ...describeOpenError(e) })
+      }
+    },
+    async cancelSetup(t: IssueTarget) {
+      try {
+        await service.cancelSetup(t)
+      } catch (e) {
+        const id = worktreeId(t.owner, t.repo, t.key)
+        useSetupStore.getState().appendLog({ issueId: id, step: 'script', status: 'error', message: describeOpenError(e).message })
+      }
+    },
+    async rerunScript(t: IssueTarget) {
+      const id = worktreeId(t.owner, t.repo, t.key)
+      const st = useSetupStore.getState()
+      st.setScript(id, { status: 'running' })
+      try {
+        st.setScript(id, await service.rerunScript(t))
+      } catch (e) {
+        // 실행 전 실패(worktree 없음·설정 조회 실패 등)로 'running' 에 멈추지 않도록 실패로 표시
+        st.appendLog({ issueId: id, step: 'script', status: 'error', message: describeOpenError(e).message })
+        st.setScript(id, { status: 'failed', exitCode: null })
+      }
+    },
+    inspect: (t: IssueTarget) => service.inspect(t),
+    localFilesDir: (t: IssueTarget) => service.localFilesDirFor(t),
+    async remove(t: IssueTarget, confirmed = false): Promise<DeleteResult> {
+      const res = await service.deleteWorktree(t, { confirmed })
+      if (res.status === 'deleted') {
+        const id = worktreeId(t.owner, t.repo, t.key)
+        useSetupStore.setState((s) => {
+          const open = { ...s.open }
+          delete open[id]
+          const script = { ...s.script }
+          delete script[id]
+          return { open, script }
+        })
+        // 지운 worktree 의 편집 내용이 다시 만든 worktree 에 나타나지 않게
+        fileDrafts.clearScope(id)
+      }
+      return res
+    },
+  }
+}
 
-  return useMemo(
-    () => ({
-      /** 이슈 선택 + worktree 준비(AC-05~07). 이미 있으면 전환(AC-06) */
-      async open(t: IssueTarget) {
-        const id = worktreeId(t.owner, t.repo, t.key)
-        const st = useSetupStore.getState()
-        st.setTarget(id, t)
-        useUiStore.getState().selectIssue(id)
-        const prev = st.open[id]
-        if (prev?.phase === 'opening') return
-        if (prev?.phase === 'ready') {
-          // 전환(AC-06): 터미널 세션을 유지하도록 상태를 바꾸지 않고, 배경에서 경로 변경 여부만 갱신
-          if (st.script[id]?.status === 'running') return
-          service
-            .openIssue(t)
-            .then((res) =>
-              useSetupStore.getState().setOpen(id, { phase: 'ready', path: res.path, branch: res.branch, pathChanged: res.pathChanged }),
-            )
-            .catch(() => undefined)
-          return
-        }
-        st.clearLog(id)
-        st.setOpen(id, { phase: 'opening' })
-        try {
-          const res = await service.openIssue(t)
-          useSetupStore.getState().setOpen(id, { phase: 'ready', path: res.path, branch: res.branch, pathChanged: res.pathChanged })
-          if (res.script.status !== 'skipped') useSetupStore.getState().setScript(id, res.script)
-        } catch (e) {
-          useSetupStore.getState().setOpen(id, { phase: 'error', ...describeOpenError(e) })
-        }
-      },
-      async cancelSetup(t: IssueTarget) {
-        try {
-          await service.cancelSetup(t)
-        } catch (e) {
-          const id = worktreeId(t.owner, t.repo, t.key)
-          useSetupStore.getState().appendLog({ issueId: id, step: 'script', status: 'error', message: describeOpenError(e).message })
-        }
-      },
-      async rerunScript(t: IssueTarget) {
-        const id = worktreeId(t.owner, t.repo, t.key)
-        const st = useSetupStore.getState()
-        st.setScript(id, { status: 'running' })
-        try {
-          st.setScript(id, await service.rerunScript(t))
-        } catch (e) {
-          // 실행 전 실패(worktree 없음·설정 조회 실패 등)로 'running' 에 멈추지 않도록 실패로 표시
-          st.appendLog({ issueId: id, step: 'script', status: 'error', message: describeOpenError(e).message })
-          st.setScript(id, { status: 'failed', exitCode: null })
-        }
-      },
-      inspect: (t: IssueTarget) => service.inspect(t),
-      localFilesDir: (t: IssueTarget) => service.localFilesDirFor(t),
-      async remove(t: IssueTarget, confirmed = false): Promise<DeleteResult> {
-        const res = await service.deleteWorktree(t, { confirmed })
-        if (res.status === 'deleted') {
-          const id = worktreeId(t.owner, t.repo, t.key)
-          useSetupStore.setState((s) => {
-            const open = { ...s.open }
-            delete open[id]
-            const script = { ...s.script }
-            delete script[id]
-            return { open, script }
-          })
-          // 지운 worktree 의 편집 내용이 다시 만든 worktree 에 나타나지 않게
-          fileDrafts.clearScope(id)
-        }
-        return res
-      },
-    }),
-    [service, worktreeId],
-  )
+export type IssueActions = ReturnType<typeof issueActionsOf>
+
+export function useIssueActions(): IssueActions {
+  const { service, host } = useWorktreeService()
+  return useMemo(() => issueActionsOf(service, host), [service, host])
+}
+
+/** 영역(HostScope) 밖에서 호스트를 골라 쓴다 — 다른 PC 의 링크처럼 열 이슈의 호스트가 그때 정해질 때 */
+export function useIssueActionsFor(): (host: Host) => IssueActions {
+  const serviceFor = useContext(WorktreeContext)
+  if (!serviceFor) throw new Error('WorktreeProvider 가 없습니다')
+  return useCallback((host: Host) => issueActionsOf(serviceFor(host), host), [serviceFor])
 }

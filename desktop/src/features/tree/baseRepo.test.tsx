@@ -22,7 +22,7 @@ const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git versio
 
 beforeEach(() => {
   localStorage.clear()
-  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: null, error: null, baseRepos: {} })
+  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: {}, errors: {}, baseRepos: {} })
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online' })
   useSetupStore.setState(useSetupStore.getInitialState(), true)

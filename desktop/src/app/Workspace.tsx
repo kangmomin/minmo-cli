@@ -28,7 +28,8 @@ import { Sidebar } from '../features/tree/Sidebar'
 import { useTerminalOpenShortcut } from '../features/terminal/keys'
 import { useFontSizeShortcuts } from '../lib/fontSize'
 import { openServerSettings } from '../store/server'
-import { HostScope, aliasOfIssue, useHostConnection } from './host'
+import { HostStatusNotice } from './HostGate'
+import { HostScope, aliasOfIssue, useHostConnection, useHostStatus } from './host'
 import { useSessionStore } from '../store/session'
 import { useSetupStore } from '../store/setup'
 import { useUiStore } from '../store/ui'
@@ -72,6 +73,9 @@ export function Workspace() {
   const connection = useHostConnection()
 
   const selectedPreview: PreviewIssue | null = target ?? null
+  const issueAlias = selectedId ? aliasOfIssue(selectedId) : null
+  // 고른 이슈의 호스트에 아직 연결하지 않았으면 연결한다(앱을 다시 켠 뒤, 호스트 정보를 고친 뒤 등)
+  const issueHost = useHostStatus(issueAlias)
 
   // 사이드바·설정은 고른 호스트 기준, 오른쪽 이슈 패널은 그 이슈가 있는 호스트 기준이다
   // (사이드바에서 다른 호스트를 보는 동안에도 열어 둔 이슈와 터미널은 그대로 쓴다)
@@ -161,11 +165,20 @@ export function Workspace() {
         />
         <main className={`flex min-w-0 flex-1 flex-col ${showTree ? 'max-md:hidden' : ''}`}>
           {target && selectedId ? (
-            <HostScope alias={aliasOfIssue(selectedId)}>
-              <IssueHeader target={target} state={openState} />
-              {/* key: 접힘 상태가 다른 이슈로 이어지지 않게 이슈마다 새로 마운트한다(CR-13) */}
-              <WorktreeSetupLog key={selectedId} target={target} />
-              <WorkTabs target={target} state={openState} />
+            <HostScope alias={issueAlias}>
+              {/* 연결 전에는 HostScope 가 이 PC 로 바뀌어 id 가 맞지 않고 [다시 열기] 가 이 PC 에서 연다 — 연결 상태를 대신 보인다 */}
+              {issueHost.ready ? (
+                <>
+                  <IssueHeader target={target} state={openState} />
+                  {/* key: 접힘 상태가 다른 이슈로 이어지지 않게 이슈마다 새로 마운트한다(CR-13) */}
+                  <WorktreeSetupLog key={selectedId} target={target} />
+                </>
+              ) : (
+                <HostStatusNotice alias={issueAlias ?? ''} status={issueHost} className="grid gap-2 border-b p-4 text-sm" testId="issue-host-status" />
+              )}
+              {/* 터미널 탭은 모든 이슈의 터미널을 들고 있어 항상 둔다(내리면 다른 호스트의 터미널·에이전트 추적도 끊긴다).
+                  연결 전에는 이 이슈의 작업 상태만 감춘다 */}
+              <WorkTabs target={target} issueId={selectedId} state={issueHost.ready ? openState : undefined} />
             </HostScope>
           ) : (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">

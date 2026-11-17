@@ -19,16 +19,19 @@ import { TerminalTab } from '../terminal/TerminalTab'
  */
 export interface WorkTabsProps {
   target: IssueTarget
+  /** 이슈 id(호스트 접두어 포함). 없으면 이 영역의 호스트로 만든다 — 호스트에 연결하기 전에도 맞는 id 를 쓰도록 넘긴다 */
+  issueId?: string
   state: IssueOpenState | undefined
 }
 
-export function WorkTabs({ target, state }: WorkTabsProps) {
+export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
   const tab = useUiStore((s) => s.tab)
   const setTab = useUiStore((s) => s.setTab)
   const open = useSetupStore((s) => s.open)
   const probes = useHostsStore((s) => s.probes)
   const useTmux = useHostsStore((s) => s.useTmux)
-  const id = useHost().issueId(target.owner, target.repo, target.key)
+  const scopedId = useHost().issueId(target.owner, target.repo, target.key)
+  const id = issueId ?? scopedId
   const terminalTrigger = useRef<HTMLButtonElement>(null)
 
   const sessions = useMemo(

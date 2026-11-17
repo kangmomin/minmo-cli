@@ -5,10 +5,11 @@ import { useCallback, useMemo } from 'react'
 
 import { isOfflineError } from '../../lib/apiErrors'
 import { useDeps } from '../../app/deps'
-import { coreIdOf, useHost } from '../../app/host'
+import { aliasOfIssue, coreIdOf, hostOf, useHost, useHostDeps } from '../../app/host'
 import { GitHubError, worktreeId as coreWorktreeId } from '@minmo/core'
 import type { GitHubIssue, GitHubOwner } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
+import { useHostsStore } from '../../store/hosts'
 import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
@@ -79,22 +80,25 @@ export function useIssues(owner: string, repo: string, enabled: boolean) {
 /** AC-04 새로고침: GitHub 목록 재조회 + 로컬 worktree 존재 여부(●) 재확인 */
 export function useRefreshTree() {
   const queryClient = useQueryClient()
-  const { tauri } = useDeps()
-  const host = useHost()
+  const depsOf = useHostDeps()
   return useCallback(async () => {
     const map = useUiStore.getState().worktreePathMap
+    const probes = useHostsStore.getState().probes
     await Promise.all(
-      // 지금 보는 호스트의 기록만 확인한다 — 다른 호스트의 경로를 여기서 찾으면 없는 것으로 보여 지워진다
-      Object.entries(map)
-        .filter(([id]) => host.owns(id))
-        .map(async ([id, entry]) => {
-          const exists = await tauri.pathExists(entry.path).catch(() => true)
-          if (!exists) useUiStore.getState().removeWorktree(id)
-        }),
+      // 연결을 확인한 호스트(이 PC 포함)의 기록만 그 호스트에서 확인한다 — 저장소마다 호스트가 다를 수 있고,
+      // 다른 호스트의 경로를 엉뚱한 곳에서 찾으면 없는 것으로 보여 지워진다
+      Object.entries(map).map(async ([id, entry]) => {
+        const alias = aliasOfIssue(id)
+        if (alias !== null && !probes[alias]) return
+        const exists = await depsOf(hostOf(alias))
+          .tauri.pathExists(entry.path)
+          .catch(() => true)
+        if (!exists) useUiStore.getState().removeWorktree(id)
+      }),
     )
     await queryClient.invalidateQueries({ queryKey: queryKeys.githubAll })
     if (useSessionStore.getState().status === 'online') await queryClient.invalidateQueries({ queryKey: queryKeys.effectiveAll })
-  }, [queryClient, tauri, host])
+  }, [queryClient, depsOf])
 }
 
 /** GitHub 오류 → 트리 인라인 문구 (EC-18 재시도 가능 시각 포함) */

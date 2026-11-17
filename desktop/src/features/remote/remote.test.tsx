@@ -425,6 +425,15 @@ describe('store 의 함께 쓰는 부분', () => {
     useHostsStore.setState({ aliases: [], useTmux: false, baseRepos: {}, baseDirs: {} })
   })
 
+  it('저장소별 연결 호스트: 호스트 id 형식(local · ssh:<별칭>)인 값만 받는다', () => {
+    useHostsStore.setState({ repoHosts: { 'a/b': 'local' } })
+    applySharedHosts({ repoHosts: 'nope' })
+    expect(useHostsStore.getState().repoHosts).toEqual({ 'a/b': 'local' })
+    applySharedHosts({ repoHosts: { 'a/b': 'ssh:srv', 'c/d': 'local', 'e/f': 'srv', 'g/h': 'ssh:', 'i/j': 3 } })
+    expect(useHostsStore.getState().repoHosts).toEqual({ 'a/b': 'ssh:srv', 'c/d': 'local' })
+    useHostsStore.setState({ repoHosts: {} })
+  })
+
   it('기준 저장소 폴더: 화면마다 처음 한 번은 이 화면의 값을 호스트의 값에 합치고(옛 값 보존), 그 뒤로는 호스트의 값이 기준이다', async () => {
     localStorage.clear()
     const binding = (stored: string) => {

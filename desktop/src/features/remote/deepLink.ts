@@ -9,9 +9,12 @@ import { useEffect } from 'react'
 
 import type { IssueTarget } from '@minmo/core'
 
+import { useBaseDeps } from '../../app/deps'
+import { aliasOfIssue, hostOf, probeHost } from '../../app/host'
 import { storedDeviceToken } from '../../lib/tauri.remote'
+import { repoAliasOf, useHostsStore } from '../../store/hosts'
 import { useUiStore } from '../../store/ui'
-import { useIssueActions } from '../issue/useWorktree'
+import { useIssueActionsFor } from '../issue/useWorktree'
 
 export type DeepLink = { device: string | null; open: { target: IssueTarget; paneId: string | null } | null }
 
@@ -55,24 +58,39 @@ export function takePendingOpen(tokenInUse: string | null): NonNullable<DeepLink
   return p && tokenInUse !== null && p.device === tokenInUse ? p.open : null
 }
 
+/**
+ * 링크의 이슈를 열 호스트의 별칭(이 PC 는 null) — 패널이 있으면 그 패널의 호스트(패널 id 가 이슈 id 로 시작한다),
+ * 없으면 저장소의 연결 호스트, 그것도 없으면 이 PC
+ */
+export function deepLinkAlias(open: NonNullable<DeepLink['open']>): string | null {
+  if (open.paneId) return aliasOfIssue(open.paneId)
+  return repoAliasOf(useHostsStore.getState(), open.target.owner, open.target.repo) ?? null
+}
+
 /** 작업 화면이 뜬 뒤: 넘겨받은 이슈를 열고 터미널 탭·그 패널로 간다 */
 export function useDeepLinkOpen() {
-  const actions = useIssueActions()
+  const actionsFor = useIssueActionsFor()
+  const { tauri } = useBaseDeps()
   useEffect(() => {
-    const run = () => {
+    const run = async () => {
       if (!pending) return
       const open = takePendingOpen(storedDeviceToken())
       if (!open) return
-      void Promise.resolve(actions.open(open.target)).then(() => {
-        const ui = useUiStore.getState()
-        ui.setTab('terminal')
-        const issueId = ui.selectedIssueId
-        if (issueId && open.paneId) ui.focusPane(issueId, open.paneId)
-      })
+      const alias = deepLinkAlias(open)
+      // 원격이면 연결한 뒤에 그 호스트에서 연다 — 연결하지 못하면 열지 않는다(이 PC 에서 열지 않게)
+      if (alias !== null && !useHostsStore.getState().probes[alias]) await probeHost(tauri, alias)
+      const probe = alias === null ? undefined : useHostsStore.getState().probes[alias]
+      if (alias !== null && !probe) return
+      await actionsFor(hostOf(alias, probe?.tmux ?? false)).open(open.target)
+      const ui = useUiStore.getState()
+      ui.setTab('terminal')
+      const issueId = ui.selectedIssueId
+      if (issueId && open.paneId) ui.focusPane(issueId, open.paneId)
     }
-    run()
-    window.addEventListener(OPEN_EVENT, run)
-    return () => window.removeEventListener(OPEN_EVENT, run)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 처음 한 번만 건다(actions 는 매 렌더 새 객체일 수 있다)
+    const onOpen = () => void run()
+    onOpen()
+    window.addEventListener(OPEN_EVENT, onOpen)
+    return () => window.removeEventListener(OPEN_EVENT, onOpen)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 처음 한 번만 건다(actionsFor·tauri 는 앱 수명 동안 같다)
   }, [])
 }

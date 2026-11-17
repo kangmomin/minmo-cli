@@ -24,7 +24,7 @@ const cfg = (alias: string, hostName: string | null = null, user: string | null 
 
 beforeEach(() => {
   localStorage.clear()
-  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: null, error: null, useTmux: false })
+  useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: {}, errors: {}, useTmux: false })
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online' })
   useUiStore.setState({ expanded: {}, worktreePathMap: {}, selectedIssueId: null })
