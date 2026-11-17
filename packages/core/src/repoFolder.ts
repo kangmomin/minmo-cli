@@ -1,4 +1,4 @@
-// 사용자가 고른 폴더가 기준 저장소(원본 위치)로 쓸 수 있는 git 저장소인지 확인한다 — 데스크탑·원격 CLI 공용.
+// 사용자가 고른 폴더가 기준 저장소(원본 위치)로 쓸 수 있는 git 저장소인지 확인한다.
 import { expandHome, normalizePath } from '@minmo/api-client'
 import type { Platform } from '@minmo/api-client'
 

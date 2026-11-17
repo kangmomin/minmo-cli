@@ -146,6 +146,15 @@ describe('note', () => {
     expect(await readFile(path, 'utf8')).toBe('mine')
     expect(ctx.api.putNotes).toHaveBeenCalledWith('Acme', 'Widgets', '7', { body: 'mine', baseUpdatedAt: 't1' })
   })
+
+  it('편집기가 CRLF 로 저장해도 바꾸지 않았으면 올리지 않고, 바꿨으면 LF 로 올린다', async () => {
+    const ctx = await createTestCtx({ api: { getNotes: async () => ({ body: 'a\nb', updatedAt: 't1' }) } })
+    await note(ctx, 'Acme/Widgets#7', { edit: async () => 'a\r\nb' })
+    expect(ctx.logs.at(-1)).toBe('변경 없음')
+    expect(ctx.api.putNotes).not.toHaveBeenCalled()
+    await note(ctx, 'Acme/Widgets#7', { edit: async () => 'a\r\nc' })
+    expect(ctx.api.putNotes).toHaveBeenCalledWith('Acme', 'Widgets', '7', { body: 'a\nc', baseUpdatedAt: 't1' })
+  })
 })
 
 describe('명령어 구성', () => {

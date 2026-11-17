@@ -1,16 +1,12 @@
 // 데스크탑과 공유하는 데이터(보일 저장소·설정) — PC 의 minmo 서버(SSH 역터널) 값을 읽고 쓴다.
 import { ApiError } from '@minmo/api-client'
 import type { ApiClient, Effective, Me, SettingsField, SettingsInput, SettingsRecord, SettingsScope, SettingsSource } from '@minmo/api-client'
-import { SETTING_FIELDS, isOfflineError } from '@minmo/core'
+import { SETTING_FIELDS } from '@minmo/core'
 import type { RepoSelection } from '@minmo/core'
 
 import { CliError, serverErrorMessage } from './errors'
 import type { ServerTarget } from './server'
 import type { Credentials } from './store'
-
-/** server: 서버 값 · offline: 서버에 닿지 않음(목록 명령은 오류로 바꾼다) */
-export type SelectionOrigin = 'server' | 'offline'
-export type Selection = { repos: RepoSelection; origin: SelectionOrigin }
 
 export const SOURCE_LABEL: Record<SettingsSource, string> = {
   global: '전역',
@@ -20,10 +16,9 @@ export const SOURCE_LABEL: Record<SettingsSource, string> = {
 /** 한 scope 에 저장된 값 — null 은 이 scope 에 값 없음(상속) */
 export type ScopeValues = Record<SettingsField, string | null> & { updatedAt?: string | null }
 
+/** 서버 호출만 감싼다 — 로그인 확인은 명령이 requireLogin 으로 먼저 한다 */
 export interface Backend {
-  /** 로그인·계정 확인 */
-  ready(): Promise<{ login: string }>
-  getSelection(): Promise<Selection>
+  getSelection(): Promise<RepoSelection>
   /** 현재 선택을 바꿔 저장하고 저장된 값을 돌려준다 */
   updateSelection(change: (cur: string[] | null) => string[] | null): Promise<RepoSelection>
   getEffective(owner: string, repo: string): Promise<Effective>
@@ -49,24 +44,20 @@ export async function checkLogin(api: ApiClient, creds: Credentials | null, serv
   return me
 }
 
-type ServerDeps = { api: ApiClient; server: ServerTarget; creds: Credentials | null }
+type ServerDeps = { api: ApiClient; server: ServerTarget }
 
 export function serverBackend(d: ServerDeps): Backend {
   const fail = (e: unknown) => new CliError(serverErrorMessage(e, d.server))
   const fields = (rec: SettingsRecord) => Object.fromEntries(SETTING_FIELDS.map((f) => [f, rec[f]])) as Record<SettingsField, string | null>
 
   return {
-    ready: async () => ({ login: (await checkLogin(d.api, d.creds, d.server)).githubLogin }),
-
-    async getSelection() {
-      try {
-        const { repos } = await d.api.getVisibleRepos()
-        return { repos, origin: 'server' }
-      } catch (e) {
-        if (isOfflineError(e)) return { repos: null, origin: 'offline' }
-        throw fail(e)
-      }
-    },
+    getSelection: () =>
+      d.api.getVisibleRepos().then(
+        (v) => v.repos,
+        (e: unknown) => {
+          throw fail(e)
+        },
+      ),
 
     // 읽고 → 바꾸고 → baseUpdatedAt 으로 저장. 다른 기기가 먼저 바꿨으면(409) 한 번 다시 시도한다
     async updateSelection(change) {

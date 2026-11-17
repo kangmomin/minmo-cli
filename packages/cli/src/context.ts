@@ -39,7 +39,7 @@ export async function createContext(o: CreateContextOptions = {}): Promise<Ctx> 
   const session = creds?.session ?? null
   const api = o.api ?? createServerApi(server, () => session)
   const out = o.out ?? { log: (s) => console.log(s), error: (s) => console.error(s) }
-  return { paths, data: serverBackend({ api, server, creds }), server, api, creds, out }
+  return { paths, data: serverBackend({ api, server }), server, api, creds, out }
 }
 
 /** 서버 로그인·계정 확인 */

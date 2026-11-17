@@ -447,7 +447,7 @@ CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인�
 | `minmo sessions [revoke <id>]` | 로그인된 기기 |
 | `minmo update [--check]` | 새 버전으로 업데이트 |
 
-- `minmo` 만 입력하면 도움말을 보여 준다.
+- `minmo` 만 입력하면 도움말을 보여 준다(명령을 주지 않았으므로 종료 코드 1). 없는 명령은 `unknown command` 로 알린다.
 - 이전 버전의 TUI 와 `ls`·`new`·`open`·`rm`·`mode`(로컬 모드)·`terminal`·`base-dir`·`base-repo` 는 없앴다. worktree·터미널·이슈 등록은 데스크탑(원격 호스트 포함)에서 한다.
 - 설정의 경로는 기기 간에 공유되므로 `~` 로 시작하게 둔다.
 

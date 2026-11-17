@@ -1,5 +1,5 @@
-// 데스크탑(Tauri)·원격 CLI(Node)가 각자 구현하는 OS 접근 인터페이스.
-// 도메인 로직(worktree·GitHub)은 이 인터페이스에만 의존하므로 두 앱이 같은 코드를 쓴다.
+// OS 접근 인터페이스 — 데스크탑의 TauriApi(서비스의 `tauri` 인자)가 구현하고, 테스트는 가짜 구현을 쓴다.
+// 도메인 로직(worktree·GitHub)은 이 인터페이스에만 의존한다.
 
 export type CmdResult = { code: number; stdout: string; stderr: string }
 export type RunOptions = { cwd?: string; env?: Record<string, string> }

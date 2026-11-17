@@ -34,6 +34,8 @@ export function editInEditor(initial: string, env: NodeJS.ProcessEnv = process.e
       const r = /\s/.test(cmd)
         ? spawnSync(`${cmd} ${JSON.stringify(file)}`, { stdio: 'inherit', shell: true })
         : spawnSync(cmd, [file], { stdio: 'inherit' })
+      // 실행 자체가 실패(ENOENT 등)하면 status 가 null 이다 — Windows 의 code.cmd 같은 셸 스크립트는 셸 없이 실행되지 않는다
+      if (r.error) throw new CliError(`편집기를 실행할 수 없습니다: ${cmd} (${r.error.message}) — EDITOR 에 전체 경로나 "code --wait" 처럼 지정하세요`)
       if (r.status !== 0) throw new CliError(`편집기가 오류로 끝났습니다: ${cmd}`)
       return await readFile(file, 'utf8')
     } finally {
@@ -48,8 +50,10 @@ export async function note(ctx: Ctx, refText: string, opts: { edit?: (body: stri
   const cur = await ctx.api.getNotes(ref.owner, ref.repo, ref.key).catch((e: unknown) => {
     throw new CliError(serverErrorMessage(e, ctx.server))
   })
-  const body = await (opts.edit ?? editInEditor)(cur.body)
-  if (body === cur.body) return ctx.out.log('변경 없음')
+  // Windows 편집기가 CRLF 로 저장해도 바꾸지 않은 메모를 다시 올리지 않게 LF 로 맞춰 비교·저장한다
+  const lf = (s: string) => s.replace(/\r\n/g, '\n')
+  const body = lf(await (opts.edit ?? editInEditor)(cur.body))
+  if (body === lf(cur.body)) return ctx.out.log('변경 없음')
   try {
     await ctx.api.putNotes(ref.owner, ref.repo, ref.key, { body, baseUpdatedAt: cur.updatedAt })
     ctx.out.log('메모를 저장했습니다')

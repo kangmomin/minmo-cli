@@ -238,7 +238,7 @@ function parseWorktreeList(stdout: string): { path: string; head: string }[] {
   return out
 }
 
-/** 생성 후 스크립트는 실행 셸이 OS 마다 달라 두 벌이다 — Windows 는 PowerShell, 그 외(macOS·원격 CLI)는 sh */
+/** 생성 후 스크립트는 실행 셸이 OS 마다 달라 두 벌이다 — Windows 는 PowerShell, 그 외(macOS·Linux·원격 호스트)는 sh */
 export function scriptFor(values: Pick<SettingsValues, 'postCreateScript' | 'postCreateScriptPosix'>, platform: Platform): string {
   return platform === 'win32' ? values.postCreateScript : values.postCreateScriptPosix
 }
