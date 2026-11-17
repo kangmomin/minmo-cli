@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/too
 import type { DeleteCheck, IssueTarget } from '@minmo/core'
 import { cn } from '../../lib/utils'
 import { isLocalOwner, useRepoLabel, useReposStore } from '../../store/repos'
+import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { IssueAgentDot } from '../agents/AgentBadge'
 import { describeOpenError, useIssueActions } from '../issue/useWorktree'
@@ -40,7 +41,7 @@ function countText(label: string, n: number | null) {
   )
 }
 
-/** 이슈 행: 클릭 = 열기, 왼쪽 점 = 에이전트 상태, 닫힘·경로 변경 배지, 컨텍스트 메뉴 "worktree 삭제" */
+/** 이슈 행: 클릭 = 열기(터미널이 떠 있으면 그 터미널로 포커스), 왼쪽 점 = 에이전트 상태, 닫힘·경로 변경 배지, 컨텍스트 메뉴 "worktree 삭제" */
 export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged, selected }: IssueRowProps) {
   const actions = useIssueActions()
   const isEtc = issue.key === 'etc'
@@ -91,7 +92,13 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
             data-worktree={hasWorktree ? 'true' : undefined}
             aria-current={selected ? 'true' : undefined}
             aria-describedby={pathChanged ? pathChangedId : undefined}
-            onClick={() => void actions.open(target)}
+            onClick={() => {
+              // 고르기 전에 본다 — 준비 중인 이슈에는 터미널이 없다(#78: 그때는 포커스를 옮기지 않는다)
+              const ready = useSetupStore.getState().open[issueId]?.phase === 'ready'
+              void actions.open(target)
+              // selectIssue 와 같은 이벤트에서 요청해야 새 이슈의 터미널이 보이는 렌더에서 포커스한다
+              if (ready) useUiStore.getState().focusIssueTerminal(issueId)
+            }}
             className={cn(
               'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-sm hover:bg-accent',
               selected && 'bg-accent font-medium',
