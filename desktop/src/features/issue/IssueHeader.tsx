@@ -9,6 +9,7 @@ import { useRepoLabel } from '../../store/repos'
 import type { IssueOpenState } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { LaunchAgentDialog } from '../agents/LaunchAgentDialog'
+import { IssueManageActions } from './IssueManageActions'
 import { LocalFilesDialog } from './LocalFilesDialog'
 import { useIssueActions } from './useWorktree'
 
@@ -52,9 +53,13 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
           기타
         </span>
       ) : (
-        <span className="min-w-0 truncate font-medium">
-          #{target.number} {target.title}
-        </span>
+        <>
+          <span className="min-w-0 truncate font-medium">
+            #{target.number} {target.title}
+          </span>
+          {/* worktree 준비 상태와 관계없이 둔다 — 열기에 실패한 이슈도 고치거나 닫을 수 있게(#64) */}
+          <IssueManageActions key={issueId} target={{ ...target, number: target.number }} />
+        </>
       )}
       {state?.phase === 'ready' && (
         <>
