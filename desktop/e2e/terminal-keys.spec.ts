@@ -77,7 +77,8 @@ test('글자를 선택하고 Ctrl+C 를 누르면 복사된다 · 선택이 없�
 })
 
 test('Ctrl + / Ctrl - / Ctrl 0 으로 터미널과 파일 편집기의 글자 크기를 바꾼다 — 다시 열어도 유지', async ({ page }) => {
-  const termSize = () => page.locator('[data-testid="terminal-pane"] .xterm-rows').evaluate((el) => getComputedStyle(el).fontSize)
+  // 글자는 WebGL canvas 에 그려지므로, xterm 이 글자 크기를 그대로 적어 두는 접근성 층(screenReaderMode)에서 읽는다
+  const termSize = () => page.locator('[data-testid="terminal-pane"] .xterm-accessibility').evaluate((el) => getComputedStyle(el).fontSize)
   expect(await termSize()).toBe('13px')
   await page.getByLabel('터미널 입력').focus()
   await page.keyboard.press('Control+=')

@@ -2,6 +2,7 @@
 // 이슈를 전환해도 세션이 유지되도록 열린 이슈마다 세션을 만들어 두고 선택된 것만 보여 준다.
 // 이슈 안에서는 패널을 나눌 수 있고(Ctrl+D / Ctrl+Shift+D), 패널마다 PTY 하나를 가진다(Ctrl+W 로 닫으면 프로세스 트리 종료).
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal } from '@xterm/xterm'
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 
@@ -16,6 +17,7 @@ import { PaneAgentStrip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, EDIT_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 import { TerminalKeyBar, registerTerminalInput, useNarrow, useTouch } from './TerminalKeyBar'
 import { layoutPanes, leafIds } from './panes'
+import { attachWebgl } from './webgl'
 
 /** remote 가 있으면 그 호스트(SSH 프로필)의 cwd 에서 터미널을 연다 */
 /** remote.tmux: 전용 tmux 세션으로 여는가(설정이 켜져 있고 원격에 tmux 가 있을 때) */
@@ -276,7 +278,13 @@ function TerminalSession({
       theme: terminalTheme(useUiStore.getState().theme),
       // 출력을 스크린 리더가 읽을 수 있는 접근성 트리로도 내보낸다
       screenReaderMode: true,
+      // 아래의 글자 폭 설정(t.unicode)이 proposed API 다
+      allowProposedApi: true,
     })
+    // 글자 폭을 Unicode 11 로 맞춘다. ConPTY 와 Claude Code 는 이모지(✅ 🚀 등)를 2칸으로 세는데 xterm 기본(Unicode 6)은 1칸이다.
+    // ConPTY 는 바뀐 칸만 절대 위치로 보내므로, 폭이 다르면 이모지가 있는 줄의 글자가 밀리고 지워지지 않은 조각이 남는다
+    t.loadAddon(new Unicode11Addon())
+    t.unicode.activeVersion = '11'
     const ui = useUiStore.getState
     t.attachCustomKeyEventHandler(
       createTerminalKeyHandler(
@@ -518,6 +526,14 @@ function TerminalSession({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- live 는 바뀌지 않는 ref 다
   }, [tauri, spec.cwd, spec.issueId, remoteHost, remoteTmux, paneId, hintId, gen])
+
+  // 보이는 동안만 WebGL 로 그린다. 이슈·패널마다 터미널이 숨은 채 살아 있어 모두 켜 두면 페이지당 WebGL context 상한
+  // (Chromium 약 16개)을 넘고, 넘친 만큼 오래된 터미널의 context 가 끊긴다. 숨은 동안은 DOM 렌더러로 둔다
+  useEffect(() => {
+    const cur = term.current
+    if (!active || !cur) return
+    return attachWebgl(cur.t)
+  }, [active, gen])
 
   // 분할·닫기·[새 터미널] 처럼 사용자가 패널을 바꿨을 때만 대상 패널로 포커스를 옮긴다(AX-02 자동 포커스 금지 유지)
   useEffect(() => {

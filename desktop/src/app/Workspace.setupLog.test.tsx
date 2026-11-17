@@ -20,6 +20,7 @@ vi.mock('@xterm/xterm', () => ({
     options: Record<string, unknown> = {}
     cols = 80
     rows = 24
+    unicode = { activeVersion: '6' }
     loadAddon() {}
     open() {}
     write() {}
