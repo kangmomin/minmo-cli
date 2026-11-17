@@ -56,9 +56,12 @@ export function RepoNode(props: RepoNodeProps) {
   )
 }
 
+// Badge 기본 shrink-0 이면 좁은 폭에서 배지가 줄지 않아 이름이 0px 로 사라진다 — 이름(min-w-10)과 함께 줄고 … 를 보인다 (#70)
+const shrinkBadge = 'block min-w-0 shrink truncate'
+
 function RepoHostBadge({ label }: { label: string }) {
   return (
-    <Badge variant="secondary" className="ml-1 px-1 py-0 text-[10px]" title={`연결 호스트: ${label}`} data-testid="repo-host-badge">
+    <Badge variant="secondary" className={`ml-1 px-1 py-0 text-[10px] ${shrinkBadge}`} title={`연결 호스트: ${label}`} data-testid="repo-host-badge">
       {label}
     </Badge>
   )
@@ -71,10 +74,12 @@ function PendingRepoNode({ repo, onOpenSettings, alias, status }: RepoNodeProps 
   return (
     <div data-testid={`repo-pending-${repo.owner}/${repo.name}`}>
       <div className="group flex items-center">
-        <div className="flex min-w-0 flex-1 items-center gap-1 px-1 py-1 text-sm text-muted-foreground">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden px-1 py-1 text-sm text-muted-foreground">
           <ChevronRightIcon className="size-3.5 opacity-40" />
           <FolderGit2Icon className="size-3.5" />
-          <span className="truncate">{repo.name}</span>
+          <span className="min-w-10 truncate" title={repo.name}>
+            {repo.name}
+          </span>
           <RepoHostBadge label={alias} />
         </div>
         <Button
@@ -198,21 +203,21 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
               aria-expanded={expanded}
               aria-controls={childrenId}
               onClick={() => setExpanded(nodeId, !expanded)}
-              className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-1 text-left text-sm hover:bg-accent"
+              className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden rounded px-1 py-1 text-left text-sm hover:bg-accent"
             >
               {expanded ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
               <FolderGit2Icon className="size-3.5 text-muted-foreground" />
-              <span className="truncate" title={localRepo?.path}>
+              <span className="min-w-10 truncate" title={localRepo?.path ?? label}>
                 {label}
               </span>
               {bound && <RepoHostBadge label={host.label} />}
               {hidden && (
-                <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]" title="표시 목록에서 뺐지만 로컬 worktree 가 있어 보입니다">
+                <Badge variant="outline" className={`ml-1 px-1 py-0 text-[10px] ${shrinkBadge}`} title="표시 목록에서 뺐지만 로컬 worktree 가 있어 보입니다">
                   숨김
                 </Badge>
               )}
               {baseRepo && !local && (
-                <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]" title={`기준 저장소(${host.label}): ${baseRepo}`} data-testid="base-repo-badge">
+                <Badge variant="outline" className={`ml-1 px-1 py-0 text-[10px] ${shrinkBadge}`} title={`기준 저장소(${host.label}): ${baseRepo}`} data-testid="base-repo-badge">
                   기준 저장소
                 </Badge>
               )}

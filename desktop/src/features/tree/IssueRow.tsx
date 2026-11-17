@@ -110,7 +110,9 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
             ) : (
               <>
                 <span className="text-muted-foreground">#{issue.number}</span>
-                <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+                <span className="min-w-0 flex-1 truncate" title={issue.title}>
+                  {issue.title}
+                </span>
               </>
             )}
             {issue.state === 'closed' && <Badge variant="secondary">닫힘</Badge>}
