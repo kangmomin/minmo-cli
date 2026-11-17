@@ -9,6 +9,7 @@ import { useDeps } from '../../app/deps'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../../components/ui/context-menu'
+import { Input } from '../../components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../components/ui/dropdown-menu'
 import type { GitHubRepo } from '@minmo/core'
@@ -23,6 +24,7 @@ import type { PreviewIssue } from '../settings/SettingsDialog'
 import { BaseRepoDialog } from './BaseRepoDialog'
 import { issueStatus, useAgentStore } from '../agents/agentStore'
 import { IssueRow } from './IssueRow'
+import { ISSUE_SEARCH_MIN, matchesIssue } from './issueSearch'
 import { NewTaskDialog } from './LocalRepoDialogs'
 import { NewIssueDialog } from './NewIssueDialog'
 import { useOpenPublish } from './publishContext'
@@ -69,12 +71,17 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
   const agentsOnly = useUiStore((s) => s.treeAgentsOnly)
   const agentPanes = useAgentStore((s) => (agentsOnly ? s.panes : null))
   // 지금 보고 있는 이슈는 에이전트가 없어도 남긴다(누른 줄이 사라지지 않게)
-  const shownEntries = agentPanes
+  const agentEntries = agentPanes
     ? entries.filter(([i]) => {
         const id = worktreeId(repo.owner, repo.name, i.key)
         return id === selectedId || issueStatus(agentPanes, id) !== null
       })
     : entries
+  // 이슈 검색(번호·제목) — 이슈가 많은 저장소에서만 칸을 보인다. 검색어가 남아 있으면 이슈가 줄어도 칸을 둔다(지울 수 있게)
+  const [search, setSearch] = useState('')
+  const searching = search.trim() !== ''
+  const searchable = entries.length - 1 > ISSUE_SEARCH_MIN || searching
+  const shownEntries = searching ? agentEntries.filter(([i]) => matchesIssue(i, search)) : agentEntries
 
   // F-08/EC-24: 펼칠 때 effective 로 현재 경로를 계산해 생성 당시 경로와 비교. 오프라인·캐시 없음이면 배지 생략
   const effective = useQuery({
@@ -270,7 +277,35 @@ export function RepoNode({ repo, hidden = false, onOpenSettings }: RepoNodeProps
               </div>
             )}
             {issues.isLoading && <div className="px-2 py-1 text-xs text-muted-foreground">이슈 불러오는 중…</div>}
-            {agentsOnly && !issues.isLoading && shownEntries.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">에이전트가 도는 이슈 없음</div>}
+            {searchable && (
+              <div className="px-1 py-1">
+                <Input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    // 검색어가 있을 때만 가로챈다 — 비어 있으면 Esc 는 평소대로(대화상자 닫기 등) 동작한다
+                    if (e.key === 'Escape' && search !== '') {
+                      e.stopPropagation()
+                      setSearch('')
+                    }
+                  }}
+                  placeholder="이슈 검색(번호·제목)"
+                  aria-label={`${label} 이슈 검색`}
+                  data-testid="issue-search"
+                  spellCheck={false}
+                  className="h-7 px-2 text-xs"
+                />
+              </div>
+            )}
+            {/* 결과 수는 스크린 리더에만 알린다. live region 은 결과가 바뀌기 전에 있어야 변화가 읽힌다 */}
+            {searchable && (
+              <p role="status" className="sr-only">
+                {searching ? `이슈 ${shownEntries.length}개` : ''}
+              </p>
+            )}
+            {searching && !issues.isLoading && shownEntries.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">검색 결과 없음</div>}
+            {agentsOnly && !searching && !issues.isLoading && shownEntries.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">에이전트가 도는 이슈 없음</div>}
             {shownEntries.map(([issue, entry]) => (
               <IssueRow
                 key={issue.key}

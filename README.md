@@ -195,6 +195,8 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 
 트리 상단의 **표시할 저장소** 버튼으로 보일 저장소를 고른다(서버에 저장되어 원격 CLI 와 공유). 로컬 worktree 가 있는 저장소는 빼도 "숨김" 표시와 함께 보인다.
 
+저장소를 펼치면 이슈 목록은 ★기타 → 작업 중인 이슈(지금 보는 호스트에 worktree 가 있는 이슈) → 나머지 순이고, 각각 번호가 큰 것부터다. 이슈가 10개보다 많은 저장소에는 목록 위에 **이슈 검색** 칸이 생긴다 — 번호(`42`, `#42`)와 제목으로 찾고(여러 단어는 모두 맞아야 한다), Esc 로 지운다. 불러온 목록(열린 이슈와 worktree 가 있는 닫힌 이슈, 최대 500개) 안에서만 찾으며 본문·라벨은 보지 않는다(`desktop/src/features/tree/issueSearch.ts`).
+
 상단의 테마 버튼으로 색을 바꾼다: **Ghostty**(기본 — Ghostty 터미널의 기본 색을 터미널 16색·앱 화면·파일 편집기에 쓴다) → 블랙 → 라이트. 색 값은 `desktop/src/lib/ghostty.ts` 와 `index.css` 의 `.ghostty` 에 있다.
 
 터미널의 복사·붙여넣기는 Windows Terminal 과 같다: 글자를 선택하고 **Ctrl+C** 는 복사(선택이 없으면 셸로 보내 실행 중인 명령을 중단), **Ctrl+V** 는 붙여넣기. Ctrl+Shift+C / Ctrl+Shift+V 도 된다. **Ctrl+Backspace** 는 앞 단어 지우기, **Shift+Enter** 는 전송하지 않는 줄바꿈(Claude Code·Codex 의 입력창)이다. 패널 단축키는 Ctrl+D(오른쪽 분할)·Ctrl+Shift+D(아래 분할)·Ctrl+W(닫기)다(`desktop/src/features/terminal/keys.ts`). 이슈를 고르면 작업 폴더(worktree)만 준비하고 터미널은 만들지 않는다 — **Ctrl+T**(또는 [터미널 열기] 버튼)로 열고, 이미 열려 있으면 Ctrl+T 는 오른쪽에 새 패널을 만든다.
