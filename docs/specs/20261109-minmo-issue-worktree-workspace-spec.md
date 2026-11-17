@@ -132,8 +132,8 @@ minmo-cli/
 |------|------|----------|------|
 | branchTemplate | string? | ✔ | `{number}` 포함, 토큰 `{number}` `{slug}` `{title}`, git ref 금지 문자(공백, `..`, `~^:?*[\`) 없음, ≤100자 |
 | etcBranchName | string? | ✔ | ref 규칙, 토큰 금지 |
-| worktreePath | string? | ✔ | `{branch}` 또는 `{key}` 포함(유일성), 토큰 `~` `{owner}` `{repo}` `{branch}` `{key}` `{number}` `{slug}`, ≤512자. 시작(#66, 클라이언트 해석): `.`·`..` = 원본(메인 clone·기준·로컬 저장소 폴더) 기준 상대, `~` = 홈, `/` = 절대(Windows 는 원본 드라이브의 루트) |
-| mainClonePath | string? | ✔ | 토큰 `~` `{owner}` `{repo}`, `{branch}`·`{key}` 금지, ≤512자 |
+| worktreePath | string? | ✔ | `{branch}` 또는 `{key}` 포함(유일성), 토큰 `~` `{owner}` `{repo}` `{alias}` `{branch}` `{key}` `{number}` `{slug}`, ≤512자. `{alias}`(#73) 는 클라이언트의 저장소 별칭(없으면 repo, 로컬 저장소는 폴더명) — 서버는 토큰만 허용한다. 시작(#66, 클라이언트 해석): `.`·`..` = 원본(메인 clone·기준·로컬 저장소 폴더) 기준 상대, `~` = 홈, `/` = 절대(Windows 는 원본 드라이브의 루트) |
+| mainClonePath | string? | ✔ | 토큰 `~` `{owner}` `{repo}`, `{branch}`·`{key}`·`{alias}` 금지, ≤512자 |
 | postCreateScript | string? | ✔(빈 문자열 허용) | ≤64KB |
 | sparsePaths (v2.6) | string? | 전역 PUT 에서 생략·null 이면 저장값 유지(없으면 `""`) | 줄바꿈 구분 저장소 기준 상대 폴더(cone sparse-checkout), 빈 줄 무시, 절대 경로·`..`·`\`·`:`·glob(`*?[]`)·`!`·`#`·`-` 시작 금지, ≤100줄·≤4KB. `""` = 전체 체크아웃. 오류 `invalid_sparse_paths` |
 | postCreateScriptPosix (v2.7) | string? | 전역 PUT 에서 생략·null 이면 저장값 유지(없으면 `""`) | ≤64KB. Linux/macOS(sh) 생성 후 스크립트 — macOS 데스크탑·원격 CLI 가 쓴다. `postCreateScript` 는 Windows(PowerShell) 용 |
@@ -304,6 +304,7 @@ minmo-cli/
 | D-29 | 설정 저장 위치 | 서버 SQLite, 경로는 `~`·변수 치환으로 기기 차이 흡수 | R10(수정 1) |
 | D-30 | 상속 규칙 | 하위 값 null → 상위 값 사용, 전역은 앱 기본값으로 항상 채워짐 | R10(수정 1) |
 | D-31 | 이슈 관리(#64) | 데스크탑 이슈 머리줄에서 GitHub 이슈 제목·본문 수정, 이유(완료·계획 없음)를 골라 닫기. 로컬 작업은 제목 수정·바로 닫기(GitHub 에 올리는 중에는 수정 불가). 바뀐 필드만 보냄. 닫아도 worktree 는 그대로(D-24). 다시 열기·CLI 는 범위 밖 | #64 |
+| D-32 | 저장소 별칭(#73) | 이 PC 의 앱에만 저장(원격 접속 화면과는 함께 씀, 서버·CLI·다른 PC 는 모름). 프로젝트 설정에서 입력하면 바로 적용. 화면에는 별칭만, 원래 이름은 툴팁. 표시할 저장소 대화상자에서 별칭으로도 찾음. 경로 템플릿 `{alias}` 는 worktree 경로에만(메인 clone 경로는 별칭을 바꿀 때마다 다시 clone 하게 되어, 브랜치는 git 으로 공유되어 제외), 별칭이 없으면 repo(로컬은 폴더명 — 겹치면 worktree 생성이 멈추고 별칭으로 구분) | #73 |
 
 ## Assumption
 - A-01 데스크탑 프론트는 React + TypeScript(Vite) — RN과 `packages/` 공유를 위해. 근거: D-14
