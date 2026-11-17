@@ -272,7 +272,8 @@ describe('AC-05 구분선은 ARIA window splitter 다', () => {
     await user.keyboard('{End}')
     expect(stored()).toBe(480)
     expect(sep).toHaveAttribute('aria-valuetext', '480픽셀')
-    expect(saves()).toBe(4)
+    // 값이 바뀐 키 입력 5번(→ ← ← Home End)마다 1회씩 저장한다
+    expect(saves()).toBe(5)
   })
 
   it('Ctrl·Alt·Meta 와 함께 누르면 무시한다', async () => {
