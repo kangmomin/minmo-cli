@@ -8,6 +8,7 @@ pub mod procs;
 pub mod pty;
 pub mod script;
 pub mod ssh;
+pub mod usage;
 
 /// 경로 비교용 정규화: 구분자 통일 + 끝 구분자 제거 + (Windows) 대소문자 무시
 pub(crate) fn normalize_path(p: &str) -> String {

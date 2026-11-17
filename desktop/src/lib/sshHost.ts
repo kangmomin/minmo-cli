@@ -4,6 +4,7 @@ import type { CmdResult, RunOptions } from '@minmo/core'
 
 import type { DirEntry, RemotePty, SshError, SshErrorKind, SshProbe, TauriApi } from './tauri'
 import { REMOTE_SUBAGENTS_SCRIPT, claudeProjectSlug, parseRemoteSubagents } from '../features/agents/subagents'
+import { EMPTY_USAGE, REMOTE_USAGE_SCRIPT, parseRemoteUsage } from '../features/usage/remoteUsage'
 
 /** 호스트에 따라 달라지는 작업만 원격 구현으로 바꾼 TauriApi 의 일부 */
 export type HostOps = Pick<
@@ -19,6 +20,7 @@ export type HostOps = Pick<
   | 'openDir'
   | 'listDir'
   | 'claudeSubagents'
+  | 'agentUsage'
   | 'readTextFile'
   | 'writeTextFile'
   | 'createDir'
@@ -340,6 +342,11 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
     claudeSubagents: async (cwd, sinceMs) => {
       const r = await script(REMOTE_SUBAGENTS_SCRIPT, [claudeProjectSlug(cwd), String(Math.max(0, Math.floor(sinceMs / 1000)))])
       return r.code === 0 ? parseRemoteSubagents(r.stdout) : []
+    },
+    // 원격의 기록에서 읽는다(python3). 읽지 못하면 "없음" — 하단 바가 비어 있을 뿐 다른 동작은 그대로다
+    agentUsage: async (sinceMs) => {
+      const r = await script(REMOTE_USAGE_SCRIPT, [String(Math.max(0, Math.floor(sinceMs)))])
+      return r.code === 0 ? parseRemoteUsage(r.stdout) : EMPTY_USAGE
     },
     listDir: async (root, rel) => {
       assertRoot(root)

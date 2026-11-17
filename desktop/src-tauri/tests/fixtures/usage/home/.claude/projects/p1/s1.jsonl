@@ -1,0 +1,6 @@
+{"type":"assistant","timestamp":"2026-11-16T23:59:59.000Z","requestId":"r0","message":{"id":"m0","usage":{"input_tokens":100,"output_tokens":100,"cache_creation_input_tokens":100,"cache_read_input_tokens":100}}}
+{"type":"user","timestamp":"2026-11-17T00:00:01.000Z","message":{"role":"user","content":"how much \"usage\" today?"}}
+{"type":"assistant","timestamp":"2026-11-17T00:00:02.500Z","requestId":"r1","message":{"id":"m1","usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":30,"cache_read_input_tokens":1000}}}
+{"type":"assistant","timestamp":"2026-11-17T00:00:02.900Z","requestId":"r1","message":{"id":"m1","usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":30,"cache_read_input_tokens":1000}}}
+{"type":"assistant","timestamp":"2026-11-17T03:00:00Z","requestId":"r2","message":{"id":"m2","usage":{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":3,"cache_read_input_tokens":4}}}
+{"type":"assistant","timestamp":"2026-11-17T03:00:01Z","message":{"id":"broken","usage":{"input_tokens":999

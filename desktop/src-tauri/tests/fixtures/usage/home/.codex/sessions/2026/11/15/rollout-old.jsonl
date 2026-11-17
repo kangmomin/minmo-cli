@@ -1,0 +1,1 @@
+{"timestamp":"2026-11-15T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":7000,"cached_input_tokens":6000,"output_tokens":900,"total_tokens":7900}},"rate_limits":{"primary":{"used_percent":99.5,"window_minutes":300,"resets_at":1794650000},"secondary":null}}}

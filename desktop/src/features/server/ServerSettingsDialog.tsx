@@ -47,6 +47,8 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
   const fontSize = useUiStore((s) => s.fontSize)
   const setFontSize = useUiStore((s) => s.setFontSize)
   const agentNotify = useUiStore((s) => s.agentNotify)
+  const showUsage = useUiStore((s) => s.showUsage)
+  const setShowUsage = useUiStore((s) => s.setShowUsage)
   const setAgentNotify = useUiStore((s) => s.setAgentNotify)
   // 입력 중인 글자 — 범위 안의 숫자가 됐을 때만 적용한다("1" 을 치는 순간 9 로 바뀌지 않게)
   const [fontDraft, setFontDraft] = useState(String(fontSize))
@@ -206,6 +208,19 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
           에이전트가 작업을 끝내거나 입력을 기다리면 알림 띄우기
         </label>
         <p className="text-xs text-muted-foreground">그 터미널을 보고 있지 않을 때만 알립니다. 바꾸면 바로 적용되고 이 PC 에 저장됩니다.</p>
+      </section>
+
+      <section className="grid gap-2" aria-labelledby={fid('usage')}>
+        <h3 id={fid('usage')} className="text-sm font-semibold">
+          AI 사용량
+        </h3>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={showUsage} onChange={(e) => setShowUsage(e.target.checked)} />
+          하단 바에 AI 별 사용량 표시
+        </label>
+        <p className="text-xs text-muted-foreground">
+          지금 보는 호스트의 기록에서 읽습니다(읽기만 합니다). Codex 는 마지막으로 쓴 시점의 한도 사용률, Claude Code · Gemini CLI 는 오늘 쓴 토큰 수입니다. 원격 호스트는 python3 이 있어야 합니다.
+        </p>
       </section>
 
       {error && (

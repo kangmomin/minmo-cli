@@ -113,6 +113,18 @@ export type ServerSettingsInput = Partial<Pick<ServerSettings, 'port' | 'closeAc
 /** Claude Code 하위 에이전트의 메타 파일(src-tauri/src/commands/agents.rs SubagentFile) — meta 는 meta.json 원문 */
 export type SubagentFile = { id: string; meta: string; updatedMs: number }
 
+/** 토큰 수(src-tauri/src/commands/usage.rs Tokens). 합계에는 cacheRead 를 넣지 않는다 — 요청마다 대화 전체가 다시 세어진다 */
+export type UsageTokens = { input: number; output: number; cacheWrite: number; cacheRead: number }
+/** 한도 사용률. windowMinutes: 300 = 5시간, 10080 = 1주. resetsAtMs 는 모르면 0 */
+export type UsageLimit = { usedPercent: number; windowMinutes: number; resetsAtMs: number }
+/** limits 는 Codex 를 마지막으로 쓴 시점(limitsAtMs)의 값이다(없으면 빈 목록·0) */
+export type CodexUsage = { tokens: UsageTokens; limits: UsageLimit[]; limitsAtMs: number }
+/**
+ * AI 별 사용량 — 그 컴퓨터의 기록에서 읽는다. null 은 그 도구의 기록 폴더가 없다는 뜻이다(쓰지 않는 도구).
+ * unavailable: 원격 호스트에 python3 이 없어 읽지 못했다
+ */
+export type AgentUsage = { claude: UsageTokens | null; codex: CodexUsage | null; gemini: UsageTokens | null; unavailable?: 'python3' }
+
 /** 새 버전 정보(src-tauri/src/update.rs UpdateInfo) */
 export type UpdateInfo = { version: string; currentVersion: string; notes: string | null; date: string | null }
 export type UpdateProgress = { downloaded: number; total: number | null }
@@ -242,6 +254,8 @@ export interface TauriApi extends WorktreeHost, GhHost {
    * sinceMs 이전에 마지막으로 바뀐 세션은 보지 않는다 — 이전 실행의 기록을 지금 것으로 보이지 않게
    */
   claudeSubagents(cwd: string, sinceMs: number): Promise<SubagentFile[]>
+  /** 이 컴퓨터의 AI 별 사용량 — sinceMs(화면의 오늘 자정) 이후의 토큰 수와 Codex 의 한도 사용률 */
+  agentUsage(sinceMs: number): Promise<AgentUsage>
   /** OS 알림을 띄운다(권한이 없으면 조용히 넘어간다) */
   notify(title: string, body: string, target?: NotifyTarget): Promise<void>
   /** 사용자가 알림을 눌렀다(target 을 실어 보낸 알림만) */
@@ -288,6 +302,7 @@ export const TAURI_COMMANDS = {
   ptyKillByCwd: 'pty_kill_by_cwd',
   ptyProcesses: 'pty_processes',
   claudeSubagents: 'claude_subagents',
+  agentUsage: 'agent_usage',
   scriptRun: 'script_run',
   scriptCancel: 'script_cancel',
   sshHosts: 'ssh_hosts',
@@ -448,6 +463,7 @@ export function createTauriApi(): TauriApi {
 
     ptyProcesses: (id) => call(C.ptyProcesses, { id }),
     claudeSubagents: (cwd, sinceMs) => call(C.claudeSubagents, { cwd, sinceMs: Math.max(0, Math.floor(sinceMs)) }),
+    agentUsage: (sinceMs) => call(C.agentUsage, { sinceMs: Math.max(0, Math.floor(sinceMs)) }),
     notify: async (title, body, target) => {
       const n = await import('@tauri-apps/plugin-notification')
       let granted = await n.isPermissionGranted()
