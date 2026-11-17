@@ -1,5 +1,5 @@
 // 하단 바의 AI 별 사용량 — 표시 글, 숨김 규칙, 호스트별 값, 설정
-import { screen, waitFor } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -87,10 +87,11 @@ describe('UsageBar', () => {
   it('이 PC 의 값을 한 줄로 보이고, 오늘 자정을 기준으로 읽는다', async () => {
     const { tauri } = createFakeTauri({ agentUsage: async () => ({ ...NONE, claude: tok(1000, 234), gemini: tok(80_000, 0) }) })
     renderWithDeps(<UsageBar />, makeDeps({ tauri }))
-    const bar = await screen.findByTestId('usage-bar')
-    expect(bar).toHaveAccessibleName('AI 사용량 — 이 PC')
+    // 바는 읽기 전부터 있다 — 값은 읽은 뒤에 채워진다
+    expect(await screen.findByTestId('usage-claude')).toHaveTextContent('Claude 1.2k 오늘')
+    expect(screen.getByTestId('usage-bar')).toHaveAccessibleName('AI 사용량 — 이 PC')
     expect(screen.getByTestId('usage-host')).toHaveTextContent('이 PC')
-    expect(screen.getByTestId('usage-claude')).toHaveTextContent('Claude 1.2k 오늘')
+    expect(screen.queryByTestId('usage-empty')).not.toBeInTheDocument()
     expect(screen.getByTestId('usage-gemini')).toHaveTextContent('Gemini 80k 오늘')
     expect(screen.queryByTestId('usage-codex')).not.toBeInTheDocument()
     // 상세는 마우스(title)와 스크린 리더(aria-label) 모두에 있다
@@ -99,11 +100,14 @@ describe('UsageBar', () => {
     expect(tauri.agentUsage).toHaveBeenCalledWith(startOfToday())
   })
 
-  it('보일 것이 없으면 바가 없다', async () => {
+  it('보일 것이 없어도 바는 같은 높이로 남고(터미널 크기가 흔들리지 않게) 기록이 없다고 알린다', async () => {
     const { tauri } = createFakeTauri({ agentUsage: async () => ({ ...NONE, claude: tok(0, 0) }) })
     renderWithDeps(<UsageBar />, makeDeps({ tauri }))
-    await waitFor(() => expect(tauri.agentUsage).toHaveBeenCalled())
-    expect(screen.queryByTestId('usage-bar')).not.toBeInTheDocument()
+    // 읽기 전에도 바는 있다
+    expect(screen.getByTestId('usage-bar')).toBeInTheDocument()
+    expect(screen.queryByTestId('usage-empty')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('usage-empty')).toHaveTextContent('오늘 AI 사용 기록 없음')
+    expect(tauri.agentUsage).toHaveBeenCalled()
   })
 
   it('원격 호스트에서는 그 호스트의 기록을 ssh 로 읽는다 — 이 PC 의 값은 읽지 않는다', async () => {

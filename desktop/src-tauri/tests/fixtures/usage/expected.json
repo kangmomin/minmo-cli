@@ -1,7 +1,7 @@
 {
   "claude": { "input": 18, "output": 31, "cacheWrite": 33, "cacheRead": 1011 },
   "codex": {
-    "tokens": { "input": 200, "output": 30, "cacheWrite": 0, "cacheRead": 300 },
+    "tokens": { "input": 260, "output": 40, "cacheWrite": 0, "cacheRead": 340 },
     "limits": [{ "usedPercent": 40.5, "windowMinutes": 300, "resetsAtMs": 1794881400000 }],
     "limitsAtMs": 1794880800000
   },

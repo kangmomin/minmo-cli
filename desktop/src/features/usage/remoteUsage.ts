@@ -10,7 +10,7 @@ import type { AgentUsage, CodexUsage, UsageLimit, UsageTokens } from '../../lib/
  */
 export const REMOTE_USAGE_SCRIPT = `command -v python3 >/dev/null 2>&1 || { echo '{"unavailable":"python3"}'; exit 0; }
 exec python3 - "$1" "$2" <<'MINMO_USAGE_PY'
-import json, os, sys, time
+import json, math, os, sys, time
 from datetime import datetime, timezone
 
 SINCE = int(sys.argv[1])
@@ -139,12 +139,19 @@ def codex_limits(rate, at):
         used = l.get('used_percent')
         if isinstance(used, bool) or not isinstance(used, (int, float)):
             continue
+        # NaN·무한대·너무 큰 수는 JSON 으로 내보낼 수 없다(화면이 결과 전체를 읽지 못한다) - 그 한도만 뺀다
+        try:
+            used = float(used)
+        except OverflowError:
+            continue
+        if not math.isfinite(used):
+            continue
         resets_at = l.get('resets_at')
         resets_in = l.get('resets_in_seconds')
         is_count = lambda x: isinstance(x, int) and not isinstance(x, bool) and x >= 0
         # 버전에 따라 초기화 시각(초) 또는 남은 시간(초)으로 적는다
         resets = resets_at * 1000 if is_count(resets_at) else (at + resets_in * 1000 if is_count(resets_in) else 0)
-        out.append({'usedPercent': float(used), 'windowMinutes': num(l, 'window_minutes'), 'resetsAtMs': resets})
+        out.append({'usedPercent': used, 'windowMinutes': num(l, 'window_minutes'), 'resetsAtMs': resets})
     return out
 
 
@@ -161,13 +168,20 @@ def codex_file(path):
             continue
         info = p.get('info')
         total = info.get('total_token_usage') if isinstance(info, dict) else None
-        if total is not None:
+        if isinstance(total, dict):
             now = (num(total, 'input_tokens'), num(total, 'cached_input_tokens'), num(total, 'output_tokens'))
-            # 같은 턴의 사용량이 여러 번 기록된다 - 누적값의 증가분만 센다. 누적값이 줄었으면 그 값 전체가 증가분이다
-            base = prev if prev is not None and all(now[i] >= prev[i] for i in range(3)) else (0, 0, 0)
+            last = info.get('last_token_usage')
+            if prev is None and isinstance(last, dict):
+                # 파일의 첫 기록: 이어 연 세션은 누적값에 이전 파일의 사용량이 들어 있다 - 이번 턴의 값이 있으면 그것만 센다
+                i, c, o = num(last, 'input_tokens'), num(last, 'cached_input_tokens'), num(last, 'output_tokens')
+            elif prev is not None and all(now[k] >= prev[k] for k in range(3)):
+                # 같은 턴의 사용량이 여러 번 기록된다 - 누적값의 증가분만 센다
+                i, c, o = now[0] - prev[0], now[1] - prev[1], now[2] - prev[2]
+            else:
+                # 누적값이 줄었으면(기록이 새로 시작됨) 그 값 전체가 증가분이다
+                i, c, o = now
             prev = now
             if at >= SINCE:
-                i, c, o = now[0] - base[0], now[1] - base[1], now[2] - base[2]
                 # Codex 의 input_tokens 는 캐시에서 읽은 것을 포함한다
                 add(tok, tokens(max(i - c, 0), o, 0, c))
         rate = p.get('rate_limits')
@@ -195,7 +209,8 @@ def codex_usage(sessions):
     total = tokens()
     latest = None
     for path, m in files:
-        if m < SINCE and latest is not None:
+        # 오늘 바뀌지 않은 파일은 더 최근의 한도 기록이 있을 수 있을 때만 읽는다 - 파일의 기록은 그 파일의 수정 시각보다 뒤일 수 없다
+        if m < SINCE and latest is not None and latest[0] >= m:
             continue
         tok, limits = codex_file(path)
         add(total, tok)
@@ -237,7 +252,7 @@ print(json.dumps({
     'claude': claude_usage(os.path.join(claude_dir, 'projects')),
     'codex': codex_usage(os.path.join(codex_dir, 'sessions')),
     'gemini': gemini_usage(os.path.join(home, '.gemini', 'tmp')),
-}))
+}, allow_nan=False))
 MINMO_USAGE_PY`
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

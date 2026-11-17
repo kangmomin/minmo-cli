@@ -74,23 +74,30 @@ pub struct AgentUsage {
 struct Stamp {
     size: u64,
     mtime_ms: u64,
-    since_ms: u64,
 }
 
 #[derive(Debug, Clone, Default)]
 struct CodexFile {
-    tokens: Tokens,
+    /// (시각, 그때 늘어난 토큰)
+    deltas: Vec<(u64, Tokens)>,
     /// 이 파일의 마지막 한도 기록(시각, 한도들)
     limits: Option<(u64, Vec<Limit>)>,
 }
 
-/// 파일별 읽은 결과. 폴더에서 사라진 파일의 항목은 다음 조회 때 지운다
+/// Claude Code 세션 파일 하나의 기록들: (시각, 중복 제거 키, 토큰)
+type ClaudeEntries = Vec<(u64, String, Tokens)>;
+
+/// 보관한 결과를 남겨 두는 기간 — 이보다 오래 바뀌지 않은 파일의 항목은 지운다
+const CACHE_KEEP_MS: u64 = 2 * 24 * 60 * 60 * 1000;
+
+/// 파일별 읽은 결과. 기준 시각(since)과 무관하게 시각과 함께 보관하고 더할 때 거른다 —
+/// 자정이 다른 두 화면(이 PC 의 창·다른 시간대에서 붙은 기기)이 번갈아 물어도 다시 읽지 않는다
 #[derive(Default)]
 pub(crate) struct UsageCache {
-    /// (중복 제거 키, 토큰) — 같은 응답이 여러 줄·여러 파일(이어 연 세션)에 기록된다
-    claude: HashMap<PathBuf, (Stamp, Vec<(String, Tokens)>)>,
+    /// (시각, 중복 제거 키, 토큰) — 같은 응답이 여러 줄·여러 파일(이어 연 세션)에 기록된다
+    claude: HashMap<PathBuf, (Stamp, ClaudeEntries)>,
     codex: HashMap<PathBuf, (Stamp, CodexFile)>,
-    gemini: HashMap<PathBuf, (Stamp, Tokens)>,
+    gemini: HashMap<PathBuf, (Stamp, Vec<(u64, Tokens)>)>,
     /// 파일을 실제로 읽은 횟수(테스트용)
     #[cfg(test)]
     parses: usize,
@@ -98,7 +105,7 @@ pub(crate) struct UsageCache {
 
 static CACHE: Mutex<Option<UsageCache>> = Mutex::new(None);
 
-fn stamp(path: &Path, since_ms: u64) -> Option<Stamp> {
+fn stamp(path: &Path) -> Option<Stamp> {
     let m = fs::metadata(path).ok()?;
     let mtime_ms = m
         .modified()
@@ -109,7 +116,6 @@ fn stamp(path: &Path, since_ms: u64) -> Option<Stamp> {
     Some(Stamp {
         size: m.len(),
         mtime_ms,
-        since_ms,
     })
 }
 
@@ -188,7 +194,7 @@ fn each_json_line(path: &Path, key: &str, mut f: impl FnMut(Value)) {
 
 // ── Claude Code ──────────────────────────────────────────────────
 
-fn claude_file(path: &Path, since_ms: u64) -> Vec<(String, Tokens)> {
+fn claude_file(path: &Path) -> ClaudeEntries {
     let mut out = Vec::new();
     let name = path.to_string_lossy().into_owned();
     let mut n = 0usize;
@@ -197,9 +203,7 @@ fn claude_file(path: &Path, since_ms: u64) -> Vec<(String, Tokens)> {
         let Some(usage) = v.pointer("/message/usage") else {
             return;
         };
-        if !ts_ms(&v).is_some_and(|t| t >= since_ms) {
-            return;
-        }
+        let Some(at) = ts_ms(&v) else { return };
         let id = v.pointer("/message/id").and_then(Value::as_str);
         let req = v.get("requestId").and_then(Value::as_str);
         // 같은 응답은 한 번만 센다. id 가 없는 줄은 서로 다른 것으로 본다
@@ -209,6 +213,7 @@ fn claude_file(path: &Path, since_ms: u64) -> Vec<(String, Tokens)> {
             _ => format!("{name}#{n}"),
         };
         out.push((
+            at,
             key,
             Tokens {
                 input: num(usage, "input_tokens"),
@@ -249,7 +254,7 @@ pub(crate) fn claude_usage(
     let mut live = HashSet::new();
     for path in files {
         // 오늘 바뀌지 않은 파일에는 오늘의 기록이 없다
-        let Some(st) = stamp(&path, since_ms).filter(|s| s.mtime_ms >= since_ms) else {
+        let Some(st) = stamp(&path).filter(|s| s.mtime_ms >= since_ms) else {
             continue;
         };
         if cache.claude.get(&path).map(|c| c.0) != Some(st) {
@@ -257,18 +262,19 @@ pub(crate) fn claude_usage(
             {
                 cache.parses += 1;
             }
-            cache
-                .claude
-                .insert(path.clone(), (st, claude_file(&path, since_ms)));
+            cache.claude.insert(path.clone(), (st, claude_file(&path)));
         }
-        for (key, t) in &cache.claude[&path].1 {
-            if seen.insert(key.clone()) {
+        for (at, key, t) in &cache.claude[&path].1 {
+            if *at >= since_ms && seen.insert(key.clone()) {
                 total.add(*t);
             }
         }
         live.insert(path);
     }
-    cache.claude.retain(|p, _| live.contains(p));
+    let keep = since_ms.saturating_sub(CACHE_KEEP_MS);
+    cache
+        .claude
+        .retain(|p, c| live.contains(p) || (c.0.mtime_ms >= keep && p.is_file()));
     Some(total)
 }
 
@@ -285,8 +291,8 @@ fn codex_limits(rate: &Value, at_ms: u64) -> Vec<Limit> {
                 l.get("resets_at").and_then(Value::as_u64),
                 l.get("resets_in_seconds").and_then(Value::as_u64),
             ) {
-                (Some(at), _) => at * 1000,
-                (None, Some(rem)) => at_ms + rem * 1000,
+                (Some(at), _) => at.saturating_mul(1000),
+                (None, Some(rem)) => at_ms.saturating_add(rem.saturating_mul(1000)),
                 _ => 0,
             };
             Some(Limit {
@@ -298,7 +304,7 @@ fn codex_limits(rate: &Value, at_ms: u64) -> Vec<Limit> {
         .collect()
 }
 
-fn codex_file(path: &Path, since_ms: u64) -> CodexFile {
+fn codex_file(path: &Path) -> CodexFile {
     let mut out = CodexFile::default();
     // 세션의 누적값 — 같은 턴의 사용량이 여러 번 기록되므로 누적값의 증가분만 센다
     let mut prev: Option<(u64, u64, u64)> = None;
@@ -319,21 +325,33 @@ fn codex_file(path: &Path, since_ms: u64) -> CodexFile {
                 num(total, "cached_input_tokens"),
                 num(total, "output_tokens"),
             );
-            // 누적값이 줄었으면(기록이 새로 시작됨) 그 값 전체가 증가분이다
-            let base = prev
-                .filter(|b| now.0 >= b.0 && now.1 >= b.1 && now.2 >= b.2)
-                .unwrap_or((0, 0, 0));
+            let last = p
+                .pointer("/info/last_token_usage")
+                .filter(|t| t.is_object());
+            let (input, cached, output) = match (prev, last) {
+                // 파일의 첫 기록: 이어 연 세션은 누적값에 이전 파일의 사용량이 들어 있다 — 이번 턴의 값이 있으면 그것만 센다
+                (None, Some(l)) => (
+                    num(l, "input_tokens"),
+                    num(l, "cached_input_tokens"),
+                    num(l, "output_tokens"),
+                ),
+                // 누적값이 줄었으면(기록이 새로 시작됨) 그 값 전체가 증가분이다
+                (Some(b), _) if now.0 >= b.0 && now.1 >= b.1 && now.2 >= b.2 => {
+                    (now.0 - b.0, now.1 - b.1, now.2 - b.2)
+                }
+                _ => now,
+            };
             prev = Some(now);
-            if at >= since_ms {
-                let (input, cached, output) = (now.0 - base.0, now.1 - base.1, now.2 - base.2);
-                // Codex 의 input_tokens 는 캐시에서 읽은 것을 포함한다
-                out.tokens.add(Tokens {
+            // Codex 의 input_tokens 는 캐시에서 읽은 것을 포함한다
+            out.deltas.push((
+                at,
+                Tokens {
                     input: input.saturating_sub(cached),
                     output,
                     cache_write: 0,
                     cache_read: cached,
-                });
-            }
+                },
+            ));
         }
         if let Some(rate) = p.get("rate_limits").filter(|r| r.is_object()) {
             let limits = codex_limits(rate, at);
@@ -360,7 +378,7 @@ pub(crate) fn codex_usage(
         for month in children(&year) {
             for day in children(&month) {
                 for f in children(&day).into_iter().filter(|p| has_ext(p, "jsonl")) {
-                    if let Some(st) = stamp(&f, since_ms) {
+                    if let Some(st) = stamp(&f) {
                         files.push((f, st));
                     }
                 }
@@ -375,8 +393,9 @@ pub(crate) fn codex_usage(
     let mut latest: Option<(u64, Vec<Limit>)> = None;
     let mut live = HashSet::new();
     for (path, st) in files {
-        // 오늘 바뀌지 않은 파일은 한도를 아직 찾지 못했을 때만 읽는다
-        if st.mtime_ms < since_ms && latest.is_some() {
+        // 오늘 바뀌지 않은 파일은 더 최근의 한도 기록이 있을 수 있을 때만 읽는다 —
+        // 파일의 기록은 그 파일의 수정 시각보다 뒤일 수 없다
+        if st.mtime_ms < since_ms && latest.as_ref().is_some_and(|l| l.0 >= st.mtime_ms) {
             continue;
         }
         if cache.codex.get(&path).map(|c| c.0) != Some(st) {
@@ -384,12 +403,14 @@ pub(crate) fn codex_usage(
             {
                 cache.parses += 1;
             }
-            cache
-                .codex
-                .insert(path.clone(), (st, codex_file(&path, since_ms)));
+            cache.codex.insert(path.clone(), (st, codex_file(&path)));
         }
         let file = &cache.codex[&path].1;
-        tokens.add(file.tokens);
+        for (at, t) in &file.deltas {
+            if *at >= since_ms {
+                tokens.add(*t);
+            }
+        }
         if let Some((at, limits)) = &file.limits {
             if latest.as_ref().map_or(true, |l| *at > l.0) {
                 latest = Some((*at, limits.clone()));
@@ -397,7 +418,7 @@ pub(crate) fn codex_usage(
         }
         live.insert(path);
     }
-    cache.codex.retain(|p, _| live.contains(p));
+    cache.codex.retain(|p, _| live.contains(p) || p.is_file());
     let (limits_at_ms, limits) = latest.unwrap_or((0, Vec::new()));
     Some(CodexUsage {
         tokens,
@@ -408,8 +429,8 @@ pub(crate) fn codex_usage(
 
 // ── Gemini CLI ───────────────────────────────────────────────────
 
-fn gemini_file(path: &Path, since_ms: u64) -> Tokens {
-    let mut out = Tokens::default();
+fn gemini_file(path: &Path) -> Vec<(u64, Tokens)> {
+    let mut out = Vec::new();
     let Some(v) = fs::read(path)
         .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
@@ -425,17 +446,18 @@ fn gemini_file(path: &Path, since_ms: u64) -> Tokens {
         let Some(t) = m.get("tokens").filter(|t| t.is_object()) else {
             continue;
         };
-        if !ts_ms(m).is_some_and(|at| at >= since_ms) {
-            continue;
-        }
+        let Some(at) = ts_ms(m) else { continue };
         let cached = num(t, "cached");
-        out.add(Tokens {
-            // Gemini 의 input 은 캐시에서 읽은 것을 포함한다
-            input: num(t, "input").saturating_sub(cached),
-            output: num(t, "output") + num(t, "thoughts") + num(t, "tool"),
-            cache_write: 0,
-            cache_read: cached,
-        });
+        out.push((
+            at,
+            Tokens {
+                // Gemini 의 input 은 캐시에서 읽은 것을 포함한다
+                input: num(t, "input").saturating_sub(cached),
+                output: num(t, "output") + num(t, "thoughts") + num(t, "tool"),
+                cache_write: 0,
+                cache_read: cached,
+            },
+        ));
     }
     out
 }
@@ -452,7 +474,7 @@ pub(crate) fn gemini_usage(tmp: &Path, since_ms: u64, cache: &mut UsageCache) ->
             .into_iter()
             .filter(|p| has_ext(p, "json"))
         {
-            let Some(st) = stamp(&path, since_ms).filter(|s| s.mtime_ms >= since_ms) else {
+            let Some(st) = stamp(&path).filter(|s| s.mtime_ms >= since_ms) else {
                 continue;
             };
             if cache.gemini.get(&path).map(|c| c.0) != Some(st) {
@@ -460,15 +482,20 @@ pub(crate) fn gemini_usage(tmp: &Path, since_ms: u64, cache: &mut UsageCache) ->
                 {
                     cache.parses += 1;
                 }
-                cache
-                    .gemini
-                    .insert(path.clone(), (st, gemini_file(&path, since_ms)));
+                cache.gemini.insert(path.clone(), (st, gemini_file(&path)));
             }
-            total.add(cache.gemini[&path].1);
+            for (at, t) in &cache.gemini[&path].1 {
+                if *at >= since_ms {
+                    total.add(*t);
+                }
+            }
             live.insert(path);
         }
     }
-    cache.gemini.retain(|p, _| live.contains(p));
+    let keep = since_ms.saturating_sub(CACHE_KEEP_MS);
+    cache
+        .gemini
+        .retain(|p, c| live.contains(p) || (c.0.mtime_ms >= keep && p.is_file()));
     Some(total)
 }
 
@@ -512,9 +539,12 @@ pub async fn agent_usage(since_ms: u64) -> Result<AgentUsage, String> {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let mut guard = CACHE.lock().map_err(|e| e.to_string())?;
+        // 화면이 넘긴 값을 그대로 믿지 않는다 — 0 을 넘기면 기록 전체를 읽게 된다. "오늘"은 길어도 이틀 전부터다
+        let since_ms = since_ms.max(now_ms.saturating_sub(CACHE_KEEP_MS));
+        // 앞선 조회가 중간에 멈췄어도(잠금 오염) 보관한 값은 파일별로 온전하다 — 그대로 쓴다
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
         let cache = guard.get_or_insert_with(UsageCache::default);
-        Ok(usage_at(
+        Ok::<_, String>(usage_at(
             claude.as_deref(),
             codex.as_deref(),
             gemini.as_deref(),
@@ -638,14 +668,134 @@ mod tests {
         assert!(parsed > 0);
         assert_eq!(fixture_usage(&mut cache), first);
         assert_eq!(cache.parses, parsed, "바뀌지 않은 파일을 다시 읽었다");
-        // 날이 바뀌면(since 가 달라지면) 다시 읽는다
+        // 기준 시각이 다른 화면(다른 시간대의 자정)이 물어도 다시 읽지 않고, 그 기준으로 거른 값을 준다
         let home = fixture_home();
-        claude_usage(
+        let later = claude_usage(
             &home.join(".claude").join("projects"),
-            iso_ms(SINCE).unwrap() + 1,
+            iso_ms("2026-11-17T00:00:03Z").unwrap(),
             &mut cache,
+        )
+        .unwrap();
+        assert_eq!(cache.parses, parsed, "기준 시각만 바뀌었는데 다시 읽었다");
+        // 00:00:03 뒤의 기록만(m1 은 빠진다): m2(1·2·4) + 하위 에이전트(5·6·7) + id 없는 줄(2·3)
+        // 기준 시각은 fixture 파일의 수정 시각(체크아웃한 때)보다 앞이어야 한다 — 뒤면 파일을 건너뛴다
+        assert_eq!((later.input, later.output, later.cache_read), (8, 11, 11));
+        assert_eq!(fixture_usage(&mut cache), first);
+        assert_eq!(cache.parses, parsed);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("minmo-usage-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_at(path: &Path, text: &str, mtime_ms: u64) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+        let at = UNIX_EPOCH + std::time::Duration::from_millis(mtime_ms);
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+    }
+
+    fn limit_line(ts: &str, percent: f64) -> String {
+        format!("{{\"timestamp\":\"{ts}\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":null,\"rate_limits\":{{\"primary\":{{\"used_percent\":{percent},\"window_minutes\":300,\"resets_at\":1794900000}}}}}}}}\n")
+    }
+
+    #[test]
+    fn codex_limits_come_from_the_latest_record_even_in_a_file_not_touched_today() {
+        let dir = temp_dir("codex-limits");
+        let since = iso_ms(SINCE).unwrap();
+        let now = iso_ms(NOW).unwrap();
+        // 오늘 바뀐 파일: 마지막 한도 기록은 어제 10시다(그 뒤의 기록에는 한도가 없다)
+        let today = limit_line("2026-11-16T10:00:00Z", 10.5)
+            + "{\"timestamp\":\"2026-11-17T01:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":null,\"rate_limits\":null}}\n";
+        write_at(&dir.join("2026/11/16/a.jsonl"), &today, since + 3_600_000);
+        // 어제 23시에 마지막으로 바뀐 파일: 한도 기록이 더 최근이다
+        write_at(
+            &dir.join("2026/11/16/b.jsonl"),
+            &limit_line("2026-11-16T23:00:00Z", 77.5),
+            iso_ms("2026-11-16T23:00:01Z").unwrap(),
         );
-        assert!(cache.parses > parsed);
+        // 그보다 오래된 파일은 읽지 않는다(더 최근의 기록이 있을 수 없다)
+        write_at(
+            &dir.join("2026/11/15/c.jsonl"),
+            &limit_line("2026-11-15T09:00:00Z", 99.5),
+            iso_ms("2026-11-15T09:00:01Z").unwrap(),
+        );
+        let mut cache = UsageCache::default();
+        let u = codex_usage(&dir, since, now, &mut cache).unwrap();
+        assert_eq!(u.limits[0].used_percent, 77.5);
+        assert_eq!(u.limits_at_ms, iso_ms("2026-11-16T23:00:00Z").unwrap());
+        assert_eq!(
+            cache.parses, 2,
+            "더 최근의 기록이 있을 수 없는 파일까지 읽었다"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn codex_first_record_of_a_resumed_session_counts_only_its_own_turn() {
+        let dir = temp_dir("codex-resumed");
+        let since = iso_ms(SINCE).unwrap();
+        let count = |ts: &str, total: (u64, u64, u64), last: Option<(u64, u64, u64)>| {
+            let usage = |t: (u64, u64, u64)| {
+                format!(
+                    "{{\"input_tokens\":{},\"cached_input_tokens\":{},\"output_tokens\":{}}}",
+                    t.0, t.1, t.2
+                )
+            };
+            let last = last.map_or(String::new(), |l| {
+                format!(",\"last_token_usage\":{}", usage(l))
+            });
+            format!("{{\"timestamp\":\"{ts}\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"total_token_usage\":{}{last}}},\"rate_limits\":null}}}}\n", usage(total))
+        };
+        // 이어 연 세션: 첫 기록의 누적값에 이전 파일의 사용량(9000)이 들어 있다 — 이번 턴(100·40·10)만 센다
+        let resumed = count(
+            "2026-11-17T01:00:00Z",
+            (9100, 8040, 510),
+            Some((100, 40, 10)),
+        ) + &count(
+            "2026-11-17T01:05:00Z",
+            (9300, 8140, 530),
+            Some((200, 100, 20)),
+        );
+        write_at(
+            &dir.join("2026/11/17/resumed.jsonl"),
+            &resumed,
+            since + 3_600_000,
+        );
+        // 이번 턴의 값이 없는 첫 기록은 누적값 전체다. 누적값이 줄면 그 값 전체를 다시 센다
+        let plain = count("2026-11-17T02:00:00Z", (50, 10, 5), None)
+            + &count("2026-11-17T02:05:00Z", (20, 0, 2), None);
+        write_at(
+            &dir.join("2026/11/17/plain.jsonl"),
+            &plain,
+            since + 7_200_000,
+        );
+        let u = codex_usage(
+            &dir,
+            since,
+            iso_ms(NOW).unwrap(),
+            &mut UsageCache::default(),
+        )
+        .unwrap();
+        // resumed: (100-40)+(200-100) = 160 입력, 40+100 캐시, 10+20 출력 · plain: (50-10)+20 = 60 입력, 10 캐시, 5+2 출력
+        assert_eq!(
+            u.tokens,
+            Tokens {
+                input: 220,
+                output: 37,
+                cache_write: 0,
+                cache_read: 150
+            }
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -663,28 +813,33 @@ mod tests {
     }
 
     #[test]
-    fn files_not_touched_today_are_skipped_and_dropped_from_the_cache() {
-        let dir = std::env::temp_dir().join(format!("minmo-usage-test-{}", std::process::id()));
-        let project = dir.join("p");
-        fs::create_dir_all(&project).unwrap();
-        let file = project.join("s.jsonl");
-        fs::write(&file, "{\"timestamp\":\"2026-11-17T01:00:00Z\",\"requestId\":\"r\",\"message\":{\"id\":\"m\",\"usage\":{\"input_tokens\":5,\"output_tokens\":7}}}\n").unwrap();
-        let mut cache = UsageCache::default();
+    fn files_not_touched_today_are_skipped_and_old_ones_leave_the_cache() {
+        let dir = temp_dir("claude-old");
+        let file = dir.join("p").join("s.jsonl");
+        let line = "{\"timestamp\":\"2026-11-17T01:00:00Z\",\"requestId\":\"r\",\"message\":{\"id\":\"m\",\"usage\":{\"input_tokens\":5,\"output_tokens\":7}}}\n";
         let since = iso_ms(SINCE).unwrap();
+        write_at(&file, line, since + 1000);
+        let mut cache = UsageCache::default();
         assert_eq!(claude_usage(&dir, since, &mut cache).unwrap().output, 7);
         assert_eq!(cache.claude.len(), 1);
-        // 파일의 수정 시각이 since 보다 앞이면 읽지 않고, 보관한 결과도 지운다
-        let old = UNIX_EPOCH + std::time::Duration::from_millis(since - 1000);
-        fs::File::options()
-            .write(true)
-            .open(&file)
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
+        // 파일의 수정 시각이 since 보다 앞이면 읽지 않는다(오늘의 기록이 있을 수 없다)
+        write_at(&file, line, since - 1000);
+        let parsed = cache.parses;
         assert_eq!(
             claude_usage(&dir, since, &mut cache),
             Some(Tokens::default())
         );
+        assert_eq!(cache.parses, parsed);
+        // 오래 바뀌지 않은 파일과 지워진 파일의 항목은 보관하지 않는다
+        write_at(&file, line, since - CACHE_KEEP_MS - 1000);
+        cache
+            .claude
+            .insert(file.clone(), (stamp(&file).unwrap(), Vec::new()));
+        cache.claude.insert(
+            dir.join("p").join("gone.jsonl"),
+            (stamp(&file).unwrap(), Vec::new()),
+        );
+        claude_usage(&dir, since, &mut cache);
         assert!(cache.claude.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }

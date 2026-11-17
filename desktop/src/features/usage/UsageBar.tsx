@@ -45,11 +45,12 @@ export function UsageBar() {
   const show = useUiStore((s) => s.showUsage)
   const host = useHost()
   const usage = useAgentUsage(show)
-  if (!show || !usage.data) return null
-  const items = usageItems(usage.data, Date.now())
-  const noPython = usage.data.unavailable === 'python3'
-  // 보일 것이 없으면 자리를 차지하지 않는다
-  if (items.length === 0 && !noPython) return null
+  if (!show) return null
+  // 읽은 시각을 "지금"으로 쓴다 — 값이 같아도 읽을 때마다 다시 그려, 초기화 시각이 지난 한도가 옛 % 로 남지 않는다
+  const items = usage.data ? usageItems(usage.data, usage.dataUpdatedAt || Date.now()) : []
+  const noPython = usage.data?.unavailable === 'python3'
+  // 켜져 있으면 값이 없어도(읽는 중·호스트 전환·기록 없음) 같은 높이로 둔다 — 바가 생겼다 없어지면 그때마다
+  // 작업 영역의 높이가 바뀌어 터미널이 크기를 다시 맞춘다(전체 화면 프로그램이 화면을 다시 그린다)
   return (
     <footer
       data-testid="usage-bar"
@@ -64,6 +65,7 @@ export function UsageBar() {
           사용량을 읽을 수 없음(python3 필요)
         </span>
       )}
+      {usage.data && items.length === 0 && !noPython && <span data-testid="usage-empty">오늘 AI 사용 기록 없음</span>}
       <ul className="flex min-w-0 items-center gap-2 overflow-hidden">
         {items.map((it, i) => (
           // title 은 마우스용 상세다. 같은 내용을 스크린 리더에도 읽히게 aria-label 로 둔다
