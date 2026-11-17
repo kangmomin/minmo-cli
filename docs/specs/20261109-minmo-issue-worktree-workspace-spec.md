@@ -132,7 +132,7 @@ minmo-cli/
 |------|------|----------|------|
 | branchTemplate | string? | ✔ | `{number}` 포함, 토큰 `{number}` `{slug}` `{title}`, git ref 금지 문자(공백, `..`, `~^:?*[\`) 없음, ≤100자 |
 | etcBranchName | string? | ✔ | ref 규칙, 토큰 금지 |
-| worktreePath | string? | ✔ | `{branch}` 또는 `{key}` 포함(유일성), 토큰 `~` `{owner}` `{repo}` `{branch}` `{key}` `{number}` `{slug}`, ≤512자 |
+| worktreePath | string? | ✔ | `{branch}` 또는 `{key}` 포함(유일성), 토큰 `~` `{owner}` `{repo}` `{branch}` `{key}` `{number}` `{slug}`, ≤512자. 시작(#66, 클라이언트 해석): `.`·`..` = 원본(메인 clone·기준·로컬 저장소 폴더) 기준 상대, `~` = 홈, `/` = 절대(Windows 는 원본 드라이브의 루트) |
 | mainClonePath | string? | ✔ | 토큰 `~` `{owner}` `{repo}`, `{branch}`·`{key}` 금지, ≤512자 |
 | postCreateScript | string? | ✔(빈 문자열 허용) | ≤64KB |
 | sparsePaths (v2.6) | string? | 전역 PUT 에서 생략·null 이면 저장값 유지(없으면 `""`) | 줄바꿈 구분 저장소 기준 상대 폴더(cone sparse-checkout), 빈 줄 무시, 절대 경로·`..`·`\`·`:`·glob(`*?[]`)·`!`·`#`·`-` 시작 금지, ≤100줄·≤4KB. `""` = 전체 체크아웃. 오류 `invalid_sparse_paths` |
@@ -303,6 +303,7 @@ minmo-cli/
 | D-28 | 생성 후 스크립트 | worktree add 완료 후 worktree cwd에서 실행. 실패해도 worktree 유지, 로그 표시 | R10(수정 1) |
 | D-29 | 설정 저장 위치 | 서버 SQLite, 경로는 `~`·변수 치환으로 기기 차이 흡수 | R10(수정 1) |
 | D-30 | 상속 규칙 | 하위 값 null → 상위 값 사용, 전역은 앱 기본값으로 항상 채워짐 | R10(수정 1) |
+| D-31 | 이슈 관리(#64) | 데스크탑 이슈 머리줄에서 GitHub 이슈 제목·본문 수정, 이유(완료·계획 없음)를 골라 닫기. 로컬 작업은 제목 수정·바로 닫기(GitHub 에 올리는 중에는 수정 불가). 바뀐 필드만 보냄. 닫아도 worktree 는 그대로(D-24). 다시 열기·CLI 는 범위 밖 | #64 |
 
 ## Assumption
 - A-01 데스크탑 프론트는 React + TypeScript(Vite) — RN과 `packages/` 공유를 위해. 근거: D-14

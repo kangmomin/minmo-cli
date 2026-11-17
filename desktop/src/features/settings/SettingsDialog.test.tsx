@@ -98,6 +98,19 @@ describe('호스트별 값(이 PC 에 저장) — 원본 위치·기본 폴더',
     await replace(user, await field('worktree 경로'), '~/work/{repo}/{key}')
     await waitFor(() => expect(screen.getByTestId('preview-path')).toHaveTextContent('/home/u/work/Repo-A/42'))
   })
+
+  it('#66 원본 기준 상대 경로(.): 메인 clone 경로 기준으로 미리보인다', async () => {
+    const { user } = setup({ scope: PROJECT })
+    await replace(user, await field('worktree 경로'), '../wt/{key}')
+    await waitFor(() => expect(screen.getByTestId('preview-path')).toHaveTextContent('/home/u/minmo-workspaces/MyOrg/Repo-A/wt/42'))
+  })
+
+  it('#66 원본 기준 상대 경로(.): 이 호스트의 기준 저장소 폴더가 있으면 그 폴더 기준', async () => {
+    useHostsStore.setState({ baseRepos: { local: { 'myorg/repo-a': '/src/repo-a' } } })
+    const { user } = setup({ scope: PROJECT })
+    await replace(user, await field('worktree 경로'), '../repo-a-wt/{key}')
+    await waitFor(() => expect(screen.getByTestId('preview-path')).toHaveTextContent('/src/repo-a-wt/42'))
+  })
 })
 
 describe('CT-22 행 없는 org/project → 모든 필드 "상속"', () => {

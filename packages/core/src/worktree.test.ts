@@ -7,7 +7,19 @@ import type { Effective, SettingsValues } from '@minmo/api-client'
 
 import { createFakeHost, deferred, fail, flush, ok } from './testing'
 import type { CmdResult, RunOptions, ScriptRunResult } from './host'
-import { applyBaseDir, createWorktreeService, ignoredCopyNames, ignoredPathsToCopy, isAbsoluteFor, localFilesDir, scriptFor, sparseDirs, worktreeId } from './worktree'
+import {
+  applyBaseDir,
+  createWorktreeService,
+  ignoredCopyNames,
+  ignoredPathsToCopy,
+  isAbsoluteFor,
+  issuePaths,
+  localFilesDir,
+  resolveFromMain,
+  scriptFor,
+  sparseDirs,
+  worktreeId,
+} from './worktree'
 import type { IssueTarget, SetupLogEvent, WorktreeEntry } from './worktree'
 
 const HOME = '/home/u'
@@ -1095,6 +1107,80 @@ describe('openIssue — 설정 경로가 이 OS 의 절대 경로가 아니면 �
     expect(isAbsoluteFor('/x', 'win32')).toBe(false)
     expect(isAbsoluteFor('/home/u/x', 'linux')).toBe(true)
     expect(isAbsoluteFor('C:/x', 'darwin')).toBe(false)
+  })
+})
+
+describe('worktree 경로 — 원본 기준 상대(.)·홈(~)·절대(/) (#66)', () => {
+  it('resolveFromMain: . / .. 는 원본 폴더 기준, 루트 위로는 가지 않고 대소문자는 그대로', () => {
+    expect(resolveFromMain('../wt/x', '/src/App', 'linux')).toBe('/src/wt/x')
+    expect(resolveFromMain('./wt/x', '/src/App', 'linux')).toBe('/src/App/wt/x')
+    expect(resolveFromMain('.', '/src/App/', 'linux')).toBe('/src/App')
+    expect(resolveFromMain('../../../x', '/src/App', 'linux')).toBe('/x')
+    expect(resolveFromMain('..\\wt\\x', 'C:\\Code\\App', 'win32')).toBe('C:\\Code\\wt\\x')
+    expect(resolveFromMain('..\\..\\..\\x', 'C:\\Code\\App', 'win32')).toBe('C:\\x')
+    expect(resolveFromMain('..\\..\\..\\wt', '\\\\srv\\share\\App', 'win32')).toBe('\\\\srv\\share\\wt')
+  })
+
+  it('resolveFromMain: Windows 에서 구분자 하나로 시작하면 원본 드라이브(UNC 는 공유)의 루트', () => {
+    expect(resolveFromMain('\\wt\\x', 'D:\\Code\\App', 'win32')).toBe('D:\\wt\\x')
+    expect(resolveFromMain('\\wt', '\\\\srv\\share\\App', 'win32')).toBe('\\\\srv\\share\\wt')
+  })
+
+  it('resolveFromMain: 절대 경로·UNC·숨김 폴더 이름 시작은 그대로', () => {
+    expect(resolveFromMain('/home/u/wt', '/src/App', 'linux')).toBe('/home/u/wt')
+    expect(resolveFromMain('/wt', '/src/App', 'darwin')).toBe('/wt')
+    expect(resolveFromMain('C:\\wt', 'D:\\App', 'win32')).toBe('C:\\wt')
+    expect(resolveFromMain('\\\\srv\\share\\wt', 'D:\\App', 'win32')).toBe('\\\\srv\\share\\wt')
+    expect(resolveFromMain('.worktrees/x', '/src/App', 'linux')).toBe('.worktrees/x')
+  })
+
+  it('openIssue: ../{branch} → 메인 clone 옆(기본 배치와 같은 위치)', async () => {
+    const t = setup({ values: { worktreePath: '../{branch}' } })
+    await expect(t.svc.openIssue(ISSUE42)).resolves.toMatchObject({ path: WT42, created: true })
+    expect(t.find(t.isAdd)[0]).toContain(WT42)
+  })
+
+  it('openIssue: 원본 폴더(기준 저장소)가 있으면 그 폴더 기준', async () => {
+    const t = setup({ values: { mainClonePath: '/src/app', worktreePath: '../app-wt/{branch}' } })
+    await expect(t.svc.openIssue(ISSUE42)).resolves.toMatchObject({ path: '/src/app-wt/issue--42-add-login' })
+  })
+
+  it('openIssue: ./wt/{branch} → 원본 안이라 overlaps_main_clone, worktree 를 만들지 않는다', async () => {
+    const t = setup({ values: { worktreePath: './wt/{branch}' } })
+    await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'overlaps_main_clone', path: `${MAIN}/wt/issue--42-add-login` })
+    expect(t.find((a) => a[0] === 'clone')).toHaveLength(0)
+    expect(t.find(t.isAdd)).toHaveLength(0)
+  })
+
+  it('openIssue: .. 로 원본을 품는 상위 폴더가 되면 overlaps_main_clone', async () => {
+    const t = setup({ values: { worktreePath: '../{key}/../..' } })
+    await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'overlaps_main_clone', path: '/home/u/minmo-workspaces/MyOrg' })
+    expect(t.find(t.isAdd)).toHaveLength(0)
+  })
+
+  it('openIssue: Windows 에서 앞 토큰이 비어 구분자로 시작하게 된 경로는 드라이브 루트로 풀지 않는다(★기타의 {number})', async () => {
+    const t = setup({ platform: 'win32', home: 'C:\\Users\\u', values: { mainClonePath: 'D:\\src\\{repo}', worktreePath: '{number}\\{key}' } })
+    await expect(t.svc.openIssue(ETC)).rejects.toMatchObject({ code: 'path_not_absolute', path: '\\etc' })
+    expect(t.find(t.isAdd)).toHaveLength(0)
+  })
+
+  it('openIssue: Windows 에서 /wt/{branch} → 원본 드라이브의 루트', async () => {
+    const t = setup({ platform: 'win32', home: 'C:\\Users\\u', values: { mainClonePath: 'D:\\src\\{repo}', worktreePath: '/wt/{branch}' } })
+    await expect(t.svc.openIssue(ISSUE42)).resolves.toMatchObject({ path: 'D:\\wt\\issue--42-add-login' })
+  })
+
+  it('openIssue: 원본이 이 OS 의 절대 경로가 아니면 상대 worktree 경로도 쓰지 않는다(원본 경로로 알린다)', async () => {
+    const t = setup({ values: { mainClonePath: 'C:/ws/{repo}', worktreePath: '../{branch}' } })
+    await expect(t.svc.openIssue(ISSUE42)).rejects.toMatchObject({ code: 'path_not_absolute', path: 'C:/ws/Repo-A' })
+    expect(t.find((a) => a[0] === 'clone')).toHaveLength(0)
+  })
+
+  it('issuePaths: 기본 폴더는 원본에만 적용되고 상대 worktree 경로는 그 원본을 따른다', () => {
+    const ctx = { owner: 'O', repo: 'R', branch: 'issue/1-x', key: '1', number: 1, slug: 'x', home: '/home/u', platform: 'linux' as const }
+    expect(issuePaths({ mainClonePath: '~/minmo-workspaces/{owner}/{repo}/_main', worktreePath: '../wt/{key}' }, ctx, '/workspace')).toEqual({
+      main: '/workspace/O/R/_main',
+      path: '/workspace/O/R/wt/1',
+    })
   })
 })
 

@@ -20,6 +20,8 @@ export interface SetupState {
   logs: Record<string, SetupLogEntry[]>
 
   setTarget(id: string, t: IssueTarget): void
+  /** 같은 이슈의 모든 열기 대상(호스트마다 id 가 다를 수 있음)의 제목을 바꾼다 — 머리줄·PR 초안이 이 제목을 읽는다 */
+  renameIssue(owner: string, repo: string, number: number, title: string): void
   setOpen(id: string, s: IssueOpenState): void
   setScript(id: string, s: ScriptState): void
   appendLog(e: SetupLogEvent): void
@@ -38,6 +40,12 @@ export const useSetupStore = create<SetupState>()((set) => ({
   script: {},
   logs: {},
   setTarget: (id, t) => set((s) => ({ targets: { ...s.targets, [id]: t } })),
+  renameIssue: (owner, repo, number, title) =>
+    set((s) => {
+      const hit = (t: IssueTarget) => t.owner === owner && t.repo === repo && t.number === number && t.title !== title
+      if (!Object.values(s.targets).some(hit)) return s
+      return { targets: Object.fromEntries(Object.entries(s.targets).map(([id, t]) => [id, hit(t) ? { ...t, title } : t])) }
+    }),
   setOpen: (id, o) => set((s) => ({ open: { ...s.open, [id]: o } })),
   setScript: (id, sc) => set((s) => ({ script: { ...s.script, [id]: sc } })),
   appendLog: (e) => {

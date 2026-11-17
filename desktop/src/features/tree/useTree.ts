@@ -1,13 +1,14 @@
 // 트리 데이터 (F-02) — GitHub 목록은 서버 캐시 없이 gh/REST 로 직접 조회(D-22).
 // 자동 재시도 없음(EC-18), 새로고침 버튼으로만 다시 불러온다.
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { QueryClient } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
 import { isOfflineError } from '../../lib/apiErrors'
 import { useDeps } from '../../app/deps'
 import { aliasOfIssue, coreIdOf, hostOf, useHost, useHostDeps } from '../../app/host'
 import { GitHubError, worktreeId as coreWorktreeId } from '@minmo/core'
-import type { GitHubIssue, GitHubOwner } from '@minmo/core'
+import type { GitHubClient, GitHubIssue, GitHubOwner } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
 import { useHostsStore } from '../../store/hosts'
 import { isLocalOwner, useReposStore } from '../../store/repos'
@@ -49,6 +50,23 @@ function worktreeNumbers(owner: string, repo: string): number[] {
     .filter((n) => Number.isInteger(n) && n > 0)
 }
 
+/** 저장소의 GitHub 이슈 목록 — 트리와 이슈 머리줄이 같은 캐시·같은 조회 방식을 쓰도록 한곳에 둔다 */
+export function issuesQueryOptions(github: GitHubClient, owner: string, repo: string) {
+  return queryOptions({
+    queryKey: queryKeys.githubIssues(owner, repo),
+    queryFn: () => github.listIssues(owner, repo, { ensureNumbers: worktreeNumbers(owner, repo) }),
+    ...GITHUB_QUERY,
+  })
+}
+
+/** 다시 조회하지 않고 목록 캐시의 이슈 하나를 넣거나 바꾼다 — GitHub 목록은 방금 바뀐 이슈를 늦게 보여 줄 수 있다.
+ *  캐시가 없으면(아직 안 펼친 저장소) 그대로 둔다: 펼칠 때 조회한다. 순서는 useIssues 가 정한다 */
+export function upsertIssueCache(queryClient: QueryClient, owner: string, repo: string, issue: GitHubIssue) {
+  queryClient.setQueryData<GitHubIssue[]>(queryKeys.githubIssues(owner, repo), (list) =>
+    list === undefined ? list : list.some((i) => i.number === issue.number) ? list.map((i) => (i.number === issue.number ? issue : i)) : [issue, ...list],
+  )
+}
+
 /** AC-03: ★기타 + open 이슈 + closed 중 로컬 worktree 가 있는 것(A-10). 로컬 저장소(GitHub 아님)는 이슈 대신 앱 안의 작업 */
 export function useIssues(owner: string, repo: string, enabled: boolean) {
   const { github } = useDeps()
@@ -56,12 +74,7 @@ export function useIssues(owner: string, repo: string, enabled: boolean) {
   const map = useUiStore((s) => s.worktreePathMap)
   const local = isLocalOwner(owner)
   const tasks = useReposStore((s) => (local ? s.local[repo]?.tasks : undefined))
-  const query = useQuery({
-    queryKey: queryKeys.githubIssues(owner, repo),
-    queryFn: () => github.listIssues(owner, repo, { ensureNumbers: worktreeNumbers(owner, repo) }),
-    enabled: enabled && !local,
-    ...GITHUB_QUERY,
-  })
+  const query = useQuery({ ...issuesQueryOptions(github, owner, repo), enabled: enabled && !local })
   // 렌더마다 새 배열을 만들면 RepoNode 의 경로 비교 memo 가 매번 다시 돈다
   const data = query.data
   const issues = useMemo(() => {

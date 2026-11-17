@@ -203,12 +203,13 @@ export function createFakeGitHub(overrides: Partial<GitHubClient> = {}): Mocked<
     listIssues: async () => [],
     defaultBranch: async () => 'main',
     getRepo: async (owner, name) => ({ owner, name, defaultBranch: 'main' }),
-    getIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'open', htmlUrl: '' }),
+    getIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'open', htmlUrl: '', body: '' }),
     openPrForBranch: async () => null,
     createPr: async () => ({ number: 1, url: 'https://github.com/o/r/pull/1' }),
     createRepo: async (input) => ({ owner: input.org ?? 'me', name: input.name, defaultBranch: 'main' }),
     createIssue: async (_o, _r, title) => ({ number: 1, title, state: 'open', htmlUrl: '' }),
-    closeIssue: async () => {},
+    updateIssue: async (_o, _r, number, input) => ({ number, title: input.title ?? `issue ${number}`, state: 'open', htmlUrl: '' }),
+    closeIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'closed', htmlUrl: '' }),
   }
   return mockAll(base, overrides)
 }
