@@ -54,6 +54,14 @@ impl PtySession {
         self.writer.flush()
     }
 
+    /// ConPTY 의 시작 질의(ESC[6n)에 아직 답하지 않았으면 답한다. 질의는 PTY 의 맨 처음에 오고 그 앞의 출력은 모드 설정뿐이라
+    /// 화면의 커서는 항상 1행 1열이다. 이미 답한 세션에 또 보내면 살아 있는 프로그램에 F3 키로 들어가므로 한 번만 보낸다
+    fn answer_startup_query(&mut self) {
+        if !self.cpr_answered {
+            let _ = self.write_input(CURSOR_HOME_REPORT);
+        }
+    }
+
     /// 셸과 그 자손 프로세스를 끝낸다.
     fn terminate(&mut self) {
         // 셸에서 띄운 자손(dev 서버 등)이 cwd 를 잡고 있으면 worktree 삭제가 실패한다. 기본 conhost 는 ConPTY 를
@@ -72,11 +80,10 @@ impl PtySession {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
-        // ConPTY 는 시작 시 ESC[6n 을 보내고 응답이 올 때까지 닫기 요청도 처리하지 않는다. 응답 전(xterm 이 붙기 전
-        // 언마운트 등)에 닫으면 ClosePseudoConsole 이 영원히 반환하지 않으므로 응답을 대신 보낸다.
-        // 이미 응답한 세션에 보내면 살아 남은 자손 프로세스(TUI 등)에 F3 키로 전달되므로 미응답일 때만 보낸다.
-        if cfg!(windows) && !self.cpr_answered {
-            let _ = self.write_input(b"\x1b[1;1R");
+        // ConPTY 는 시작 시 ESC[6n 을 보내고 응답이 올 때까지 닫기 요청도 처리하지 않는다. 리더 스레드가 질의를 읽기 전에
+        // 닫으면 ClosePseudoConsole 이 영원히 반환하지 않으므로 응답을 대신 보낸다(미응답일 때만).
+        if cfg!(windows) {
+            self.answer_startup_query();
         }
     }
 
@@ -197,6 +204,90 @@ impl Scrollback {
             out.push_str(&self.text);
         }
         (out, alt)
+    }
+}
+
+/// 커서 위치 질의(DSR 6)
+const CURSOR_QUERY: &str = "\x1b[6n";
+/// 커서 위치 보고 — 1행 1열
+const CURSOR_HOME_REPORT: &[u8] = b"\x1b[1;1R";
+
+/// ConPTY 의 시작 질의를 출력에서 찾아 뺀다. ConPTY(INHERIT_CURSOR)는 시작하자마자 ESC[6n 을 보내고, 응답이 올 때까지
+/// 출력·입력을 모두 멈춘다. 화면(xterm)이 답하게 두면, 화면이 입력을 연결하기 전에 질의를 처리하거나 다시 붙은 화면이
+/// 지난 출력을 재생하며 답을 막을 때 터미널이 빈 화면으로 멈춘다(#56). 그래서 PTY 를 가진 쪽이 답하고 화면에는 보내지 않는다
+/// — 화면도 답하면 두 번째 응답이 프로그램에 F3 키로 들어간다.
+struct StartupQuery {
+    /// 아직 질의를 기다리는가. Unix pty 에는 이 질의가 없다 — 프로그램의 질의를 가로채지 않게 Windows 에서만 기다린다
+    waiting: bool,
+    /// 조각 끝에서 잘린 시퀀스 — 다음 조각 앞에 붙여 읽는다
+    carry: String,
+}
+
+/// 조각 앞의 CSI(`ESC [ 매개변수 중간 끝`)
+enum Csi {
+    Complete(usize),
+    /// 조각 끝에서 끊겼다
+    Partial,
+}
+
+/// rest 가 CSI 로 시작하면 그 길이(끊겼으면 Partial). CSI 가 아니면 None
+fn leading_csi(rest: &str) -> Option<Csi> {
+    let b = rest.as_bytes();
+    match b {
+        [0x1b] => return Some(Csi::Partial),
+        [0x1b, b'[', ..] => {}
+        _ => return None,
+    }
+    let end = 2 + b[2..]
+        .iter()
+        .take_while(|c| (0x20..=0x3f).contains(*c))
+        .count();
+    match b.get(end) {
+        Some(0x40..=0x7e) => Some(Csi::Complete(end + 1)),
+        None if b.len() <= MODE_CARRY_LIMIT => Some(Csi::Partial),
+        _ => None,
+    }
+}
+
+impl StartupQuery {
+    fn new() -> Self {
+        Self::waiting(cfg!(windows))
+    }
+
+    fn waiting(waiting: bool) -> Self {
+        Self {
+            waiting,
+            carry: String::new(),
+        }
+    }
+
+    /// 출력 조각에서 시작 질의를 뺀 나머지와, 이 조각에서 질의를 찾았는지를 돌려준다.
+    /// 질의 앞에는 ConPTY 의 모드 설정(CSI)만 온다 — 다른 출력이 먼저 나오면 질의가 없는 것으로 보고 그만 찾는다
+    fn filter(&mut self, text: String) -> (String, bool) {
+        if !self.waiting {
+            return (text, false);
+        }
+        let text = std::mem::take(&mut self.carry) + &text;
+        let mut at = 0;
+        while at < text.len() {
+            let rest = &text[at..];
+            if let Some(after) = rest.strip_prefix(CURSOR_QUERY) {
+                self.waiting = false;
+                return (format!("{}{after}", &text[..at]), true);
+            }
+            match leading_csi(rest) {
+                Some(Csi::Complete(len)) => at += len,
+                Some(Csi::Partial) => {
+                    self.carry = rest.to_string();
+                    return (text[..at].to_string(), false);
+                }
+                None => {
+                    self.waiting = false;
+                    return (text, false);
+                }
+            }
+        }
+        (text, false)
     }
 }
 
@@ -482,16 +573,43 @@ fn spawn(
     let emit_id = id.clone();
     let scrollback = Arc::new(Mutex::new(Scrollback::default()));
     let kept = scrollback.clone();
+    // 리더 스레드보다 먼저 넣는다 — 리더가 시작 질의를 읽자마자 이 세션으로 답할 수 있게
+    state.sessions.lock().map_err(err)?.insert(
+        id.clone(),
+        PtySession {
+            master: pair.master,
+            writer,
+            child,
+            cwd,
+            host: remote.map(|r| r.host),
+            key,
+            scrollback,
+            cols,
+            rows,
+            cpr_answered: false,
+            #[cfg(windows)]
+            job,
+        },
+    );
     let app = app.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         let mut pending: Vec<u8> = Vec::new();
+        let mut startup = StartupQuery::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     pending.extend_from_slice(&buf[..n]);
-                    let text = take_utf8(&mut pending);
+                    let (text, query) = startup.filter(take_utf8(&mut pending));
+                    if query {
+                        // 세션이 이미 빠졌으면(종료 중) terminate() 가 대신 답한다
+                        if let Ok(mut sessions) = app.state::<PtyState>().sessions.lock() {
+                            if let Some(s) = sessions.get_mut(&emit_id) {
+                                s.answer_startup_query();
+                            }
+                        }
+                    }
                     if !text.is_empty() {
                         let end = kept.lock().map(|mut k| k.push(&text)).unwrap_or(0);
                         let _ = app.emit(
@@ -518,24 +636,6 @@ fn spawn(
             kill_and_close(vec![s]);
         }
     });
-
-    state.sessions.lock().map_err(err)?.insert(
-        id.clone(),
-        PtySession {
-            master: pair.master,
-            writer,
-            child,
-            cwd,
-            host: remote.map(|r| r.host),
-            key,
-            scrollback,
-            cols,
-            rows,
-            cpr_answered: false,
-            #[cfg(windows)]
-            job,
-        },
-    );
     Ok(id)
 }
 
@@ -837,6 +937,51 @@ mod tests {
         assert!(!contains_cpr(b"echo 1;2R\r"));
     }
 
+    fn filtered(q: &mut StartupQuery, chunk: &str) -> (String, bool) {
+        q.filter(chunk.to_string())
+    }
+
+    #[test]
+    fn startup_query_is_taken_out_once_after_the_conpty_preamble() {
+        let mut q = StartupQuery::waiting(true);
+        assert_eq!(
+            filtered(&mut q, "\x1b[?9001h\x1b[?1004h\x1b[6n\x1b[mhi"),
+            ("\x1b[?9001h\x1b[?1004h\x1b[mhi".to_string(), true)
+        );
+        // 그 뒤의 질의는 프로그램의 것이다 — 화면이 답하게 그대로 둔다
+        assert_eq!(filtered(&mut q, "\x1b[6n"), ("\x1b[6n".to_string(), false));
+    }
+
+    #[test]
+    fn startup_query_is_found_across_chunk_boundaries() {
+        for (head, tail) in [
+            ("\x1b[?9001h\x1b", "[6nok"),
+            ("\x1b[?9001h\x1b[", "6nok"),
+            ("\x1b[?9001h\x1b[6", "nok"),
+            ("\x1b[?90", "01h\x1b[6nok"),
+        ] {
+            let mut q = StartupQuery::waiting(true);
+            let (a, found) = filtered(&mut q, head);
+            assert!(!found, "{head:?}");
+            let (b, found) = filtered(&mut q, tail);
+            assert!(found, "{head:?}");
+            assert_eq!(a + &b, "\x1b[?9001hok", "{head:?}");
+        }
+    }
+
+    #[test]
+    fn startup_query_is_left_alone_when_other_output_comes_first() {
+        // 글자·다른 이스케이프(OSC)가 먼저 나오면 시작 질의가 아니다 — 그만 찾는다
+        for first in ["hi\x1b[6n", "\x1b]0;t\x07\x1b[6n"] {
+            let mut q = StartupQuery::waiting(true);
+            assert_eq!(filtered(&mut q, first), (first.to_string(), false));
+            assert_eq!(filtered(&mut q, "\x1b[6n"), ("\x1b[6n".to_string(), false));
+        }
+        // 기다리지 않으면(Unix pty) 손대지 않는다
+        let mut q = StartupQuery::waiting(false);
+        assert_eq!(filtered(&mut q, "\x1b[6n"), ("\x1b[6n".to_string(), false));
+    }
+
     #[cfg(windows)]
     mod conpty {
         use super::super::*;
@@ -988,6 +1133,43 @@ mod tests {
                 count(&input, b"\x1b[1;1R"),
                 1,
                 "이미 응답한 세션에 다시 보내면 살아 남은 자손 프로세스에 F3 로 전달된다"
+            );
+        }
+
+        /// #56: 화면 없이도 시작 질의에 답해 셸이 뜨고, 화면으로 가는 출력에는 질의가 없다(화면이 또 답하지 않는다)
+        #[test]
+        fn startup_query_is_answered_without_a_screen() {
+            let mut pty = spawn_cmd_pty(None);
+            let mut startup = StartupQuery::waiting(true);
+            let mut shown = String::new();
+            let mut seen = 0;
+            let mut typed = false;
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !shown.contains("minmo-Windows_NT") {
+                let out = pty
+                    .output
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .expect("셸 응답을 10초 안에 받지 못했다(시작 질의에 답하지 못함)");
+                // 채널은 누적 출력을 보낸다 — 새로 온 부분만 거른다
+                let (text, query) =
+                    startup.filter(String::from_utf8_lossy(&out[seen..]).into_owned());
+                seen = out.len();
+                shown.push_str(&text);
+                if query {
+                    pty.session.answer_startup_query();
+                }
+                if pty.session.cpr_answered && !typed {
+                    typed = true;
+                    pty.session.write_input(b"echo minmo-%OS%\r").unwrap();
+                }
+            }
+            assert!(!shown.contains(CURSOR_QUERY), "시작 질의가 화면으로 갔다");
+            let (closed, input) = kill_with_timeout(pty);
+            assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
+            assert_eq!(
+                count(&input, CURSOR_HOME_REPORT),
+                1,
+                "응답은 한 번만 보낸다"
             );
         }
 
