@@ -327,6 +327,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       emitPty(id, data === '\r' ? '\r\n$ ' : data)
     },
     ptyResize: async () => {},
+    ptyWindows: async () => null,
     ptyFind: async () => null,
     ptyList: async () => [...ptyCwd].map(([id, cwd]) => ({ id, key: null, cwd, host: null })),
     onPtyExit: async () => () => {},

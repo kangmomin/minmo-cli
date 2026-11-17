@@ -26,7 +26,8 @@ export type WorktreeEntry = { path: string; branch: string }
 export function issueBranchContext(
   values: Pick<SettingsValues, 'branchTemplate' | 'etcBranchName'>,
   t: IssueTarget,
-  env: { home: string; platform: Platform },
+  /** nickname: 경로 템플릿 {alias} 값(이 PC 의 저장소 별칭) — 없으면 repo */
+  env: { home: string; platform: Platform; nickname?: string },
   opts: { checkEtcConflict: boolean },
 ): { branch: string; ctx: PathContext } {
   const branch =
@@ -40,6 +41,7 @@ export function issueBranchContext(
   const ctx: PathContext = {
     owner: t.owner,
     repo: t.repo,
+    alias: env.nickname,
     branch,
     key: t.key,
     number: t.number,
@@ -147,6 +149,8 @@ export interface WorktreeDeps {
   localDirFor?(main: string): string | undefined
   /** 이 기기(호스트)의 기본 폴더(applyBaseDir) — 실행 중에 바뀔 수 있어 쓸 때마다 읽는다 */
   baseDir?(): string | undefined
+  /** 경로 템플릿 {alias} 값(저장소 별칭) — 실행 중에 바뀔 수 있어 쓸 때마다 읽는다. undefined 면 repo */
+  repoNickname?(owner: string, repo: string): string | undefined
   onLog?(e: SetupLogEvent): void
   newRunId?(): string
 }
@@ -487,7 +491,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     const values = (await loadEffective(t.owner, t.repo)).values
     let resolved: { branch: string; ctx: PathContext }
     try {
-      resolved = issueBranchContext(values, t, { home: deps.home, platform }, { checkEtcConflict: true })
+      resolved = issueBranchContext(values, t, { home: deps.home, platform, nickname: deps.repoNickname?.(t.owner, t.repo) }, { checkEtcConflict: true })
     } catch (e) {
       if (e instanceof TemplateError) {
         log(issueId, 'effective', 'error', '브랜치명이 기타 브랜치와 충돌')
@@ -776,6 +780,31 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     return { uncommitted, unpushed }
   }
 
+  /** path 가 main 의 worktree 로 등록돼 있는가 — 목록을 읽지 못하면 null(불명) */
+  async function registeredIn(main: string, path: string): Promise<boolean | null> {
+    const list = await tauri.gitRun(['-C', main, 'worktree', 'list', '--porcelain'])
+    return list.code === 0 ? findRegistered(list.stdout, path, platform) !== undefined : null
+  }
+
+  /**
+   * 등록이 풀린 path 가 지워도 되는 남은 worktree 폴더인가.
+   * 이번 remove 직전까지 등록돼 있었다면 git 이 방금 등록을 푼 우리 worktree 다.
+   * 그 밖(이전 삭제가 남긴 폴더·등록 여부 불명)은 그 사이 다른 저장소가 생겼을 수 있어,
+   * 저장소 흔적이 없다고 확인될 때만 지운다 — 확인하지 못하면 지우지 않는다.
+   * 저장소가 아닌 폴더는 inspect 가 개수 불명이 되어 사용자가 삭제 확인을 거친 뒤에만 여기 온다.
+   */
+  async function isAbandoned(path: string, wasRegistered: boolean | null): Promise<boolean> {
+    if (wasRegistered === true) return true
+    const sep = platform === 'win32' ? '\\' : '/'
+    // git 이 읽지 못하는(깨진·다른 소유자) 저장소도 남기도록 .git 이 있으면 지우지 않는다
+    if (await tauri.pathExists(`${path.replace(/[\\/]+$/, '')}${sep}.git`)) return false
+    // bare 저장소·다른 저장소 안의 폴더는 여기서 성공한다. 실패는 문구로 "저장소 아님·경로 없음"일 때만 믿는다(언어 고정)
+    const probe = await tauri.gitRun(['-c', 'safe.directory=*', '-C', path, 'rev-parse', '--git-dir'], {
+      env: { LC_ALL: 'C', LANGUAGE: 'C' },
+    })
+    return probe.code !== 0 && /not a git repository|cannot change to .*No such file or directory/.test(probe.stderr)
+  }
+
   return {
     openIssue(t) {
       const id = worktreeId(t.owner, t.repo, t.key)
@@ -838,9 +867,16 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
 
         await withRepoLock(t.owner, t.repo, async () => {
           const main = await mainCloneFor(t, entry.path)
+          const wasRegistered = await registeredIn(main, entry.path)
           const rm = await tauri.gitRun(['-C', main, 'worktree', 'remove', '--force', entry.path])
           if (rm.code !== 0) {
-            throw new WorktreeError('git_failed', { message: rm.stderr.trim() || 'git worktree remove 실패', stderr: rm.stderr })
+            // Windows 의 git 은 node_modules 의 npm workspace junction 을 못 지우면 등록만 해제하고 폴더를 남긴다.
+            // 그 뒤 remove 는 늘 "is not a working tree" 로 실패한다 → 등록이 풀린 우리 폴더임이 확인되면 직접 지운다
+            await tauri.gitRun(['-C', main, 'worktree', 'prune'])
+            if ((await registeredIn(main, entry.path)) !== false || !(await isAbandoned(entry.path, wasRegistered))) {
+              throw new WorktreeError('git_failed', { message: rm.stderr.trim() || 'git worktree remove 실패', stderr: rm.stderr })
+            }
+            await tauri.removeDir(entry.path)
           }
           // 로컬 브랜치 삭제 실패(다른 worktree 가 사용 중 등)는 삭제 자체를 막지 않는다
           await tauri.gitRun(['-C', main, 'branch', '-D', entry.branch])

@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
 import type { SshError, SshProbe } from '../lib/tauri'
-import { isLocalOwner, useReposStore } from './repos'
+import { isLocalOwner, repoKey, useReposStore } from './repos'
 import type { LocalRepo } from './repos'
 
 export interface HostsState {
@@ -46,8 +46,6 @@ export interface HostsState {
   setRepoHost(owner: string, repo: string, hostId: string | null): void
   setUseTmux(on: boolean): void
 }
-
-export const repoKey = (owner: string, repo: string) => `${owner}/${repo}`.toLowerCase()
 
 export const LOCAL_HOST_ID = 'local'
 export const SSH_HOST_PREFIX = 'ssh:'

@@ -57,6 +57,7 @@ export function unregisterLocalRepo(id: string, ptyKill?: (id: string) => Promis
   const repo = useReposStore.getState().local[id]
   if (!repo) return
   useHostsStore.getState().setBaseRepo(repo.hostId, LOCAL_OWNER, id, null)
+  useReposStore.getState().setNickname(LOCAL_OWNER, id, null)
   useReposStore.getState().removeLocal(id)
   // 다시 열면 새 id 를 받으므로 이 id 의 작업 폴더 기록은 더 쓰이지 않는다(폴더는 남는다)
   const mine = (key: string) => coreIdOf(key).startsWith(`${LOCAL_OWNER}/${id}#`)

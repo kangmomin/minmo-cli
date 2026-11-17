@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
+import { repoNicknameOf, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { githubErrorMessage, useOwners, useRepos } from './useTree'
 import { useSaveVisibleRepos, useVisibleRepos } from './useVisibleRepos'
@@ -102,7 +103,7 @@ function VisibleReposForm(props: { current: VisibleRepos; notice: string | null;
       {mode === 'selected' && (
         <div className="grid gap-2">
           <Label htmlFor={`${uid}-q`}>저장소 검색</Label>
-          <Input id={`${uid}-q`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="이름 일부" spellCheck={false} />
+          <Input id={`${uid}-q`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="이름·별칭 일부" spellCheck={false} />
           <div className="max-h-80 overflow-y-auto rounded border p-1" role="group" aria-label="저장소 목록">
             {owners.isLoading && <p className="p-2 text-xs text-muted-foreground">조직 불러오는 중…</p>}
             {owners.isError && <p className="p-2 text-xs text-destructive">{githubErrorMessage(owners.error)}</p>}
@@ -136,7 +137,10 @@ function OwnerGroup(props: { owner: GitHubOwner; sel: string[]; setSel(f: (s: st
   const expanded = open || query !== ''
   const repos = useRepos(owner, expanded)
   const all = isOwnerAllSelected(sel, owner.login)
-  const shown = (repos.data ?? []).filter((r) => query === '' || r.name.toLowerCase().includes(query))
+  const nicknames = useReposStore((s) => s.nicknames)
+  const nicknameOf = (name: string) => repoNicknameOf({ nicknames }, owner.login, name)
+  // 원래 이름과 별칭 어느 쪽으로도 찾는다
+  const shown = (repos.data ?? []).filter((r) => query === '' || [r.name, nicknameOf(r.name) ?? ''].some((n) => n.toLowerCase().includes(query)))
   if (query !== '' && repos.data && shown.length === 0) return null
 
   return (
@@ -162,6 +166,7 @@ function OwnerGroup(props: { owner: GitHubOwner; sel: string[]; setSel(f: (s: st
           {repos.isError && <p className="text-xs text-destructive">{githubErrorMessage(repos.error)}</p>}
           {shown.map((r) => {
             const id = `${uid}-${r.name}`
+            const nickname = nicknameOf(r.name)
             return (
               <div key={r.name} className="flex items-center gap-2">
                 <input
@@ -173,8 +178,8 @@ function OwnerGroup(props: { owner: GitHubOwner; sel: string[]; setSel(f: (s: st
                   disabled={all}
                   onChange={(e) => setSel((s) => toggleRepo(s, r.owner, r.name, e.target.checked))}
                 />
-                <Label htmlFor={id} className="font-normal">
-                  {r.name}
+                <Label htmlFor={id} className="font-normal" title={nickname !== undefined ? `${r.owner}/${r.name}` : undefined}>
+                  {nickname ?? r.name}
                 </Label>
               </div>
             )

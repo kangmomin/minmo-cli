@@ -5,7 +5,7 @@ import { useHost } from '../../app/host'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import type { IssueTarget } from '@minmo/core'
-import { useRepoLabel } from '../../store/repos'
+import { useRepoFullNameIfNicknamed, useRepoLabel } from '../../store/repos'
 import type { IssueOpenState } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { LaunchAgentDialog } from '../agents/LaunchAgentDialog'
@@ -24,6 +24,7 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
   const host = useHost()
   const [localOpen, setLocalOpen] = useState(false)
   const repoLabel = useRepoLabel(target.owner, target.repo)
+  const repoFullName = useRepoFullNameIfNicknamed(target.owner, target.repo)
   const issueId = host.issueId(target.owner, target.repo, target.key)
   const [launchOpen, setLaunchOpen] = useState(false)
   // 트리 메뉴의 [에이전트 실행] — 작업 폴더가 준비되면 대화상자를 연다
@@ -46,7 +47,9 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
           {host.label}
         </Badge>
       )}
-      <span className="text-sm text-muted-foreground">{repoLabel}</span>
+      <span className="text-sm text-muted-foreground" title={repoFullName}>
+        {repoLabel}
+      </span>
       {target.number === null ? (
         <span className="flex items-center gap-1 font-medium">
           <StarIcon className="size-4 fill-amber-400 text-amber-500" />

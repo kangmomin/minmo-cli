@@ -21,6 +21,7 @@ vi.mock('@xterm/xterm', () => ({
     cols = 80
     rows = 24
     unicode = { activeVersion: '6' }
+    parser = { registerOscHandler: () => ({ dispose() {} }) }
     loadAddon() {}
     open() {}
     write() {}

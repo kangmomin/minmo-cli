@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useBaseDeps } from '../../app/deps'
 import { aliasOfIssue, hostOf, useHostDeps } from '../../app/host'
 import { useHostsStore } from '../../store/hosts'
+import { repoShortNameOf, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { STATUS_LABEL, derive, issueOfPane, useAgentStore } from './agentStore'
@@ -78,7 +79,8 @@ export function useAgentTracker() {
       // 알림은 알려진 에이전트만(빌드·개발 서버 같은 기타 프로그램이 멈출 때마다 알리지 않는다)
       if (event && next && next.agent !== 'other' && useUiStore.getState().agentNotify) {
         const target = useSetupStore.getState().targets[issueId]
-        const where = target ? `${target.repo} ${target.number === null ? '기타' : `#${target.number} ${target.title}`}` : issueId
+        const repo = target && repoShortNameOf(useReposStore.getState(), target.owner, target.repo)
+        const where = target ? `${repo} ${target.number === null ? '기타' : `#${target.number} ${target.title}`}` : issueId
         void tauri.notify(`${AGENT_LABEL[next.agent]} — ${STATUS_LABEL[event]}`, where, { kind: 'local', issueId, paneId }).catch(() => undefined)
       }
     }

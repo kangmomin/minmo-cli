@@ -9,6 +9,8 @@ export type RenderBranchOptions = { etcBranchName?: string }
 export type PathContext = {
   owner: string
   repo: string
+  /** {alias} 토큰 값: 이 PC 의 저장소 별칭(데스크탑 코드에서는 nickname). 비었으면 repo 를 쓴다 */
+  alias?: string
   branch: string
   key: string
   number: number | null
@@ -154,14 +156,17 @@ export function renderPath(template: string, ctx: PathContext): string {
   const values: Record<string, string> = {
     owner: ctx.owner,
     repo: ctx.repo,
+    alias: ctx.alias || ctx.repo,
     branch: branchDir(ctx.branch),
     key: ctx.key,
     number: ctx.number === null ? '' : String(ctx.number),
     slug: ctx.slug,
   }
-  const rendered = template.replace(/\{(owner|repo|branch|key|number|slug)\}/g, (_m, k: string) =>
-    sanitizeSegmentValue(values[k]),
-  )
+  const rendered = template.replace(/\{(owner|repo|alias|branch|key|number|slug)\}/g, (_m, k: string) => {
+    const v = sanitizeSegmentValue(values[k])
+    // 별칭이 금지 문자뿐이라 정제하면 비는 경우(예: "..")에도 빈 폴더 이름이 되지 않게 repo 로 바꾼다
+    return v === '' && k === 'alias' ? sanitizeSegmentValue(ctx.repo) : v
+  })
   return expandHome(rendered, ctx.home, ctx.platform)
 }
 

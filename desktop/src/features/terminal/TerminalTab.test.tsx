@@ -4,7 +4,7 @@ import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 
-import type { PtyDataEvent, TauriApi } from '../../lib/tauri'
+import type { PtyDataEvent, PtyResizedEvent, TauriApi } from '../../lib/tauri'
 import { createFakeTauri, deferred, flush } from '../../test/fakes'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
@@ -26,12 +26,15 @@ const xterm = vi.hoisted(() => ({
     textarea: HTMLTextAreaElement | undefined
     selection: string
     unicode: { activeVersion: string }
-    addons: { kind?: string }[]
+    addons: { kind?: string; handler?: (e: MouseEvent, uri: string) => void }[]
+    oscHandlers: Map<number, (data: string) => boolean | Promise<boolean>>
   }[],
   // 정적 Terminal.strings — 실제 xterm 처럼 open() 이전에 바꿔야 입력 textarea 라벨에 반영된다
   strings: { promptLabel: 'Terminal input', tooMuchOutput: '' },
   // 만든 WebGL 렌더러들. WebGL2 를 쓸 수 없는 환경: failCreate 면 만들 때(Safari 16 미만), failLoad 면 붙일 때 실패한다
   webgl: { instances: [] as { kind: string; disposed: boolean; lose(): void }[], failCreate: false, failLoad: false },
+  // 패널 크기에 맞춘 칸 수 — 정하면 FitAddon.fit() 이 xterm 을 이 크기로 바꾼다(없으면 그대로 둔다)
+  fitTo: null as { cols: number; rows: number } | null,
 }))
 
 vi.mock('@xterm/xterm', () => ({
@@ -47,13 +50,22 @@ vi.mock('@xterm/xterm', () => ({
     textarea: HTMLTextAreaElement | undefined
     unicode = { activeVersion: '6' }
     addons: { kind?: string }[] = []
+    // 프로그램이 보낸 OSC 신호(번호별) 처리기
+    oscHandlers = new Map<number, (data: string) => boolean | Promise<boolean>>()
+    parser = {
+      registerOscHandler: (id: number, cb: (data: string) => boolean | Promise<boolean>) => {
+        this.oscHandlers.set(id, cb)
+        return { dispose: () => this.oscHandlers.delete(id) }
+      },
+    }
     static strings = xterm.strings
     constructor(options: Record<string, unknown>) {
       this.options = options
       xterm.instances.push(this)
     }
-    loadAddon(addon: { kind?: string }) {
+    loadAddon(addon: { kind?: string; activate?: (t: unknown) => void }) {
       if (addon.kind === 'webgl' && xterm.webgl.failLoad) throw new Error('WebGL2 not supported')
+      addon.activate?.(this)
       this.addons.push(addon)
     }
     // 실제 xterm 처럼 host 안에 입력 textarea 를 만든다
@@ -65,6 +77,12 @@ vi.mock('@xterm/xterm', () => ({
     }
     write(d: string, done?: () => void) {
       this.written.push(d)
+      // 실제 xterm 처럼 쓰는 동안 OSC 신호(ESC ] <번호> ; <데이터> BEL)를 처리하고, 콜백은 그 뒤에 부른다
+      for (const part of d.split('\x1b]').slice(1)) {
+        const body = part.slice(0, part.indexOf('\x07'))
+        const sep = body.indexOf(';')
+        this.oscHandlers.get(Number(body.slice(0, sep)))?.(body.slice(sep + 1))
+      }
       done?.()
     }
     resize(cols: number, rows: number) {
@@ -96,7 +114,19 @@ vi.mock('@xterm/xterm', () => ({
 }))
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
-    fit() {}
+    term: { cols: number; rows: number } | null = null
+    activate(t: { cols: number; rows: number }) {
+      this.term = t
+    }
+    fit() {
+      if (this.term && xterm.fitTo) Object.assign(this.term, xterm.fitTo)
+    }
+  },
+}))
+vi.mock('@xterm/addon-web-links', () => ({
+  WebLinksAddon: class {
+    kind = 'web-links'
+    constructor(public handler: (e: MouseEvent, uri: string) => void) {}
   },
 }))
 vi.mock('@xterm/addon-unicode11', () => ({
@@ -138,6 +168,7 @@ beforeEach(() => {
   xterm.webgl.instances.length = 0
   xterm.webgl.failCreate = false
   xterm.webgl.failLoad = false
+  xterm.fitTo = null
   useUiStore.setState({ panes: {}, focusRequest: null, terminalIds: {}, startedTerminals: { ...STARTED }, tab: 'terminal', selectedIssueId: null, theme: 'black' })
 })
 
@@ -222,6 +253,57 @@ describe('글자 그리기 — Unicode 11 폭·WebGL 렌더러(#58)', () => {
     await flush()
     act(() => liveWebgl()[0].lose())
     expect(liveWebgl()).toHaveLength(0)
+  })
+
+  it('호스트가 Windows ConPTY 면 PTY 를 열기(첫 출력) 전에 xterm 에 그 정보(windowsPty)를 준다', async () => {
+    const info = { backend: 'conpty', buildNumber: 26200 } as const
+    let atSpawn: unknown
+    const t = setup({
+      ptyWindows: async () => info,
+      ptySpawn: async () => {
+        atSpawn = xterm.instances[0].options.windowsPty
+        return 'pty-1'
+      },
+    })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(atSpawn).toEqual(info)
+  })
+
+  it.each([
+    ['ConPTY 가 아니면(null)', async () => null],
+    ['묻지 못하면(reject)', async () => Promise.reject(new Error('원격에서 쓸 수 없는 기능입니다: ptyWindows'))],
+  ])('%s windowsPty 없이 터미널을 연다', async (_, ptyWindows) => {
+    const t = setup({ ptyWindows })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(xterm.instances[0].options.windowsPty).toBeUndefined()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('ConPTY 정보는 터미널이 여럿이어도 한 번만 묻고, 묻지 못했으면 다음에 여는 터미널이 다시 묻는다', async () => {
+    const info = { backend: 'conpty', buildNumber: 26200 } as const
+    const ptyWindows = vi.fn<TauriApi['ptyWindows']>().mockRejectedValueOnce(new Error('연결 끊김')).mockResolvedValue(info)
+    const fake = createFakeTauri({ ptyWindows })
+    const r = renderWithDeps(<TerminalTab sessions={[A]} activeId={A.issueId} visible />, makeDeps({ tauri: fake.tauri }))
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(xterm.instances[0].options.windowsPty).toBeUndefined()
+
+    // 나중에 연 터미널은 다시 묻는다
+    const S2: TerminalSessionSpec = { issueId: 'o/r#2', cwd: '/w/2' }
+    const S3: TerminalSessionSpec = { issueId: 'o/r#3', cwd: '/w/3' }
+    // 세션 목록에 없는 이슈는 열린 터미널에서 빠지므로(CR-03) 세션을 넣기 직전에 연다
+    const open = (s: TerminalSessionSpec) => act(() => useUiStore.setState((u) => ({ startedTerminals: { ...u.startedTerminals, [s.issueId]: true } })))
+    open(S2)
+    r.rerender(<TerminalTab sessions={[A, S2]} activeId={A.issueId} visible />)
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(xterm.instances[1].options.windowsPty).toEqual(info)
+    expect(ptyWindows).toHaveBeenCalledTimes(2)
+
+    // 이미 읽은 값은 다시 묻지 않는다
+    open(S3)
+    r.rerender(<TerminalTab sessions={[A, S2, S3]} activeId={A.issueId} visible />)
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(3))
+    expect(xterm.instances[2].options.windowsPty).toEqual(info)
+    expect(ptyWindows).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -913,6 +995,59 @@ describe('복사·붙여넣기 (Ctrl+C / Ctrl+V — Windows Terminal 방식)', (
   })
 })
 
+describe('ssh 원격 프로그램의 링크·복사 (#76)', () => {
+  const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
+
+  it('프로그램의 복사(OSC 52)를 이 화면의 클립보드에 쓴다 · 클립보드를 읽는 요청에는 답하지 않는다', async () => {
+    const writeText = vi.fn(async (_text: string) => {})
+    const readText = vi.fn(async () => '비밀')
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText, readText } })
+    try {
+      const t = setup()
+      await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+      const term = xterm.instances[0]
+      const osc52 = term.oscHandlers.get(52)
+      expect(osc52?.(`c;${b64('git push origin 브랜치')}`)).toBe(true)
+      expect(writeText).toHaveBeenCalledWith('git push origin 브랜치')
+      osc52?.('c;?')
+      await flush()
+      expect(readText).not.toHaveBeenCalled()
+      // 읽기 요청에 답하면 그 답이 PTY 입력으로 간다 — 아무것도 보내지 않는다
+      expect(t.tauri.ptyWrite).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('링크는 Ctrl+클릭으로만 연다 — 일반 URL·OSC 8 링크 모두 이 화면의 openUrl 로', async () => {
+    const t = setup()
+    await flush()
+    const term = xterm.instances[0]
+    const webLinks = term.addons.find((a) => a.kind === 'web-links')?.handler
+    const osc8 = term.options.linkHandler as { activate(e: MouseEvent, uri: string): void } | undefined
+    webLinks?.(new MouseEvent('mouseup'), 'https://example.com')
+    osc8?.activate(new MouseEvent('mouseup'), 'https://example.com')
+    expect(t.tauri.openUrl).not.toHaveBeenCalled()
+    webLinks?.(new MouseEvent('mouseup', { ctrlKey: true }), 'https://github.com/o/r/pull/1')
+    osc8?.activate(new MouseEvent('mouseup', { ctrlKey: true }), 'https://example.com/docs')
+    expect(vi.mocked(t.tauri.openUrl).mock.calls).toEqual([['https://github.com/o/r/pull/1'], ['https://example.com/docs']])
+  })
+
+  it('브라우저를 열지 못해도(거절) 터미널은 그대로 동작한다', async () => {
+    const t = setup({ openUrl: vi.fn(async () => Promise.reject(new Error('not allowed'))) })
+    await flush()
+    const webLinks = xterm.instances[0].addons.find((a) => a.kind === 'web-links')?.handler
+    expect(() => webLinks?.(new MouseEvent('mouseup', { ctrlKey: true }), 'https://example.com')).not.toThrow()
+    await flush()
+    expect(t.tauri.openUrl).toHaveBeenCalledTimes(1)
+  })
+
+  it('안내 줄에 링크 열기·마우스를 쓰는 프로그램에서의 선택 방법을 보인다', () => {
+    setup()
+    expect(screen.getByText(/Ctrl\+클릭: 링크 열기 · Shift\+드래그: 프로그램이 마우스를 쓸 때 선택/)).toBeInTheDocument()
+  })
+})
+
 describe('글자 크기 (Ctrl + / Ctrl - / Ctrl 0)', () => {
   const key = (init: KeyboardEventInit) => new KeyboardEvent('keydown', { ctrlKey: true, cancelable: true, ...init })
 
@@ -972,6 +1107,23 @@ describe('함께 쓰는 터미널 — 이미 떠 있는 터미널에 붙기(원�
     expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-9', 'ls\r')
   })
 
+  it('지난 출력을 다시 그릴 때 그 안의 옛 복사(OSC 52)는 클립보드에 쓰지 않는다 · 붙은 뒤의 새 복사는 쓴다(#76)', async () => {
+    const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
+    const writeText = vi.fn(async (_text: string) => {})
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    try {
+      const data = emitter<{ id: string; data: string; end?: number }>()
+      setup({ onPtyData: data.on, ptyFind: async () => ({ ...FOUND, scrollback: `${FOUND.scrollback}\x1b]52;c;${b64('옛 복사')}\x07` }) })
+      await vi.waitFor(() => expect(xterm.instances[0].written).toHaveLength(1))
+      await flush()
+      expect(writeText).not.toHaveBeenCalled()
+      act(() => data.emit({ id: 'pty-9', data: `\x1b]52;c;${b64('새 복사')}\x07` }))
+      expect(writeText).toHaveBeenCalledWith('새 복사')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('붙는 사이에 온 출력은 지난 출력(scrollback)과 겹치는 것은 버리고 그 뒤의 것만 이어 그린다', async () => {
     const data = emitter<{ id: string; data: string; end?: number }>()
     const find = deferred<typeof FOUND>()
@@ -1020,6 +1172,128 @@ describe('함께 쓰는 터미널 — 이미 떠 있는 터미널에 붙기(원�
     expect(xterm.instances[0].cols).toBe(80)
     act(() => resized.emit({ id: 'pty-1', cols: 44, rows: 20 }))
     expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([44, 20])
+  })
+
+  describe('이 화면이 바꾼 크기의 알림(#58)', () => {
+    /** 화면 크기가 바뀐 것처럼 xterm 의 칸 수를 정하고 크기 맞춤을 다시 돌린다(글자 크기 변경이 크기 맞춤을 부른다) */
+    let font = 13
+    const refit = (cols: number) => {
+      xterm.instances[0].cols = cols
+      act(() => useUiStore.getState().setFontSize(++font))
+    }
+    /** 마지막 ptyResize 요청 — 그 크기와 이 화면의 표시(by) */
+    const lastAsk = (t: ReturnType<typeof setup>) => {
+      const [id, cols, rows, by] = t.tauri.ptyResize.mock.calls.at(-1)!
+      return { id, cols, rows, by } as PtyResizedEvent
+    }
+
+    async function opened() {
+      const resized = emitter<PtyResizedEvent>()
+      const t = setup({ onPtyResized: resized.on })
+      // 크기 알림 구독은 PTY 를 연 뒤에 한다 — terminalIds 가 채워지면 끝난 것이다
+      await vi.waitFor(() => expect(useUiStore.getState().terminalIds[`${A.issueId}::1`]).toBe('pty-1'))
+      return { t, resized }
+    }
+
+    afterEach(() => {
+      font = 13
+      useUiStore.setState({ fontSize: 13 })
+    })
+
+    it('크기를 빠르게 두 번 바꿔 앞 요청의 알림이 늦게 와도 옛 크기로 돌아가지 않고, 크기 맞춤을 이어 간다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const first = lastAsk(t)
+      refit(110)
+      const second = lastAsk(t)
+      expect([first.cols, second.cols]).toEqual([100, 110])
+      expect(first.by).toBeTruthy()
+      expect(first.by).not.toBe(second.by)
+
+      act(() => resized.emit(first))
+      expect(xterm.instances[0].cols).toBe(110)
+      act(() => resized.emit(second))
+      expect(xterm.instances[0].cols).toBe(110)
+
+      // 여전히 이 화면이 크기를 정한다 — 화면 크기가 바뀌면 다시 알린다(누르지 않아도)
+      const before = t.tauri.ptyResize.mock.calls.length
+      refit(90)
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before + 1)
+      expect(lastAsk(t).cols).toBe(90)
+    })
+
+    it('다른 화면의 알림 뒤에 이 화면의 마지막 요청이 적용되면 그 크기로 돌아오고 다시 크기를 정한다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const mine = lastAsk(t)
+      // PTY 에서는 다른 화면의 요청이 먼저 처리됐다
+      act(() => resized.emit({ id: 'pty-1', cols: 60, rows: 20, by: 'other:1' }))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([60, 20])
+      act(() => resized.emit(mine))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([100, 24])
+
+      const before = t.tauri.ptyResize.mock.calls.length
+      refit(90)
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before + 1)
+    })
+
+    it('같은 크기를 다시 요청해도 요청마다 알림을 받는다 — 다른 화면의 알림이 사이에 끼어도 마지막 요청에서 크기를 되찾는다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const first = lastAsk(t)
+      // 창을 끄는 동안처럼 칸 수가 그대로인 요청
+      refit(100)
+      const second = lastAsk(t)
+      // PTY 에는 다른 화면의 요청 → 첫 요청 → 둘째 요청 순서로 적용됐다
+      act(() => resized.emit({ id: 'pty-1', cols: 60, rows: 20, by: 'other:1' }))
+      act(() => resized.emit(first))
+      expect(xterm.instances[0].cols).toBe(60)
+      act(() => resized.emit(second))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([100, 24])
+
+      const before = t.tauri.ptyResize.mock.calls.length
+      refit(90)
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before + 1)
+    })
+
+    it('옛 요청이 더 새 요청보다 늦게 적용되면(원격 호출의 순서가 바뀐 경우) 이 화면의 크기를 다시 알린다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const first = lastAsk(t)
+      refit(110)
+      const second = lastAsk(t)
+      act(() => resized.emit(second))
+      const before = t.tauri.ptyResize.mock.calls.length
+      // PTY 가 옛 크기(100)가 됐다
+      act(() => resized.emit(first))
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before + 1)
+      expect(lastAsk(t)).toMatchObject({ cols: 110, rows: 24 })
+      expect(xterm.instances[0].cols).toBe(110)
+    })
+
+    it('다른 화면의 크기로 보던 사이 패널이 바뀌었으면, 마지막 요청이 적용되어 크기를 되찾을 때 패널에 다시 맞춘다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const mine = lastAsk(t)
+      act(() => resized.emit({ id: 'pty-1', cols: 60, rows: 20, by: 'other:1' }))
+      // 다른 화면의 크기로 보는 동안 패널이 바뀌었다(이때는 따라가지 않는다)
+      xterm.fitTo = { cols: 90, rows: 30 }
+      act(() => resized.emit(mine))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([90, 30])
+      expect(lastAsk(t)).toMatchObject({ cols: 90, rows: 30 })
+    })
+
+    it('이 화면의 마지막 요청 뒤에 다른 화면이 바꾸면 그 크기로 본다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      act(() => resized.emit(lastAsk(t)))
+      act(() => resized.emit({ id: 'pty-1', cols: 60, rows: 20, by: 'other:1' }))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([60, 20])
+      // 다른 화면의 크기로 보는 중에는 이 화면의 크기를 알리지 않는다
+      const before = t.tauri.ptyResize.mock.calls.length
+      refit(90)
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before)
+    })
   })
 
   it('셸이 끝났다는 알림을 받으면 종료 안내를 띄운다(입력하지 않고 보기만 하던 화면도)', async () => {

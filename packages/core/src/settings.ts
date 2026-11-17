@@ -41,7 +41,7 @@ const MAX_SPARSE_BYTES = 4096
 const MAX_SPARSE_LINES = 100
 
 const BRANCH_TOKENS = new Set(['number', 'slug', 'title'])
-const WORKTREE_PATH_TOKENS = new Set(['owner', 'repo', 'branch', 'key', 'number', 'slug'])
+const WORKTREE_PATH_TOKENS = new Set(['owner', 'repo', 'alias', 'branch', 'key', 'number', 'slug'])
 const MAIN_CLONE_TOKENS = new Set(['owner', 'repo'])
 
 const runes = (s: string) => Array.from(s).length

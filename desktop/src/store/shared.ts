@@ -1,4 +1,4 @@
-// 함께 쓰는 상태를 호스트와 맞춘다(lib/sharedState.ts) — 저장소 목록, 작업 폴더 위치, 터미널 패널 구성, 에이전트 실행 명령,
+// 함께 쓰는 상태를 호스트와 맞춘다(lib/sharedState.ts) — 저장소 목록·별칭, 작업 폴더 위치, 터미널 패널 구성, 에이전트 실행 명령,
 // 호스트별 기준 저장소 폴더·기본 폴더, 저장소별 연결 호스트.
 // 테마·글자 크기·지금 보는 이슈·포커스처럼 기기마다 다른 것은 맞추지 않는다.
 import { LAUNCH_KINDS } from '../features/agents/launch'
@@ -9,14 +9,14 @@ import { bindShared, merge3 } from '../lib/sharedState'
 import type { TauriApi } from '../lib/tauri'
 import { aliasOfHostId, useHostsStore } from './hosts'
 import type { HostsState } from './hosts'
-import { useReposStore } from './repos'
+import { normalizeNickname, useReposStore } from './repos'
 import type { ReposState } from './repos'
 import { useSetupStore } from './setup'
 import type { SetupState } from './setup'
 import { useUiStore } from './ui'
 import type { IssuePanes, UiState } from './ui'
 
-type SharedRepos = Pick<ReposState, 'added' | 'local'>
+type SharedRepos = Pick<ReposState, 'added' | 'local' | 'nicknames'>
 /** 작업 호스트 목록·지금 고른 호스트·tmux 사용은 기기마다 다르므로 뺀다 */
 type SharedHosts = Pick<HostsState, 'baseRepos' | 'baseDirs' | 'repoHosts'>
 type SharedUi = {
@@ -85,6 +85,14 @@ export function applySharedRepos(value: unknown) {
   const next: Partial<SharedRepos> = {}
   if (Array.isArray(value.added)) next.added = value.added.filter((x): x is string => typeof x === 'string')
   if (isRecord(value.local)) next.local = value.local as SharedRepos['local']
+  // 별칭 기능 전의 값(nicknames 없음)이면 이 화면의 별칭을 그대로 둔다
+  // setNickname 과 같은 규칙(소문자 키·정리한 값)으로 맞춰 받는다
+  if (isRecord(value.nicknames))
+    next.nicknames = Object.fromEntries(
+      Object.entries(value.nicknames)
+        .map(([k, v]) => [k.toLowerCase(), typeof v === 'string' ? normalizeNickname(v) : ''] as const)
+        .filter(([, v]) => v !== ''),
+    )
   useReposStore.setState(next)
 }
 
@@ -130,7 +138,7 @@ export function bindSharedStores(tauri: Pick<TauriApi, 'sharedGet' | 'sharedSet'
       key: 'repos',
       pick: () => {
         const s = useReposStore.getState()
-        return { added: s.added, local: s.local }
+        return { added: s.added, local: s.local, nicknames: s.nicknames }
       },
       apply: applySharedRepos,
       subscribe: (cb) => useReposStore.subscribe(cb),
