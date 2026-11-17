@@ -914,6 +914,7 @@ async fn call(ctx: &Ctx, method: &str, args: Value) -> Result<Value, String> {
             arg(&args, 0)?,
             arg(&args, 1)?,
             arg(&args, 2)?,
+            arg(&args, 3)?,
         )),
         "ptySpawn" => {
             #[derive(Deserialize)]

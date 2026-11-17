@@ -8,6 +8,7 @@ import { createContext, useContext, useEffect, useId, useRef, useState } from 'r
 
 import { useBaseDeps } from '../../app/deps'
 import { Button } from '../../components/ui/button'
+import { newOrigin } from '../../lib/sharedState'
 import { remotePty } from '../../lib/sshHost'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
@@ -219,6 +220,10 @@ type TermState = {
    * 마지막으로 입력한 화면에 맞춘다. 혼자 쓸 때는 항상 true 다.
    */
   owner: boolean
+  /** PTY 에 지금 xterm 의 크기를 알린다 — 이 터미널이 보낸 요청임을 표시해, 늦게 온 자기 알림을 다른 화면의 변경으로 읽지 않는다 */
+  askResize(): void
+  /** 보이는 동안만 있다 — 패널에 크기를 맞추고 PTY 에 알린다 */
+  refit?: () => void
   /** 이 xterm 이 처리한 마지막 포커스 요청 — 인스턴스마다 둬야 StrictMode 재마운트로 새로 만든 xterm 도 포커스를 받는다 */
   focusToken?: number
 }
@@ -320,12 +325,22 @@ function TerminalSession({
     t.open(el)
     // 입력 textarea 에도 탈출 안내를 연결한다 — region 에만 있으면 입력에 포커스를 둔 사용자는 듣지 못한다(AX-39)
     t.textarea?.setAttribute('aria-describedby', hintId)
+    /** 이 터미널의 크기 변경 요청 표시(`<origin>:<번호>`), 마지막으로 보낸 요청 번호, 알림을 받은 가장 큰 요청 번호 */
+    const origin = newOrigin()
+    let asked = 0
+    let seen = 0
     const state: TermState = {
       t,
       fit,
       ptyId: null,
       ended: false,
       owner: true,
+      askResize: () => {
+        if (!state.ptyId || state.ended) return
+        asked += 1
+        // reject 는 무시한다 — 종료 판정은 write reject 만(CR-19)
+        tauri.ptyResize(state.ptyId, t.cols, t.rows, `${origin}:${asked}`).catch(() => undefined)
+      },
       end: () => {
         if (disposed || state.ended) return
         state.ended = true
@@ -348,7 +363,7 @@ function TerminalSession({
       } catch {
         return false
       }
-      tauri.ptyResize(state.ptyId, t.cols, t.rows).catch(() => undefined)
+      state.askResize()
       return true
     }
     const onFocus = () => {
@@ -477,8 +492,34 @@ function TerminalSession({
         const unExit = await tauri.onPtyExit((ended) => {
           if (ended === id) state.end()
         })
+        // 알림은 PTY 에 적용된 순서로 온다(요청마다 하나씩) — 마지막으로 받은 알림의 크기가 곧 PTY 의 크기다
+        const adopt = (cols: number, rows: number) => {
+          if (cols !== t.cols || rows !== t.rows) t.resize(cols, rows)
+        }
         const unResized = await tauri.onPtyResized((e) => {
-          if (disposed || e.id !== id || (e.cols === t.cols && e.rows === t.rows)) return
+          if (disposed || e.id !== id) return
+          if (e.by?.startsWith(`${origin}:`)) {
+            const n = Number(e.by.slice(origin.length + 1))
+            if (n < seen) {
+              // 더 새 요청보다 늦게 적용됐다(원격 호출은 따로 돈다) — PTY 가 옛 크기가 됐다.
+              // 크기를 정하는 중이면 지금 크기를 다시 알리고, 다른 화면의 크기로 보는 중이면 따른다
+              if (state.owner) state.askResize()
+              else adopt(e.cols, e.rows)
+              return
+            }
+            seen = n
+            // 옛 요청의 알림 — 더 새 요청의 알림이 뒤따른다. 따르면 xterm 이 옛 크기로 돌아갔다 다시 바뀌며(reflow)
+            // ConPTY 의 화면과 어긋나 잔상이 남고, 다른 화면의 변경으로 읽어 크기 맞춤까지 멈춘다(#58)
+            if (n !== asked) return
+            // 마지막 요청이 적용됐다 — 그 사이 다른 화면의 알림으로 바뀐 크기를 PTY 의 지금 크기로 되돌린다.
+            // 다른 화면의 크기로 보던 동안에는 패널 크기를 따라가지 않았으므로, 되찾았으면 패널에 다시 맞춘다
+            const regained = !state.owner
+            state.owner = true
+            adopt(e.cols, e.rows)
+            if (regained) state.refit?.()
+            return
+          }
+          if (e.cols === t.cols && e.rows === t.rows) return
           // 다른 화면이 크기를 바꿨다 — 같은 크기로 그린다
           state.owner = false
           t.resize(e.cols, e.rows)
@@ -581,14 +622,19 @@ function TerminalSession({
       } catch {
         return
       }
-      // reject 는 무시한다 — 종료 판정은 write reject 만(CR-19)
-      if (cur.ptyId && !cur.ended) tauri.ptyResize(cur.ptyId, cur.t.cols, cur.t.rows).catch(() => undefined)
+      cur.askResize()
     }
     resize()
     const ro = new ResizeObserver(resize)
     ro.observe(el)
-    return () => ro.disconnect()
-  }, [active, tauri, gen, fontSize])
+    // 크기를 정하는 일을 알림으로 되찾았을 때도 패널에 맞출 수 있게 둔다(보이는 동안만)
+    const cur = term.current
+    if (cur) cur.refit = resize
+    return () => {
+      ro.disconnect()
+      if (cur?.refit === resize) cur.refit = undefined
+    }
+  }, [active, gen, fontSize])
 
   const restart = () => {
     focusAfterRestart.current = true

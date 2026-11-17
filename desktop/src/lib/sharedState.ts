@@ -58,7 +58,8 @@ export function merge3(base: unknown, mine: unknown, theirs: unknown, depth = 2)
   return same(mine, base) ? theirs : mine
 }
 
-function newOrigin(): string {
+/** 화면(또는 화면 안의 한 터미널)을 구분하는 표시 — 여러 화면이 보낸 변경 중 자기 것을 알아보는 데 쓴다 */
+export function newOrigin(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 

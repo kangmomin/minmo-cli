@@ -653,6 +653,8 @@ struct PtyResized {
     id: String,
     cols: u16,
     rows: u16,
+    /// 크기를 바꾼 화면이 보낸 표시 — 그 화면이 늦게 받은 자기 알림을 다른 화면의 변경으로 읽지 않게 그대로 돌려준다
+    by: Option<String>,
 }
 
 #[tauri::command]
@@ -662,15 +664,13 @@ pub fn pty_resize(
     id: String,
     cols: u16,
     rows: u16,
+    by: Option<String>,
 ) -> Result<(), String> {
-    {
-        let mut sessions = state.sessions.lock().map_err(err)?;
-        let s = sessions
-            .get_mut(&id)
-            .ok_or_else(|| format!("pty {id} 없음"))?;
-        if s.cols == cols && s.rows == rows {
-            return Ok(());
-        }
+    let mut sessions = state.sessions.lock().map_err(err)?;
+    let s = sessions
+        .get_mut(&id)
+        .ok_or_else(|| format!("pty {id} 없음"))?;
+    if s.cols != cols || s.rows != rows {
         s.master
             .resize(PtySize {
                 rows,
@@ -682,8 +682,19 @@ pub fn pty_resize(
         s.cols = cols;
         s.rows = rows;
     }
-    // 같은 터미널을 보는 다른 화면이 같은 크기로 그리게 알린다
-    let _ = app.emit("pty-resized", PtyResized { id, cols, rows });
+    // 같은 터미널을 보는 다른 화면이 같은 크기로 그리게 알린다. 크기가 그대로여도 알린다 — 요청한 화면이 요청마다 답을
+    // 하나씩 받아야 "마지막 요청이 적용됐다"를 알 수 있다. 잠근 채로 알린다 — 원격 호출은 따로 돌아 동시에 올 수 있는데,
+    // 알림 순서가 적용 순서와 같아야 화면들이 받은 마지막 알림이 곧 PTY 의 크기다
+    let _ = app.emit(
+        "pty-resized",
+        PtyResized {
+            id,
+            cols,
+            rows,
+            by,
+        },
+    );
+    drop(sessions);
     Ok(())
 }
 

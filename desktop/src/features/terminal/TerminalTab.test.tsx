@@ -4,7 +4,7 @@ import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 
-import type { PtyDataEvent, TauriApi } from '../../lib/tauri'
+import type { PtyDataEvent, PtyResizedEvent, TauriApi } from '../../lib/tauri'
 import { createFakeTauri, deferred, flush } from '../../test/fakes'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
@@ -32,6 +32,8 @@ const xterm = vi.hoisted(() => ({
   strings: { promptLabel: 'Terminal input', tooMuchOutput: '' },
   // 만든 WebGL 렌더러들. WebGL2 를 쓸 수 없는 환경: failCreate 면 만들 때(Safari 16 미만), failLoad 면 붙일 때 실패한다
   webgl: { instances: [] as { kind: string; disposed: boolean; lose(): void }[], failCreate: false, failLoad: false },
+  // 패널 크기에 맞춘 칸 수 — 정하면 FitAddon.fit() 이 xterm 을 이 크기로 바꾼다(없으면 그대로 둔다)
+  fitTo: null as { cols: number; rows: number } | null,
 }))
 
 vi.mock('@xterm/xterm', () => ({
@@ -52,8 +54,9 @@ vi.mock('@xterm/xterm', () => ({
       this.options = options
       xterm.instances.push(this)
     }
-    loadAddon(addon: { kind?: string }) {
+    loadAddon(addon: { kind?: string; activate?: (t: unknown) => void }) {
       if (addon.kind === 'webgl' && xterm.webgl.failLoad) throw new Error('WebGL2 not supported')
+      addon.activate?.(this)
       this.addons.push(addon)
     }
     // 실제 xterm 처럼 host 안에 입력 textarea 를 만든다
@@ -96,7 +99,13 @@ vi.mock('@xterm/xterm', () => ({
 }))
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
-    fit() {}
+    term: { cols: number; rows: number } | null = null
+    activate(t: { cols: number; rows: number }) {
+      this.term = t
+    }
+    fit() {
+      if (this.term && xterm.fitTo) Object.assign(this.term, xterm.fitTo)
+    }
   },
 }))
 vi.mock('@xterm/addon-unicode11', () => ({
@@ -138,6 +147,7 @@ beforeEach(() => {
   xterm.webgl.instances.length = 0
   xterm.webgl.failCreate = false
   xterm.webgl.failLoad = false
+  xterm.fitTo = null
   useUiStore.setState({ panes: {}, focusRequest: null, terminalIds: {}, startedTerminals: { ...STARTED }, tab: 'terminal', selectedIssueId: null, theme: 'black' })
 })
 
@@ -1020,6 +1030,128 @@ describe('함께 쓰는 터미널 — 이미 떠 있는 터미널에 붙기(원�
     expect(xterm.instances[0].cols).toBe(80)
     act(() => resized.emit({ id: 'pty-1', cols: 44, rows: 20 }))
     expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([44, 20])
+  })
+
+  describe('이 화면이 바꾼 크기의 알림(#58)', () => {
+    /** 화면 크기가 바뀐 것처럼 xterm 의 칸 수를 정하고 크기 맞춤을 다시 돌린다(글자 크기 변경이 크기 맞춤을 부른다) */
+    let font = 13
+    const refit = (cols: number) => {
+      xterm.instances[0].cols = cols
+      act(() => useUiStore.getState().setFontSize(++font))
+    }
+    /** 마지막 ptyResize 요청 — 그 크기와 이 화면의 표시(by) */
+    const lastAsk = (t: ReturnType<typeof setup>) => {
+      const [id, cols, rows, by] = t.tauri.ptyResize.mock.calls.at(-1)!
+      return { id, cols, rows, by } as PtyResizedEvent
+    }
+
+    async function opened() {
+      const resized = emitter<PtyResizedEvent>()
+      const t = setup({ onPtyResized: resized.on })
+      // 크기 알림 구독은 PTY 를 연 뒤에 한다 — terminalIds 가 채워지면 끝난 것이다
+      await vi.waitFor(() => expect(useUiStore.getState().terminalIds[`${A.issueId}::1`]).toBe('pty-1'))
+      return { t, resized }
+    }
+
+    afterEach(() => {
+      font = 13
+      useUiStore.setState({ fontSize: 13 })
+    })
+
+    it('크기를 빠르게 두 번 바꿔 앞 요청의 알림이 늦게 와도 옛 크기로 돌아가지 않고, 크기 맞춤을 이어 간다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const first = lastAsk(t)
+      refit(110)
+      const second = lastAsk(t)
+      expect([first.cols, second.cols]).toEqual([100, 110])
+      expect(first.by).toBeTruthy()
+      expect(first.by).not.toBe(second.by)
+
+      act(() => resized.emit(first))
+      expect(xterm.instances[0].cols).toBe(110)
+      act(() => resized.emit(second))
+      expect(xterm.instances[0].cols).toBe(110)
+
+      // 여전히 이 화면이 크기를 정한다 — 화면 크기가 바뀌면 다시 알린다(누르지 않아도)
+      const before = t.tauri.ptyResize.mock.calls.length
+      refit(90)
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before + 1)
+      expect(lastAsk(t).cols).toBe(90)
+    })
+
+    it('다른 화면의 알림 뒤에 이 화면의 마지막 요청이 적용되면 그 크기로 돌아오고 다시 크기를 정한다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const mine = lastAsk(t)
+      // PTY 에서는 다른 화면의 요청이 먼저 처리됐다
+      act(() => resized.emit({ id: 'pty-1', cols: 60, rows: 20, by: 'other:1' }))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([60, 20])
+      act(() => resized.emit(mine))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([100, 24])
+
+      const before = t.tauri.ptyResize.mock.calls.length
+      refit(90)
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before + 1)
+    })
+
+    it('같은 크기를 다시 요청해도 요청마다 알림을 받는다 — 다른 화면의 알림이 사이에 끼어도 마지막 요청에서 크기를 되찾는다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const first = lastAsk(t)
+      // 창을 끄는 동안처럼 칸 수가 그대로인 요청
+      refit(100)
+      const second = lastAsk(t)
+      // PTY 에는 다른 화면의 요청 → 첫 요청 → 둘째 요청 순서로 적용됐다
+      act(() => resized.emit({ id: 'pty-1', cols: 60, rows: 20, by: 'other:1' }))
+      act(() => resized.emit(first))
+      expect(xterm.instances[0].cols).toBe(60)
+      act(() => resized.emit(second))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([100, 24])
+
+      const before = t.tauri.ptyResize.mock.calls.length
+      refit(90)
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before + 1)
+    })
+
+    it('옛 요청이 더 새 요청보다 늦게 적용되면(원격 호출의 순서가 바뀐 경우) 이 화면의 크기를 다시 알린다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const first = lastAsk(t)
+      refit(110)
+      const second = lastAsk(t)
+      act(() => resized.emit(second))
+      const before = t.tauri.ptyResize.mock.calls.length
+      // PTY 가 옛 크기(100)가 됐다
+      act(() => resized.emit(first))
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before + 1)
+      expect(lastAsk(t)).toMatchObject({ cols: 110, rows: 24 })
+      expect(xterm.instances[0].cols).toBe(110)
+    })
+
+    it('다른 화면의 크기로 보던 사이 패널이 바뀌었으면, 마지막 요청이 적용되어 크기를 되찾을 때 패널에 다시 맞춘다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      const mine = lastAsk(t)
+      act(() => resized.emit({ id: 'pty-1', cols: 60, rows: 20, by: 'other:1' }))
+      // 다른 화면의 크기로 보는 동안 패널이 바뀌었다(이때는 따라가지 않는다)
+      xterm.fitTo = { cols: 90, rows: 30 }
+      act(() => resized.emit(mine))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([90, 30])
+      expect(lastAsk(t)).toMatchObject({ cols: 90, rows: 30 })
+    })
+
+    it('이 화면의 마지막 요청 뒤에 다른 화면이 바꾸면 그 크기로 본다', async () => {
+      const { t, resized } = await opened()
+      refit(100)
+      act(() => resized.emit(lastAsk(t)))
+      act(() => resized.emit({ id: 'pty-1', cols: 60, rows: 20, by: 'other:1' }))
+      expect([xterm.instances[0].cols, xterm.instances[0].rows]).toEqual([60, 20])
+      // 다른 화면의 크기로 보는 중에는 이 화면의 크기를 알리지 않는다
+      const before = t.tauri.ptyResize.mock.calls.length
+      refit(90)
+      expect(t.tauri.ptyResize.mock.calls.length).toBe(before)
+    })
   })
 
   it('셸이 끝났다는 알림을 받으면 종료 안내를 띄운다(입력하지 않고 보기만 하던 화면도)', async () => {
