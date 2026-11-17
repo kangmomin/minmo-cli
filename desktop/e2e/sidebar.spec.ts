@@ -88,13 +88,19 @@ test('AC-02 최소 폭(240)에서 배지가 있는 저장소·연결 대기 행 
   ]
   for (const { name, label, group } of rows) {
     const nameEl = label.getByText(name, { exact: true })
-    const nm = await nameEl.evaluate((el) => ({ width: el.clientWidth, overflow: getComputedStyle(el).textOverflow }))
+    const nm = await nameEl.evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth, overflow: getComputedStyle(el).textOverflow }))
     expect(nm.width, `${name} 이름 폭`).toBeGreaterThanOrEqual(40)
     expect(nm.overflow).toBe('ellipsis')
 
     // 헤더의 "gh 미사용(REST)" 배지는 빼고, 이 행 안의 배지만 본다
     const badges = label.locator('[data-slot=badge]')
     expect(await badges.count()).toBeGreaterThan(0)
+    const shrunk = await badges.evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth).map((el) => getComputedStyle(el).textOverflow))
+    // 전제: 240px 에서 이 행은 실제로 넘친다(이름이나 배지가 다 들어가지 않는다) — 넘침이 없으면 아래 단언은 아무것도 확인하지 않는다
+    expect(nm.scroll > nm.width || shrunk.length > 0, `${name} 행의 넘침`).toBe(true)
+    // 배지는 이름과 함께 줄고 … 를 보인다(AC-01)
+    expect(shrunk.length, `${name} 줄어든 배지 수`).toBeGreaterThan(0)
+    for (const overflow of shrunk) expect(overflow, `${name} 배지 말줄임`).toBe('ellipsis')
     const buttons = group.locator(':scope > button:not([data-testid])')
     const firstButton = (await buttons.first().boundingBox())!
     for (const badge of await badges.all()) {
@@ -179,6 +185,22 @@ test('AC-01 짧은 이름(ui)의 저장소 행 — 기본 폭·최소 폭(240) �
     expect(m.client, `${width}px 이름 칸`).toBeLessThan(40)
     expect(m.badgeLeft, `${width}px 첫 배지 위치`).toBeLessThanOrEqual(m.right + GAP + 0.5)
   }
+})
+
+test('AC-01·AC-07 긴 조직 이름은 최소 폭(240)에서 한 줄로 줄이고 … 를 보이며, title 은 전체 login 이다', async ({ page }) => {
+  // GitHub login 최대 길이(39자)
+  const LONG_ORG = 'a-very-long-organization-login-name-x39'
+  await page.route(isGitHubPath('/user/orgs'), getOnly([{ login: 'my-org', avatar_url: null }, { login: LONG_ORG, avatar_url: null }]))
+  await page.reload()
+  const org = page.getByTestId(`org-node-${LONG_ORG}`)
+  await expect(org).toBeVisible()
+  await expect(separator(page)).toBeVisible()
+  await narrowest(page)
+  const nameEl = org.getByText(LONG_ORG, { exact: true })
+  const m = await nameEl.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth, overflow: getComputedStyle(el).textOverflow }))
+  expect(m.scroll).toBeGreaterThan(m.client)
+  expect(m.overflow).toBe('ellipsis')
+  await expect(nameEl).toHaveAttribute('title', LONG_ORG)
 })
 
 test('AC-02 최소 폭(240)에서 세로 스크롤바가 행 끝 버튼(⚙)을 가리지 않는다', async ({ page }) => {
