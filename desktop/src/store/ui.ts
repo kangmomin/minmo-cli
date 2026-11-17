@@ -79,7 +79,7 @@ export interface UiState {
   startedTerminals: Record<string, true>
   /**
    * 사용자가 분할·닫기·터미널 열기를 하거나 트리에서 이슈를 눌렀을 때(#78)만 포커스를 옮긴다 —
-   * token 이 바뀐 요청만 처리(자동 포커스 금지 AX-02)
+   * 터미널은 처리하지 않은 새 요청(객체)만 처리한다(자동 포커스 금지 AX-02)
    */
   focusRequest: { paneId: string; token: number } | null
 
