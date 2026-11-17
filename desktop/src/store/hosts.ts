@@ -3,7 +3,8 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
 import type { SshError, SshProbe } from '../lib/tauri'
-import { isLocalOwner } from './repos'
+import { isLocalOwner, useReposStore } from './repos'
+import type { LocalRepo } from './repos'
 
 export interface HostsState {
   /** 추가한 ~/.ssh/config 별칭 */
@@ -63,6 +64,28 @@ export function aliasOfHostId(id: string): string | null | undefined {
 /** 이 호스트에서 저장소의 기준 저장소 폴더(없으면 undefined — 설정의 메인 clone 경로를 쓴다) */
 export const baseRepoOf = (s: Pick<HostsState, 'baseRepos'>, hostId: string, owner: string, repo: string): string | undefined =>
   s.baseRepos[hostId]?.[repoKey(owner, repo)]
+
+/**
+ * 이 호스트에서 저장소의 원본 폴더 — 로컬 저장소는 이 호스트에 등록된 그 폴더, GitHub 저장소는 기준 저장소 폴더.
+ * undefined 면 설정의 메인 clone 경로를 쓴다. 이슈 열기·"경로 변경됨" 배지·설정 미리보기가 같은 규칙을 쓰게 한 곳에 둔다
+ */
+export function originFolderOf(
+  s: Pick<HostsState, 'baseRepos'> & { local: Record<string, Pick<LocalRepo, 'hostId' | 'path'>> },
+  hostId: string,
+  owner: string,
+  repo: string,
+): string | undefined {
+  if (!isLocalOwner(owner)) return baseRepoOf(s, hostId, owner, repo)
+  const local = s.local[repo]
+  return local?.hostId === hostId ? local.path : undefined
+}
+
+/** originFolderOf 구독 — 기준 저장소·로컬 저장소 목록이 바뀌면 다시 계산한다 */
+export function useOriginFolder(hostId: string, owner: string, repo: string): string | undefined {
+  const local = useReposStore((st) => st.local)
+  const baseRepos = useHostsStore((st) => st.baseRepos)
+  return originFolderOf({ baseRepos, local }, hostId, owner, repo)
+}
 
 /** 이 호스트의 기본 폴더(없으면 undefined — 경로 설정 그대로) */
 export const baseDirOf = (s: Pick<HostsState, 'baseDirs'>, hostId: string): string | undefined => s.baseDirs[hostId]
