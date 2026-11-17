@@ -132,7 +132,7 @@ minmo-cli/
 |------|------|----------|------|
 | branchTemplate | string? | ✔ | `{number}` 포함, 토큰 `{number}` `{slug}` `{title}`, git ref 금지 문자(공백, `..`, `~^:?*[\`) 없음, ≤100자 |
 | etcBranchName | string? | ✔ | ref 규칙, 토큰 금지 |
-| worktreePath | string? | ✔ | `{branch}` 또는 `{key}` 포함(유일성), 토큰 `~` `{owner}` `{repo}` `{branch}` `{key}` `{number}` `{slug}`, ≤512자 |
+| worktreePath | string? | ✔ | `{branch}` 또는 `{key}` 포함(유일성), 토큰 `~` `{owner}` `{repo}` `{branch}` `{key}` `{number}` `{slug}`, ≤512자. 시작(#66, 클라이언트 해석): `.`·`..` = 원본(메인 clone·기준·로컬 저장소 폴더) 기준 상대, `~` = 홈, `/` = 절대(Windows 는 원본 드라이브의 루트) |
 | mainClonePath | string? | ✔ | 토큰 `~` `{owner}` `{repo}`, `{branch}`·`{key}` 금지, ≤512자 |
 | postCreateScript | string? | ✔(빈 문자열 허용) | ≤64KB |
 | sparsePaths (v2.6) | string? | 전역 PUT 에서 생략·null 이면 저장값 유지(없으면 `""`) | 줄바꿈 구분 저장소 기준 상대 폴더(cone sparse-checkout), 빈 줄 무시, 절대 경로·`..`·`\`·`:`·glob(`*?[]`)·`!`·`#`·`-` 시작 금지, ≤100줄·≤4KB. `""` = 전체 체크아웃. 오류 `invalid_sparse_paths` |
