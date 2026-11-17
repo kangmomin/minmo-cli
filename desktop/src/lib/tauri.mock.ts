@@ -396,6 +396,12 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     },
     ptyProcesses: async (id) => ptyProcs.get(id) ?? [],
     claudeSubagents: async (cwd) => subagents.get(cwd) ?? [],
+    // 이 PC 의 사용량(고정 값) — 원격 호스트의 값은 아래 sshExec 가 돌려준다
+    agentUsage: async () => ({
+      claude: { input: 200_000, output: 40_000, cacheWrite: 960_000, cacheRead: 30_000_000 },
+      codex: { tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }, limits: [{ usedPercent: 34, windowMinutes: 300, resetsAtMs: 0 }, { usedPercent: 85, windowMinutes: 10080, resetsAtMs: 0 }], limitsAtMs: Date.now() },
+      gemini: null,
+    }),
     notify: async (title, body, target) => {
       handle.notifications.push({ title, body })
       notifyTargets.push(target ?? null)
@@ -438,6 +444,8 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
         repos.delete(rest[rest.length - 1])
         return ok()
       }
+      // 원격 호스트의 AI 사용량(features/usage/remoteUsage.ts)
+      if (o?.stdin?.includes('MINMO_USAGE_PY')) return ok(JSON.stringify({ claude: { input: 1000, output: 4000, cacheWrite: 0, cacheRead: 9000 }, codex: null, gemini: null }))
       // sh -s 스크립트: 파일 목록은 빈 목록, 복사는 0개
       return o?.stdin?.includes('sort') ? ok('') : ok('0')
     },

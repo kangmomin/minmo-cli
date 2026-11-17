@@ -1,0 +1,12 @@
+{
+  "sessionId": "x",
+  "projectHash": "proj",
+  "startTime": "2026-11-16T23:00:00.000Z",
+  "lastUpdated": "2026-11-17T06:00:00.000Z",
+  "messages": [
+    { "id": "1", "timestamp": "2026-11-16T23:00:00.000Z", "type": "user", "content": "hi" },
+    { "id": "2", "timestamp": "2026-11-16T23:00:05.000Z", "type": "gemini", "content": "yesterday", "tokens": { "input": 900, "output": 90, "cached": 0, "thoughts": 9, "tool": 0, "total": 999 }, "model": "m" },
+    { "id": "3", "timestamp": "2026-11-17T06:00:00.000Z", "type": "user", "content": "again" },
+    { "id": "4", "timestamp": "2026-11-17T06:00:05.000Z", "type": "gemini", "content": "today", "tokens": { "input": 100, "output": 5, "cached": 40, "thoughts": 3, "tool": 2, "total": 110 }, "model": "m" }
+  ]
+}

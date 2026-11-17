@@ -8,7 +8,7 @@ mod shell;
 mod tailscale;
 mod update;
 
-use commands::{agents, fs, git, keychain, pty, script, ssh};
+use commands::{agents, fs, git, keychain, pty, script, ssh, usage};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -76,6 +76,7 @@ pub fn run() {
             pty::pty_kill_by_cwd,
             pty::pty_processes,
             agents::claude_subagents,
+            usage::agent_usage,
             script::script_run,
             script::script_cancel,
             ssh::ssh_hosts,

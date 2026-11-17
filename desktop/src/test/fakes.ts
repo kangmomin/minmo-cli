@@ -98,6 +98,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     removePath: async () => {},
     ptyProcesses: async () => [],
     claudeSubagents: async () => [],
+    agentUsage: async () => ({ claude: null, codex: null, gemini: null }),
     notify: async () => {},
     onNotifyClick: async () => () => {},
     appShow: async () => {},
