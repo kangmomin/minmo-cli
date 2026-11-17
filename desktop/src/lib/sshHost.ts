@@ -432,7 +432,7 @@ export function sha1Hex(text: string): string {
   return h.map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('')
 }
 
-/** 원격 CLI(packages/cli/src/host/tmux.ts sessionName)와 같은 이름 — `minmo open` 과 같은 세션을 쓴다 */
+/** 이전 원격 CLI(`minmo open`)가 만든 세션과 같은 이름 규칙 — 바꾸면 원격에 남아 있는 세션에 다시 붙지 못한다 */
 export function tmuxSessionName(worktreePath: string): string {
   const canon = worktreePath.replace(/\/{2,}/g, '/').replace(/(.)\/+$/, '$1')
   return `minmo-${sha1Hex(canon).slice(0, 10)}`

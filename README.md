@@ -53,7 +53,7 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 | `desktop/` | Tauri 2 + React/TS 데스크탑 앱 |
 | `packages/api-client/` | 공유 TS 타입·API 클라이언트·템플릿 치환(`@minmo/api-client`) |
 | `packages/core/` | 데스크탑·원격 CLI 공용 도메인 로직 — worktree 서비스·GitHub 클라이언트·보일 저장소 판정(`@minmo/core`) |
-| `packages/cli/` | 원격 SSH 관리용 CLI·TUI(`minmo-cli`, bin `minmo`) |
+| `packages/cli/` | 원격 CLI — SSH 역터널로 데스크탑 서버에 로그인해 메모·설정·보일 저장소를 다룬다(`minmo-cli`, bin `minmo`) |
 | `contracts/fixtures/` | 서버·클라이언트가 함께 읽는 API 계약 fixture |
 | `mobile/` | Phase 3 RN 앱 자리 |
 | `docs/specs/` | 기능 Spec |
@@ -302,7 +302,7 @@ worktree 를 새로 만들면 `.gitignore` 로 빠진 파일(`.env` 등)을 원�
 | 프롬프트 없는 접속 | 키 파일 또는 ssh-agent 로 묻지 않고 접속되어야 한다. 비밀번호 입력 방식은 지원하지 않는다 |
 | 원격 OS | Linux·macOS(POSIX 셸). 원격 Windows 는 지원하지 않는다 |
 | git | 원격에 설치되어 있어야 한다 |
-| tmux(선택) | 터미널은 기본으로 일반 로그인 셸이다(앱을 끄거나 연결이 끊기면 함께 끝난다). **원격 호스트** 대화상자에서 "원격 터미널에 tmux 사용"을 켜면, tmux 가 있는 호스트의 터미널이 전용 tmux(`tmux -L minmo`) 세션이 되어 앱을 끄거나 연결이 끊겨도 유지되고, 원격 CLI 의 tmux 방식(`minmo terminal tmux`)과 같은 세션을 쓴다. 분할로 만든 추가 패널은 닫으면 사라진다. 설정은 새로 여는 터미널부터 적용된다 |
+| tmux(선택) | 터미널은 기본으로 일반 로그인 셸이다(앱을 끄거나 연결이 끊기면 함께 끝난다). **원격 호스트** 대화상자에서 "원격 터미널에 tmux 사용"을 켜면, tmux 가 있는 호스트의 터미널이 전용 tmux(`tmux -L minmo`) 세션이 되어 앱을 끄거나 연결이 끊겨도 유지된다. 분할로 만든 추가 패널은 닫으면 사라진다. 설정은 새로 여는 터미널부터 적용된다 |
 
 ### 저장소별 연결 호스트
 
@@ -325,7 +325,6 @@ worktree 를 새로 만들면 `.gitignore` 로 빠진 파일(`.env` 등)을 원�
 - 로컬 파일 보관 폴더는 그 저장소의 `.git/minmo-local` 이다(옆 폴더 `_local` 은 다른 저장소와 겹칠 수 있어 쓰지 않는다).
 - 그 폴더에서 이미 체크아웃한 브랜치와 같은 이슈 브랜치는 git 이 거부한다.
 - 지정한 값은 이 PC 의 창과 원격 접속한 기기(휴대폰·브라우저)가 함께 쓴다.
-- 원격 CLI 에서는 `minmo base-repo <owner/repo> <경로>` 로 그 기기의 원본 위치를 정한다.
 
 ### 호스트별 기본 폴더
 
@@ -336,7 +335,6 @@ worktree 를 새로 만들면 `.gitignore` 로 빠진 파일(`.env` 등)을 원�
 - 값은 이 PC 에 저장하고 서버에 올리지 않는다(경로 설정은 모든 기기가 함께 쓴다). 이 PC 의 창과 원격 접속한 기기는 같은 값을 쓴다.
 - 이미 만든 worktree 는 옮기지 않는다. 기본 폴더를 바꾼 뒤 처음 여는 저장소는 새 위치에 메인 clone 을 다시 받는다.
 - 기준 저장소 폴더를 지정한 저장소는 메인 clone 대신 그 폴더를 쓰고, 기본 폴더는 worktree 위치에만 적용된다.
-- 원격 CLI 에서는 `minmo base-dir <경로>` 로 그 기기의 기본 폴더를 정한다.
 
 ### 원격 git 인증
 
@@ -363,19 +361,19 @@ worktree 를 새로 만들면 `.gitignore` 로 빠진 파일(`.env` 등)을 원�
 - Windows 에서는 기본 제공 OpenSSH(`C:\Windows\System32\OpenSSH\ssh.exe`)를 먼저 쓴다(키는 Windows ssh-agent).
 - debug 빌드 전용 env `MINMO_SSH_CONFIG=<파일>`: `~/.ssh/config` 대신 그 설정 파일을 쓴다(E2E 격리).
 
-아래 **원격 CLI** 는 원격에서 터미널만으로 쓰는 다른 방식이며, 둘을 함께 써도 된다(같은 경로 규칙, 둘 다 tmux 를 켜면 같은 tmux 세션).
+원격 터미널에서 메모·설정·보일 저장소를 다루려면 아래 **원격 CLI** 를 함께 쓴다.
 
 ## 원격 CLI (SSH)
 
-원격 서버에 `minmo` CLI 를 설치하고 SSH 로 접속해, 그 서버의 worktree 를 터미널에서 관리한다(TUI + 명령어).
-설정·메모·보일 저장소는 이 PC 의 minmo 서버에 있고, 원격 CLI 는 **SSH 역터널**로 그 서버를 쓴다(서버는 계속 `127.0.0.1` 에서만 듣는다).
-역터널 없이(다른 기기에서 SSH 로 들어와도) 쓰려면 **로컬 모드**로 바꾼다 — 아래 [서버 모드 / 로컬 모드](#서버-모드--로컬-모드).
+원격 서버에 `minmo` CLI 를 설치하면, SSH 로 접속한 그 서버의 터미널에서 데스크탑과 공유하는 데이터(메모·설정·보일 저장소)를 보고 바꿀 수 있다.
+데이터는 이 PC 의 minmo 서버에 있고, 원격 CLI 는 **SSH 역터널**로 그 서버를 쓴다(서버는 계속 `127.0.0.1` 에서만 듣는다).
+worktree·터미널은 CLI 가 아니라 데스크탑의 [원격 호스트](#원격-호스트-ssh) 기능으로 다룬다.
 
 ### 요구 사항(원격)
 
-- Linux·macOS·Windows, Node.js 22.12 이상, git 2.31 이상
-- 터미널: Linux·macOS 는 사용자 셸(`$SHELL`) — tmux 는 선택(`minmo terminal tmux`), Windows 는 PowerShell 5.1 이상(기본 포함, pwsh 7 이 있으면 그것) — [Windows 에서 쓰기](#windows-에서-쓰기)
-- GitHub: `gh auth login` + `gh auth setup-git` 권장(private 저장소 clone). gh 가 없으면 `GITHUB_TOKEN` 또는 서버의 GitHub 토큰으로 REST 를 쓴다(로컬 모드는 서버 토큰을 쓰지 않으므로 gh 나 `GITHUB_TOKEN` 이 꼭 있어야 한다)
+- Linux·macOS·Windows, Node.js 22.12 이상
+- 원격 CLI 를 쓰는 동안 이 PC 의 데스크탑 앱(서버)이 켜져 있어야 한다
+- 원격이 Windows 면 [Windows 에서 쓰기](#windows-에서-쓰기) 를 본다
 
 ### 설치
 
@@ -416,66 +414,36 @@ Host my-server
 
 1. 데스크탑 상단 바 **원격 CLI 접속** → **코드 발급**(10분, 1회용)
 2. 원격에서 `minmo login ABCD-EFGH` — 이 기기 이름(hostname)으로 세션이 만들어지고, 데스크탑의 같은 다이얼로그에서 확인·끊기 할 수 있다
-3. `minmo doctor` 로 터널·로그인·git·gh·터미널 점검
+3. `minmo doctor` 로 터널·로그인 점검
 
-자격 증명은 `~/.config/minmo/credentials.json`(권한 0600), 모드·로컬 값은 `config.json`, worktree 기록·서버 사본은 `state.json` 에 둔다.
+자격 증명은 `~/.config/minmo/credentials.json`(권한 0600)에 둔다. 이전 버전이 남긴 `config.json`·`state.json` 은 더 읽지 않는다(지워도 된다).
 CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인한다(다른 서버로 연결된 터널에 토큰을 보내지 않게).
 
 ### 사용
 
 | 명령 | 내용 |
 |------|------|
-| `minmo` | TUI — 트리(보일 저장소 필터)·상세. `Enter` 준비 · `t` 터미널 · `i` 이슈 등록(제목 → 본문 한 줄) · `n` 메모 · `d` 삭제 · `f` 보이기/숨기기 · `a` 숨긴 것 보기 · `s` 설정 · `/` 검색 · `q` 종료 |
-| `minmo ls [owner[/repo]] [--all] [--json]` | 저장소·이슈 목록 |
-| `minmo new owner/repo "제목" [-b 본문] [-e] [--json]` | GitHub 이슈 등록 — `-b @파일` 은 파일 내용을 본문으로, `-e` 는 본문을 `$EDITOR` 로 작성. 등록만 하고 worktree 는 만들지 않는다 |
-| `minmo open owner/repo#42` | worktree 준비 후 터미널(`--no-attach` 면 경로만) |
-| `minmo rm owner/repo#42 [--yes]` | worktree 삭제 — 그 안의 터미널(tmux 세션 포함)·프로세스도 정리 |
+| `minmo login <코드>` · `minmo logout` | 로그인 · 이 기기의 세션을 끊고 로그인 정보 지우기 |
+| `minmo doctor` | 역터널 소켓·서버 응답·로그인 점검 |
 | `minmo note owner/repo#42` | 메모를 `$EDITOR` 로 편집(다른 기기와 충돌하면 내 내용을 파일로 보존) |
-| `minmo repos [add\|rm\|all\|reset] …` | 보일 저장소(서버 모드는 데스크탑과 공유, 로컬 모드는 이 기기. `owner/*` 는 조직 전체, `reset` 은 로컬 모드에서 서버 사본으로) |
-| `minmo config [get\|set] … [--org o\|--project o/r]` | 설정(서버 모드는 데스크탑과 공유, 로컬 모드는 이 기기). 여러 줄 값은 `@파일`, `-` 는 상속(서버)·로컬 값 지움(로컬) |
-| `minmo mode [local\|server]` | 모드 보기·바꾸기 |
-| `minmo terminal [shell\|tmux]` | 터미널 방식 보기·바꾸기(기본 `shell`, 이 기기에만 저장) |
-| `minmo base-dir [경로\|-]` | 이 기기의 기본 폴더 보기·바꾸기 — 경로 설정의 `~/minmo-workspaces` 를 대신한다(`-` 는 해제, 이 기기에만 저장) |
-| `minmo base-repo [owner/repo] [경로\|-]` | 저장소의 원본 위치 보기·바꾸기 — 이 기기에 이미 있는 저장소 폴더에서 worktree 를 만든다(`-` 는 해제, 이 기기에만 저장) |
+| `minmo repos [add\|rm\|all] …` | 보일 저장소(데스크탑과 공유). `owner/*` 는 조직 전체 |
+| `minmo config [get\|set] … [--org o\|--project o/r]` | 설정(데스크탑과 공유). 여러 줄 값은 `@파일`, `-` 는 상속. `get --effective owner/repo` 는 값마다 출처를 보여 준다 |
 | `minmo sessions [revoke <id>]` | 로그인된 기기 |
+| `minmo update [--check]` | 새 버전으로 업데이트 |
 
-- 터미널은 기본으로 worktree 에서 여는 사용자 셸(`$SHELL`)이다 — `exit` 로 돌아오고, SSH 가 끊기면 함께 끝난다.
-- `minmo terminal tmux` 로 바꾸면 전용 tmux 서버(`tmux -L minmo`)의 세션을 쓴다(Linux·macOS) — 접속이 끊겨도 유지되고 detach 로 돌아온다. 분할은 tmux 기본 키를 쓴다. `minmo terminal shell` 로 되돌린다.
-- 원격에서는 생성 후 스크립트로 **`postCreateScriptPosix`**(sh)를 실행한다. `postCreateScript` 는 Windows(PowerShell) 용이다.
-- 설정의 경로는 기기 간에 공유되므로 `~` 로 시작하게 둔다. 이 OS 에서 쓸 수 없는 경로(예: Linux 에서 `C:\…`)면 clone 하지 않고 알려 준다.
-- worktree 를 지우면 그 worktree 를 연 tmux 세션(방식을 `shell` 로 바꾼 뒤에 남은 것 포함)의 프로세스 트리와(Linux) cwd 가 그 안인 같은 사용자 프로세스를 끝낸다. 실행 중인 `minmo` 자신과 그 조상 셸은 제외한다. macOS 의 `shell` 방식은 cwd 로 프로세스를 찾지 못하므로 백그라운드로 띄운 프로세스는 직접 끝낸다.
-
-### 서버 모드 / 로컬 모드
-
-`minmo mode local` · `minmo mode server` 로 **명시적으로** 바꾼다(기본은 서버 모드). 모드는 `~/.config/minmo/config.json` 에 남는다.
-
-| | 서버 모드 | 로컬 모드 |
-|---|---|---|
-| 연결 | 이 PC 에서 연 SSH 역터널 필요 | 필요 없음(어느 기기에서 SSH 해도 됨) |
-| 로그인 | `minmo login <코드>` 필요 | 필요 없음 |
-| 설정·보일 저장소 | 서버 값(데스크탑과 공유) | **로컬 값 → 서버 사본 → 기본값**. `minmo config`·`minmo repos` 는 로컬 값을 바꾸고 서버로 올리지 않는다 |
-| 메모 | 사용 | 사용 안 함(서버 모드에서만) |
-| GitHub | gh → `GITHUB_TOKEN` → 서버 토큰 | gh → `GITHUB_TOKEN`(둘 중 하나 필수) |
-| worktree 열기·삭제·터미널·프로세스 정리 | 같음 | 같음 |
-
-- **서버 사본:** 서버 모드에서 받은 값(전역 설정·보일 저장소·조직 설정·연 저장소의 설정)을 `state.json` 에 남겨 로컬 모드의 기본값으로 쓴다. `minmo mode local` 을 실행할 때 서버에 닿고 로그인돼 있으면 사본을 새로 받는다 — 관련 조직(보일 저장소·worktree 의 소유자, GitHub 에서 보이는 조직)의 설정과, worktree 가 있거나 보일 저장소로 고른 저장소의 설정까지. 서버 모드에서 `minmo config set` 으로 바꾼 값도 사본에 바로 반영된다. 사본에 없는 저장소의 서버 **프로젝트** 설정은 로컬 모드에서 쓰이지 않는다(조직·전역 사본·기본값).
-- **설정 우선순위(로컬 모드):** 기본값 ← 서버 사본 ← 로컬 전역 ← 로컬 조직 ← 로컬 프로젝트. 로컬 값은 서버 규칙과 같은 검증을 거친다. `minmo config get --effective owner/repo` 가 값마다 출처를 보여 준다.
-- worktree 기록은 두 모드가 함께 쓴다 — 어느 모드에서 만든 worktree 든 다른 모드에서 열고 지울 수 있다.
+- `minmo` 만 입력하면 도움말을 보여 준다.
+- 이전 버전의 TUI 와 `ls`·`new`·`open`·`rm`·`mode`(로컬 모드)·`terminal`·`base-dir`·`base-repo` 는 없앴다. worktree·터미널·이슈 등록은 데스크탑(원격 호스트 포함)에서 한다.
+- 설정의 경로는 기기 간에 공유되므로 `~` 로 시작하게 둔다.
 
 ### Windows 에서 쓰기
 
 | | Linux·macOS | Windows |
 |---|---|---|
-| 터미널(`minmo open`, TUI `t`) | 사용자 셸 — `exit` 로 돌아옴. `minmo terminal tmux` 면 전용 tmux 세션(접속이 끊겨도 유지, detach 로 돌아옴) | worktree 에서 새 PowerShell — `exit` 로 돌아옴, **세션 유지 없음**(SSH 가 끊기면 함께 끝남) |
-| 생성 후 스크립트 | `postCreateScriptPosix`(sh) | `postCreateScript`(PowerShell, 데스크탑과 같은 실행기) |
-| worktree 삭제 때 정리 | (남아 있는) tmux 세션 프로세스 트리 + (Linux) cwd 가 그 안인 프로세스 | 실행 경로·명령줄에 worktree 경로가 들어간 프로세스 트리(`taskkill /T /F`, minmo 가 연 터미널 포함). **창이 있는 프로그램(VS Code·IDE·편집기)과 다른 Windows 세션의 프로세스는 끝내지 않고** "직접 닫으세요" 로 알린다. 그 뒤에도 폴더를 쓰는 프로그램이 있으면 git 이 지우기 전에 멈춘다(내용만 지워진 채 남지 않게) |
-| 서버 모드 연결 | 역터널 Unix 소켓 `~/.minmo/server.sock` | **`MINMO_SERVER` 필수**(Node 가 Unix 소켓 파일에 붙지 못한다). 같은 PC: `MINMO_SERVER=http://127.0.0.1:8787` · 원격: `RemoteForward 127.0.0.1:18787 127.0.0.1:8787` + `ExitOnForwardFailure yes` 후 `MINMO_SERVER=http://127.0.0.1:18787` |
+| 서버 연결 | 역터널 Unix 소켓 `~/.minmo/server.sock` | **`MINMO_SERVER` 필수**(Node 가 Unix 소켓 파일에 붙지 못한다). 같은 PC: `MINMO_SERVER=http://127.0.0.1:8787` · 원격: `RemoteForward 127.0.0.1:18787 127.0.0.1:8787` + `ExitOnForwardFailure yes` 후 `MINMO_SERVER=http://127.0.0.1:18787` |
 | 설정 폴더 | `~/.config/minmo` | `%APPDATA%\minmo` |
 | 기본 편집기(`minmo note`) | `vi` | 메모장을 열고 저장한 뒤 Enter(`EDITOR` 로 바꿈, 예: `code --wait`) |
 
-- TCP 역터널 포트는 그 PC 의 다른 사용자도 열 수 있다. 다른 사용자가 먼저 포트를 열어 두면 CLI 가 세션 토큰을 그쪽에 보내고, 그쪽이 돌려준 설정(생성 후 스크립트 포함)을 실행할 수 있다 — CLI 의 계정 확인은 서버를 인증하지 못한다. `ExitOnForwardFailure yes` 로 포트를 열지 못하면 접속을 끊게 하고, 여러 사람이 쓰는 PC 라면 로컬 모드나 WSL 의 Linux 버전(Unix 소켓)을 쓴다.
-- 접속이 끊겨도 터미널·에이전트가 살아 있어야 하면 WSL(Ubuntu)에 Linux 버전을 설치해 tmux 방식(`minmo terminal tmux`)으로 쓴다.
-- 지우려는 worktree 안(cwd)이나 그 안의 프로세스가 띄운 셸에서 `minmo rm` 하면 시작 전에 막는다(Windows 는 사용 중인 폴더를 지울 수 없다).
+- TCP 역터널 포트는 그 PC 의 다른 사용자도 열 수 있다. 다른 사용자가 먼저 포트를 열어 두면 CLI 가 세션 토큰을 그쪽에 보낸다 — CLI 의 계정 확인은 서버를 인증하지 못한다. `ExitOnForwardFailure yes` 로 포트를 열지 못하면 접속을 끊게 하고, 여러 사람이 쓰는 PC 라면 WSL 의 Linux 버전(Unix 소켓)을 쓴다.
 
 ## Windows 안내
 
