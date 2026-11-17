@@ -1,6 +1,7 @@
 // 직접 추가한 저장소 목록 — 이 PC 의 앱에만 저장한다(서버·GitHub 는 이 목록을 모른다).
 //  - added: GitHub 목록(내 계정·내 조직 소유)에 없지만 열어 둔 GitHub 저장소
 //  - local: GitHub 저장소가 아닌 폴더(새 프로젝트, origin 이 없거나 GitHub 가 아닌 저장소). 이슈 대신 앱 안의 "작업"을 쓴다
+//  - nicknames: 저장소 별칭(#73) — 화면에 원래 이름 대신 보이고, 경로 템플릿의 {alias} 값이 된다
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
@@ -10,6 +11,18 @@ import { createJSONStorage, persist } from 'zustand/middleware'
  */
 export const LOCAL_OWNER = '_local'
 export const isLocalOwner = (owner: string) => owner === LOCAL_OWNER
+
+/** 저장소별 값의 키(GitHub 이름은 대소문자를 가리지 않는다) */
+export const repoKey = (owner: string, repo: string) => `${owner}/${repo}`.toLowerCase()
+
+/** 별칭 최대 길이(글자 = 코드 포인트) */
+export const NICKNAME_MAX = 50
+
+/** NICKNAME_MAX 글자로 자른다(서로게이트 쌍을 자르지 않는다) */
+export const clampNickname = (value: string) => Array.from(value).slice(0, NICKNAME_MAX).join('')
+
+/** 저장할 별칭 — 앞뒤 공백을 지우고 자른다. '' 이면 별칭 없음 */
+export const normalizeNickname = (value: string) => clampNickname(value.trim()).trim()
 
 export type LocalTask = { number: number; title: string; state: 'open' | 'closed' }
 
@@ -34,6 +47,8 @@ export interface ReposState {
   local: Record<string, LocalRepo>
   /** 새 프로젝트를 마지막으로 만든 상위 폴더(호스트별) */
   lastParent: Record<string, string>
+  /** 저장소 별칭: repoKey → 별칭(앞뒤 공백 없음, 비지 않음) */
+  nicknames: Record<string, string>
 
   addGitHub(owner: string, name: string): void
   removeGitHub(owner: string, name: string): void
@@ -44,6 +59,8 @@ export interface ReposState {
   renameTask(id: string, number: number, title: string): void
   setPublish(id: string, publish: PublishProgress | null): void
   setLastParent(hostId: string, path: string): void
+  /** 앞뒤 공백을 지우고 NICKNAME_MAX 글자로 자른다. 비거나 null 이면 별칭을 지운다 */
+  setNickname(owner: string, repo: string, nickname: string | null): void
 }
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
@@ -71,6 +88,7 @@ export const useReposStore = create<ReposState>()(
       added: [],
       local: {},
       lastParent: {},
+      nicknames: {},
       addGitHub: (owner, name) =>
         set((s) => {
           const full = `${owner}/${name}`
@@ -118,6 +136,16 @@ export const useReposStore = create<ReposState>()(
           return { local: { ...s.local, [id]: next } }
         }),
       setLastParent: (hostId, path) => set((s) => ({ lastParent: { ...s.lastParent, [hostId]: path } })),
+      setNickname: (owner, repo, nickname) =>
+        set((s) => {
+          const key = repoKey(owner, repo)
+          const value = normalizeNickname(nickname ?? '')
+          if ((s.nicknames[key] ?? '') === value) return s
+          const nicknames = { ...s.nicknames }
+          if (value === '') delete nicknames[key]
+          else nicknames[key] = value
+          return { nicknames }
+        }),
     }),
     { name: 'minmo-repos', storage: createJSONStorage(() => localStorage) },
   ),
@@ -129,11 +157,51 @@ export function splitFullName(full: string): [string, string] {
   return [full.slice(0, i), full.slice(i + 1)]
 }
 
-/** 화면에 보일 저장소 이름 — 로컬 저장소는 폴더명, GitHub 저장소는 owner/name */
-export function repoLabelOf(s: Pick<ReposState, 'local'>, owner: string, repo: string): string {
-  return isLocalOwner(owner) ? (s.local[repo]?.displayName ?? repo) : `${owner}/${repo}`
+type NameState = Pick<ReposState, 'local' | 'nicknames'>
+
+export function repoNicknameOf(s: Pick<ReposState, 'nicknames'>, owner: string, repo: string): string | undefined {
+  return s.nicknames[repoKey(owner, repo)]
+}
+
+/** 소유자 없이 보일 이름(트리) — 별칭, 로컬 저장소는 폴더명, GitHub 저장소는 name. 경로 템플릿 {alias} 의 값이기도 하다 */
+export function repoShortNameOf(s: NameState, owner: string, repo: string): string {
+  return repoNicknameOf(s, owner, repo) ?? (isLocalOwner(owner) ? (s.local[repo]?.displayName ?? repo) : repo)
+}
+
+/** 화면에 보일 저장소 이름 — 별칭, 로컬 저장소는 폴더명, GitHub 저장소는 owner/name */
+export function repoLabelOf(s: NameState, owner: string, repo: string): string {
+  return repoNicknameOf(s, owner, repo) ?? (isLocalOwner(owner) ? (s.local[repo]?.displayName ?? repo) : `${owner}/${repo}`)
+}
+
+/**
+ * 이 PC 가 아는 다른 저장소(별칭이 있는 것·로컬 저장소·직접 추가한 저장소)에 같은 짧은 이름이 있는가(대소문자 무시).
+ * 경로 템플릿 {alias} 가 겹치는지 미리 알리는 데 쓴다 — GitHub 목록에서만 보이는 저장소는 store 에 없어 보지 못한다
+ */
+export function shortNameTaken(s: Pick<ReposState, 'local' | 'nicknames' | 'added'>, owner: string, repo: string, nickname: string): boolean {
+  const v = normalizeNickname(nickname).toLowerCase()
+  if (v === '') return false
+  const keys = new Set([...Object.keys(s.nicknames), ...Object.keys(s.local).map((id) => repoKey(LOCAL_OWNER, id)), ...s.added.map((a) => a.toLowerCase())])
+  keys.delete(repoKey(owner, repo))
+  return [...keys].some((k) => {
+    const [o, r] = splitFullName(k)
+    return repoShortNameOf(s, o, r).toLowerCase() === v
+  })
+}
+
+/** 별칭 대신 보일 원래 이름(툴팁) — 로컬 저장소는 폴더 경로, GitHub 저장소는 owner/name */
+export function repoFullNameOf(s: Pick<ReposState, 'local'>, owner: string, repo: string): string {
+  return isLocalOwner(owner) ? (s.local[repo]?.path ?? repo) : `${owner}/${repo}`
 }
 
 export function useRepoLabel(owner: string, repo: string): string {
   return useReposStore((s) => repoLabelOf(s, owner, repo))
+}
+
+export function useRepoShortName(owner: string, repo: string): string {
+  return useReposStore((s) => repoShortNameOf(s, owner, repo))
+}
+
+/** 별칭이 있을 때만 원래 이름(툴팁에 쓴다), 없으면 undefined */
+export function useRepoFullNameIfNicknamed(owner: string, repo: string): string | undefined {
+  return useReposStore((s) => (repoNicknameOf(s, owner, repo) !== undefined ? repoFullNameOf(s, owner, repo) : undefined))
 }

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { Textarea } from '../../components/ui/textarea'
+import { useRepoLabel } from '../../store/repos'
 import { githubErrorMessage, upsertIssueCache } from './useTree'
 
 export interface NewIssueDialogProps {
@@ -21,12 +22,13 @@ export interface NewIssueDialogProps {
 export function NewIssueDialog({ owner, repo, open, onOpenChange }: NewIssueDialogProps) {
   // 등록 중에는 닫지 않는다 — 닫고 다시 열어 같은 이슈를 두 번 만들지 않게
   const [busy, setBusy] = useState(false)
+  const label = useRepoLabel(owner, repo)
   return (
     <Dialog open={open} onOpenChange={(o) => (o || !busy) && onOpenChange(o)}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            이슈 등록 — {owner}/{repo}
+            이슈 등록 — {label}
           </DialogTitle>
           <DialogDescription>GitHub 에 새 이슈를 만듭니다. 본문은 Markdown 으로 쓸 수 있고 비워도 됩니다.</DialogDescription>
         </DialogHeader>

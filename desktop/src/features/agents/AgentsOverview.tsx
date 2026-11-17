@@ -33,7 +33,11 @@ export function useLocalRows(): AgentRow[] {
   const subagents = useAgentStore((s) => s.subagents)
   const targets = useSetupStore((s) => s.targets)
   const local = useReposStore((s) => s.local)
-  return useMemo(() => toRows(panes, { targets, hostOf: aliasOfIssue, repoLabel: (o, r) => repoLabelOf({ local }, o, r) }, subagents), [panes, targets, local, subagents])
+  const nicknames = useReposStore((s) => s.nicknames)
+  return useMemo(
+    () => toRows(panes, { targets, hostOf: aliasOfIssue, repoLabel: (o, r) => repoLabelOf({ local, nicknames }, o, r) }, subagents),
+    [panes, targets, local, nicknames, subagents],
+  )
 }
 
 /** 이 PC 와 등록한 다른 PC 의 에이전트를 합친 줄 */

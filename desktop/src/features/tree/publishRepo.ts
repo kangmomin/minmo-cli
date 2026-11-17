@@ -8,7 +8,7 @@ import type { GitHubClient } from '@minmo/core'
 import type { Host } from '../../app/host'
 import type { TauriApi } from '../../lib/tauri'
 import { useHostsStore } from '../../store/hosts'
-import { LOCAL_OWNER, useReposStore } from '../../store/repos'
+import { LOCAL_OWNER, repoNicknameOf, useReposStore } from '../../store/repos'
 import type { LocalTask } from '../../store/repos'
 import { useUiStore } from '../../store/ui'
 import { forgetIssues, orgNodeId, repoNodeId } from './localRepos'
@@ -168,8 +168,13 @@ export async function publishRepo(deps: PublishDeps, host: Host, input: PublishI
     const hosts = useHostsStore.getState()
     hosts.setBaseRepo(local.hostId, owner, name, path)
     hosts.setBaseRepo(local.hostId, LOCAL_OWNER, input.id, null)
-    useReposStore.getState().addGitHub(owner, name)
-    useReposStore.getState().removeLocal(input.id)
+    const repos = useReposStore.getState()
+    // 별칭은 저장소를 따라간다
+    const nickname = repoNicknameOf(repos, LOCAL_OWNER, input.id)
+    if (nickname !== undefined) repos.setNickname(owner, name, nickname)
+    repos.setNickname(LOCAL_OWNER, input.id, null)
+    repos.addGitHub(owner, name)
+    repos.removeLocal(input.id)
     return { owner, name }
   } catch (e) {
     if (e instanceof PublishError) throw e

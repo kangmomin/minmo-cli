@@ -24,7 +24,9 @@ const (
 
 var (
 	branchTokens       = map[string]bool{"number": true, "slug": true, "title": true}
-	worktreePathTokens = map[string]bool{"owner": true, "repo": true, "branch": true, "key": true, "number": true, "slug": true}
+	// alias = 클라이언트(이 PC)의 저장소 별칭. 서버는 값을 모르고 토큰만 허용한다(치환은 클라이언트, 별칭이 없으면 repo).
+	// 메인 clone 경로에는 넣지 않는다 — 별칭을 바꿀 때마다 저장소를 새 위치에 다시 clone 하게 된다
+	worktreePathTokens = map[string]bool{"owner": true, "repo": true, "alias": true, "branch": true, "key": true, "number": true, "slug": true}
 	mainClonePathToken = map[string]bool{"owner": true, "repo": true}
 
 	// 샘플 치환(number=1, slug=x, title=x) 후 git ref 규칙을 검사한다.

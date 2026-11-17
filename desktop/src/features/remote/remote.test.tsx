@@ -415,6 +415,16 @@ describe('store 의 함께 쓰는 부분', () => {
     expect(useReposStore.getState().local).toEqual({})
   })
 
+  it('저장소 별칭: 글자 값만 받고, 별칭이 없는 값(이 기능 전)은 이 화면의 별칭을 지우지 않는다', () => {
+    useReposStore.setState({ nicknames: { 'a/b': 'mine' } })
+    applySharedRepos({ added: [] })
+    expect(useReposStore.getState().nicknames).toEqual({ 'a/b': 'mine' })
+    applySharedRepos({ nicknames: { 'a/b': 'theirs', 'c/d': 3, 'e/f': '  ', 'G/H': '  gh ' } })
+    // setNickname 과 같은 규칙: 소문자 키, 앞뒤 공백 없는 값
+    expect(useReposStore.getState().nicknames).toEqual({ 'a/b': 'theirs', 'g/h': 'gh' })
+    useReposStore.setState({ nicknames: {} })
+  })
+
   it('호스트별 기준 저장소 폴더·기본 폴더: 모양이 맞는 부분만 받고, 기기마다 다른 값(호스트 목록·tmux)은 건드리지 않는다', () => {
     useHostsStore.setState({ aliases: ['mine'], useTmux: true, baseRepos: { local: { 'a/b': '/old' } }, baseDirs: { local: '/old' } })
     applySharedHosts(null)

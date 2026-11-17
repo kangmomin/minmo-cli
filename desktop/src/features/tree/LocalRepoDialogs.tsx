@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { queryKeys } from '../../lib/queryKeys'
-import { useReposStore } from '../../store/repos'
+import { LOCAL_OWNER, repoLabelOf, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { PUBLISH_STEPS, PUBLISH_STEP_LABEL, PublishError, githubNameOf, isPublishing, publishRepo, resetPublish } from './publishRepo'
 import type { PublishStep } from './publishRepo'
@@ -26,7 +26,7 @@ export interface LocalRepoDialogProps {
 
 /** 작업 추가 — GitHub 이슈 대신 쓰는 앱 안의 작업 단위. 번호는 1부터 차례로 붙는다 */
 export function NewTaskDialog({ id, open, onOpenChange }: LocalRepoDialogProps) {
-  const name = useReposStore((s) => s.local[id]?.displayName ?? id)
+  const name = useReposStore((s) => repoLabelOf(s, LOCAL_OWNER, id))
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -68,7 +68,7 @@ function NewTaskBody({ id, onDone }: { id: string; onDone(): void }) {
 }
 
 export function PublishDialog({ id, open, onOpenChange }: LocalRepoDialogProps) {
-  const name = useReposStore((s) => s.local[id]?.displayName ?? id)
+  const name = useReposStore((s) => repoLabelOf(s, LOCAL_OWNER, id))
   // 올리는 중에는 닫지 않는다 — 닫아도 작업은 계속되어, 다시 열면 같은 일을 겹쳐 실행하게 된다
   const [busy, setBusy] = useState(() => isPublishing(id))
   return (

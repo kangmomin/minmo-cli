@@ -244,6 +244,7 @@ type SetupOpts = {
   localDirFor?: (main: string) => string | undefined
   defaultBranch?: (owner: string, repo: string) => Promise<string>
   baseDir?: string
+  repoNickname?: (owner: string, repo: string) => string | undefined
 }
 
 function setup(o: SetupOpts = {}) {
@@ -297,6 +298,7 @@ function setup(o: SetupOpts = {}) {
     newRunId: () => `run-${++n}`,
     ...(o.localDirFor ? { localDirFor: o.localDirFor } : {}),
     ...(o.baseDir ? { baseDir: () => o.baseDir } : {}),
+    ...(o.repoNickname ? { repoNickname: o.repoNickname } : {}),
   })
   const cmds = () => tauri.gitRun.mock.calls.map(([args, opts]) => normalize(args, opts)[0])
   const find = (pred: (a: string[]) => boolean) => cmds().filter(pred)
@@ -1223,6 +1225,21 @@ describe('openIssue — 설정 경로가 이 OS 의 절대 경로가 아니면 �
     await t.svc.openIssue(ISSUE42)
     expect(t.find((a) => a[0] === 'clone')[0]).toContain('/home/u/ws/MyOrg/Repo-A/_main')
     expect(t.find(t.isAdd)[0]).toContain('/home/u/ws/MyOrg/Repo-A/issue--42-add-login')
+  })
+
+  it('worktree 경로의 {alias} 는 repoNickname 값으로 바꾼다', async () => {
+    const repoNickname = vi.fn((_o: string, _r: string): string | undefined => 'ra')
+    const t = setup({ values: { worktreePath: '~/w/{alias}/{branch}', mainClonePath: '~/w/{owner}/{repo}/_main' }, repoNickname })
+    await t.svc.openIssue(ISSUE42)
+    expect(repoNickname).toHaveBeenCalledWith('MyOrg', 'Repo-A')
+    expect(t.find((a) => a[0] === 'clone')[0]).toContain('/home/u/w/MyOrg/Repo-A/_main')
+    expect(t.find(t.isAdd)[0]).toContain('/home/u/w/ra/issue--42-add-login')
+  })
+
+  it('별칭이 없으면 {alias} 는 저장소 이름', async () => {
+    const t = setup({ values: { worktreePath: '~/w/{alias}/{branch}' }, repoNickname: () => undefined })
+    await t.svc.openIssue(ISSUE42)
+    expect(t.find(t.isAdd)[0]).toContain('/home/u/w/Repo-A/issue--42-add-login')
   })
 
   it('기본 폴더가 이 OS 의 절대 경로가 아니면 path_not_absolute', async () => {

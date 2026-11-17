@@ -60,6 +60,26 @@
       "template": "~/w/{owner}/{repo}/{slug}",
       "ctx": { "owner": "o", "repo": "r", "branch": "issue/5-x", "key": "5", "number": 5, "slug": "a\"b<c>d|e:f*g?h ", "home": "/home/u", "platform": "linux" },
       "expected": "/home/u/w/o/r/abcdefgh"
+    },
+    {
+      "template": "~/w/{alias}/{branch}",
+      "ctx": { "owner": "MyOrg", "repo": "very-long-repository-name", "alias": "mc", "branch": "issue/7-x", "key": "7", "number": 7, "slug": "x", "home": "/home/u", "platform": "linux" },
+      "expected": "/home/u/w/mc/issue--7-x"
+    },
+    {
+      "template": "~/w/{alias}/{key}",
+      "ctx": { "owner": "o", "repo": "Repo-A", "branch": "etc", "key": "etc", "number": null, "slug": "", "home": "/home/u", "platform": "linux" },
+      "expected": "/home/u/w/Repo-A/etc"
+    },
+    {
+      "template": "~/w/{alias}/{key}",
+      "ctx": { "owner": "o", "repo": "r", "alias": "my:app?", "branch": "etc", "key": "etc", "number": null, "slug": "", "home": "C:\\Users\\X", "platform": "win32" },
+      "expected": "C:\\Users\\X\\w\\myapp\\etc"
+    },
+    {
+      "template": "~/w/{alias}/{key}",
+      "ctx": { "owner": "o", "repo": "r", "alias": "..", "branch": "etc", "key": "etc", "number": null, "slug": "", "home": "/home/u", "platform": "linux" },
+      "expected": "/home/u/w/r/etc"
     }
   ],
   "slugCases": [

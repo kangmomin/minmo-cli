@@ -29,7 +29,7 @@ type Git = (args: string[]) => Promise<ReturnType<typeof ok>>
 beforeEach(() => {
   localStorage.clear()
   useHostsStore.setState({ aliases: [], selected: null, probes: {}, connecting: {}, errors: {}, baseRepos: {} })
-  useReposStore.setState({ added: [], local: {}, lastParent: {} })
+  useReposStore.setState({ added: [], local: {}, lastParent: {}, nicknames: {} })
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online' })
   useSetupStore.setState(useSetupStore.getInitialState(), true)
@@ -98,6 +98,14 @@ describe('repos store · ui.rekey', () => {
     expect(localIds()).toEqual([])
     expect(baseRepoOf(useHostsStore.getState(), 'local', LOCAL_OWNER, id)).toBeUndefined()
     expect(Object.keys(useUiStore.getState().worktreePathMap)).toEqual(['acme/app#1'])
+  })
+
+  it('목록에서 제거: 별칭도 지운다(같은 폴더를 다시 열면 새 id 라 쓰이지 않는다)', () => {
+    const id = registerLocalRepo('local', '/src/app')
+    useReposStore.getState().setNickname(LOCAL_OWNER, id, '앱')
+    useReposStore.getState().setNickname('acme', 'app', 'acme 앱')
+    unregisterLocalRepo(id)
+    expect(useReposStore.getState().nicknames).toEqual({ 'acme/app': 'acme 앱' })
   })
 
   it('목록에서 제거: 열려 있던 그 저장소의 작업은 닫는다(터미널 종료·선택 해제)', () => {
@@ -332,6 +340,16 @@ describe('트리', () => {
     expect(await screen.findByTestId('issue-row-3')).toHaveTextContent('새 작업')
   })
 
+  it('로컬 저장소에 별칭이 있으면 폴더명 대신 별칭, 마우스를 올리면 폴더 경로', async () => {
+    const id = registerLocalRepo('local', '/src/my-app')
+    useReposStore.getState().setNickname(LOCAL_OWNER, id, '내 앱')
+    renderSidebar()
+    const repo = await screen.findByTestId(`repo-node-${LOCAL_OWNER}/${id}`)
+    expect(repo).toHaveTextContent('내 앱')
+    expect(repo).not.toHaveTextContent('my-app')
+    expect(within(repo).getByTitle('/src/my-app')).toHaveTextContent('내 앱')
+  })
+
   it('다른 호스트의 로컬 저장소는 보이지 않는다', async () => {
     useReposStore.getState().addLocal({ hostId: 'ssh:srv', path: '/srv/app', displayName: 'remote-app' })
     renderSidebar()
@@ -487,6 +505,13 @@ describe('GitHub 에 올리기', () => {
     expect(useUiStore.getState().worktreePathMap).toEqual({ 'me/app#1': { path: '/w/1', branch: 'issue/1-x' }, 'me/app#etc': { path: '/w/etc', branch: 'etc' } })
     expect(useUiStore.getState().selectedIssueId).toBeNull()
     expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-7')
+  })
+
+  it('별칭은 만든 GitHub 저장소로 옮긴다', async () => {
+    const t = setup()
+    useReposStore.getState().setNickname(LOCAL_OWNER, t.id, '내 앱')
+    await publishRepo(t, host, t.input)
+    expect(useReposStore.getState().nicknames).toEqual({ 'me/app': '내 앱' })
   })
 
   it('push 가 실패하면 로컬 저장소로 남고, 다시 실행하면 만든 저장소로 이어서 끝낸다(저장소를 또 만들지 않는다)', async () => {

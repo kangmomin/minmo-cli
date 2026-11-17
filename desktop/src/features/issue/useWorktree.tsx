@@ -13,7 +13,7 @@ import { GitHubError } from '@minmo/core'
 import { WorktreeError, baseRepoLocalDir, createWorktreeService } from '@minmo/core'
 import type { DeleteResult, IssueTarget, WorktreeService } from '@minmo/core'
 import { baseDirOf, originFolderOf, useHostsStore } from '../../store/hosts'
-import { isLocalOwner, useReposStore } from '../../store/repos'
+import { isLocalOwner, repoShortNameOf, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { fileDrafts } from '../files/fileDrafts'
 import { uiWorktreePathStore, useUiStore } from '../../store/ui'
@@ -56,6 +56,8 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
         localDirFor: (main) => (isBaseRepo(host.id, main, deps.platform) ? baseRepoLocalDir(main, deps.platform) : undefined),
         // 이 호스트의 기본 폴더 — 설정을 바꾸면 다음에 여는 이슈부터 쓴다
         baseDir: () => baseDirOf(useHostsStore.getState(), host.id),
+        // 경로 템플릿 {alias} — 트리에 보이는 이름(별칭, 없으면 저장소·폴더 이름)
+        repoNickname: (o, r) => repoShortNameOf(useReposStore.getState(), o, r),
         // 로컬 저장소(GitHub 아님)는 물어볼 곳이 없다 — core 가 저장소의 origin/HEAD 나 현재 브랜치로 정한다
         defaultBranch: (o, r) => (isLocalOwner(o) ? Promise.reject(new Error('GitHub 저장소가 아닙니다')) : deps.github.defaultBranch(o, r)),
         // core 는 호스트를 모른다 — 기록·로그의 id 만 이 호스트의 것으로 바꿔 준다

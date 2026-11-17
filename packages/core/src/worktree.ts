@@ -26,7 +26,8 @@ export type WorktreeEntry = { path: string; branch: string }
 export function issueBranchContext(
   values: Pick<SettingsValues, 'branchTemplate' | 'etcBranchName'>,
   t: IssueTarget,
-  env: { home: string; platform: Platform },
+  /** nickname: 경로 템플릿 {alias} 값(이 PC 의 저장소 별칭) — 없으면 repo */
+  env: { home: string; platform: Platform; nickname?: string },
   opts: { checkEtcConflict: boolean },
 ): { branch: string; ctx: PathContext } {
   const branch =
@@ -40,6 +41,7 @@ export function issueBranchContext(
   const ctx: PathContext = {
     owner: t.owner,
     repo: t.repo,
+    alias: env.nickname,
     branch,
     key: t.key,
     number: t.number,
@@ -147,6 +149,8 @@ export interface WorktreeDeps {
   localDirFor?(main: string): string | undefined
   /** 이 기기(호스트)의 기본 폴더(applyBaseDir) — 실행 중에 바뀔 수 있어 쓸 때마다 읽는다 */
   baseDir?(): string | undefined
+  /** 경로 템플릿 {alias} 값(저장소 별칭) — 실행 중에 바뀔 수 있어 쓸 때마다 읽는다. undefined 면 repo */
+  repoNickname?(owner: string, repo: string): string | undefined
   onLog?(e: SetupLogEvent): void
   newRunId?(): string
 }
@@ -487,7 +491,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     const values = (await loadEffective(t.owner, t.repo)).values
     let resolved: { branch: string; ctx: PathContext }
     try {
-      resolved = issueBranchContext(values, t, { home: deps.home, platform }, { checkEtcConflict: true })
+      resolved = issueBranchContext(values, t, { home: deps.home, platform, nickname: deps.repoNickname?.(t.owner, t.repo) }, { checkEtcConflict: true })
     } catch (e) {
       if (e instanceof TemplateError) {
         log(issueId, 'effective', 'error', '브랜치명이 기타 브랜치와 충돌')

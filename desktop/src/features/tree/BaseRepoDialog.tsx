@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { baseRepoOf, useHostsStore } from '../../store/hosts'
+import { useRepoLabel } from '../../store/repos'
 import { repoOfRemote, verifyRepoFolder } from './verifyRepoFolder'
 
 export { repoOfRemote } from './verifyRepoFolder'
@@ -23,12 +24,13 @@ type Check = { state: 'ok'; note: string } | { state: 'warn'; note: string } | {
 
 /** 기준 저장소 — 이 호스트에 이미 있는 저장소 폴더를 가져와, 이슈 worktree 를 그 저장소에서 만든다 */
 export function BaseRepoDialog({ owner, repo, open, onOpenChange }: BaseRepoDialogProps) {
+  const label = useRepoLabel(owner, repo)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            기준 저장소 폴더 — {owner}/{repo}
+            기준 저장소 폴더 — {label}
           </DialogTitle>
           <DialogDescription>
             이 호스트에 이미 clone 해 둔 저장소 폴더를 지정하면, 새로 clone 하지 않고 그 저장소에서 이슈별 worktree 를 만듭니다. 그 폴더의 체크아웃은 건드리지 않습니다.

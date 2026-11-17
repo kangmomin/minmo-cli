@@ -19,7 +19,7 @@ import { queryKeys } from '../../lib/queryKeys'
 import { issueBranchContext, issuePaths, lacksOrigin } from '@minmo/core'
 import { useHost } from '../../app/host'
 import { baseDirOf, baseRepoOf, repoAliasOf, useHostsStore, useOriginFolder } from '../../store/hosts'
-import { isLocalOwner, useReposStore } from '../../store/repos'
+import { isLocalOwner, useRepoFullNameIfNicknamed, useRepoShortName, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
@@ -66,6 +66,8 @@ function RepoHostBadge({ label }: { label: string }) {
 
 /** 연결 호스트에 아직 닿지 않은 저장소 — 이름·상태와 프로젝트 설정(연결 호스트 바꾸기)만 보인다 */
 function PendingRepoNode({ repo, onOpenSettings, alias, status }: RepoNodeProps & { alias: string; status: HostStatus }) {
+  const label = useRepoShortName(repo.owner, repo.name)
+  const fullName = useRepoFullNameIfNicknamed(repo.owner, repo.name)
   const openSettings = () =>
     onOpenSettings({ kind: 'project', owner: repo.owner, repo: repo.name }, { owner: repo.owner, repo: repo.name, key: 'etc', number: null, title: '' })
   return (
@@ -74,14 +76,16 @@ function PendingRepoNode({ repo, onOpenSettings, alias, status }: RepoNodeProps 
         <div className="flex min-w-0 flex-1 items-center gap-1 px-1 py-1 text-sm text-muted-foreground">
           <ChevronRightIcon className="size-3.5 opacity-40" />
           <FolderGit2Icon className="size-3.5" />
-          <span className="truncate">{repo.name}</span>
+          <span className="truncate" title={fullName}>
+            {label}
+          </span>
           <RepoHostBadge label={alias} />
         </div>
         <Button
           size="icon-sm"
           variant="ghost"
-          aria-label={`${repo.name} 프로젝트 설정`}
-          title={`${repo.name} 프로젝트 설정`}
+          aria-label={`${label} 프로젝트 설정`}
+          title={`${label} 프로젝트 설정`}
           onClick={openSettings}
           className="size-6 shrink-0 text-muted-foreground"
         >
@@ -105,7 +109,9 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
   const local = isLocalOwner(repo.owner)
   const localRepo = useReposStore((s) => (local ? s.local[repo.name] : undefined))
   const added = useReposStore((s) => !local && s.added.some((a) => a.toLowerCase() === `${repo.owner}/${repo.name}`.toLowerCase()))
-  const label = localRepo?.displayName ?? repo.name
+  // 별칭이 있으면 별칭, 없으면 폴더명(로컬)·저장소 이름 — 경로 템플릿 {alias} 의 값이기도 하다
+  const label = useRepoShortName(repo.owner, repo.name)
+  const fullName = useRepoFullNameIfNicknamed(repo.owner, repo.name)
   const [dialog, setDialog] = useState<null | 'task' | 'remove' | 'issue'>(null)
   const openPublish = useOpenPublish()
   const nodeId = `repo:${repo.owner}/${repo.name}`
@@ -159,7 +165,7 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
         const { ctx } = issueBranchContext(
           v,
           { owner: repo.owner, repo: repo.name, key: issue.key, number: issue.number, title: issue.title },
-          { home, platform },
+          { home, platform, nickname: label },
           { checkEtcConflict: false },
         )
         const expected = issuePaths(v, ctx, baseDir).path
@@ -169,7 +175,7 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
       }
     }
     return out
-  }, [effective.data, entries, repo.owner, repo.name, home, platform, baseDir, origin])
+  }, [effective.data, entries, repo.owner, repo.name, home, platform, baseDir, origin, label])
 
   // origin 이 없는 로컬 저장소만 GitHub 에 올릴 수 있다
   const noOrigin = useQuery({
@@ -202,7 +208,7 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
             >
               {expanded ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
               <FolderGit2Icon className="size-3.5 text-muted-foreground" />
-              <span className="truncate" title={localRepo?.path}>
+              <span className="truncate" title={fullName ?? localRepo?.path}>
                 {label}
               </span>
               {bound && <RepoHostBadge label={host.label} />}
@@ -242,8 +248,8 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label={`${repo.name} 이슈 등록`}
-            title={`${repo.name} 이슈 등록`}
+            aria-label={`${label} 이슈 등록`}
+            title={`${label} 이슈 등록`}
             onClick={() => setDialog('issue')}
             className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
           >
@@ -254,8 +260,8 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label={`${repo.name} 기준 저장소 폴더`}
-            title={`${repo.name} 기준 저장소 폴더(기존 폴더 가져오기)`}
+            aria-label={`${label} 기준 저장소 폴더`}
+            title={`${label} 기준 저장소 폴더(기존 폴더 가져오기)`}
             onClick={() => setBaseOpen(true)}
             className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
           >

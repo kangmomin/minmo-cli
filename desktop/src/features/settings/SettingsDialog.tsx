@@ -15,7 +15,7 @@ import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { Textarea } from '../../components/ui/textarea'
 import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF, ignoredCopyNames, issueBranchContext, issuePaths } from '@minmo/core'
 import { LOCAL_HOST_ID, aliasOfHostId, baseDirOf, baseRepoOf, hostIdOf, repoAliasOf, repoHostOf, useHostsStore, useOriginFolder } from '../../store/hosts'
-import { isLocalOwner, repoLabelOf, useReposStore } from '../../store/repos'
+import { clampNickname, isLocalOwner, normalizeNickname, repoKey, repoLabelOf, repoNicknameOf, repoShortNameOf, shortNameTaken, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { BaseRepoDialog } from '../tree/BaseRepoDialog'
 import { useSettings } from './useSettings'
@@ -38,7 +38,7 @@ type IgnoredMode = 'inherit' | 'on' | 'off'
 const TEXT_FIELDS: { field: TextField; label: string; hint: string }[] = [
   { field: 'branchTemplate', label: '브랜치 템플릿', hint: '{number} 필수 · {slug} {title}' },
   { field: 'etcBranchName', label: '기타 브랜치명', hint: '★기타 이슈의 브랜치' },
-  { field: 'worktreePath', label: 'worktree 경로', hint: '{branch} 또는 {key} 필수 · {owner} {repo} {number} {slug} · ~ = 홈 · ./ ../ = 원본 폴더 기준(예: ../{repo}-wt/{branch})' },
+  { field: 'worktreePath', label: 'worktree 경로', hint: '{branch} 또는 {key} 필수 · {owner} {repo} {alias}(별칭) {number} {slug} · ~ = 홈 · ./ ../ = 원본 폴더 기준(예: ../{repo}-wt/{branch})' },
   { field: 'mainClonePath', label: '메인 clone 경로', hint: '{owner} {repo}' },
 ]
 
@@ -52,10 +52,10 @@ const ERROR_TEXT: Record<string, string> = {
   invalid_json: '값의 형식이 올바르지 않습니다',
 }
 
-function scopeTitle(scope: SettingsScope): string {
+function scopeTitle(scope: SettingsScope, repoLabel: string): string {
   if (scope.kind === 'global') return '전역 설정'
   if (scope.kind === 'org') return isLocalOwner(scope.owner) ? '로컬 저장소 공통 설정' : `조직 설정 — ${scope.owner}`
-  return `프로젝트 설정 — ${repoLabelOf(useReposStore.getState(), scope.owner, scope.repo)}`
+  return `프로젝트 설정 — ${repoLabel}`
 }
 
 export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: SettingsDialogProps) {
@@ -65,17 +65,20 @@ export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: Sett
   const outer = useHost().alias
   const alias = bound === undefined ? outer : bound
   const status = useHostStatus(bound ?? null)
+  // 별칭을 바꾸면 제목도 바로 바뀌게 구독한다
+  const repoLabel = useReposStore((s) => (scope.kind === 'project' ? repoLabelOf(s, scope.owner, scope.repo) : ''))
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{scopeTitle(scope)}</DialogTitle>
+          <DialogTitle>{scopeTitle(scope, repoLabel)}</DialogTitle>
           <DialogDescription>
             {scope.kind === 'global'
               ? '모든 저장소의 기본값입니다.'
               : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'}
           </DialogDescription>
         </DialogHeader>
+        {open && scope.kind === 'project' && <RepoNicknameSection key={repoKey(scope.owner, scope.repo)} owner={scope.owner} repo={scope.repo} />}
         {open && project && <RepoHostSection owner={project.owner} repo={project.repo} />}
         {open &&
           project &&
@@ -99,6 +102,56 @@ export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: Sett
 }
 
 const hostLabelOf = (hostId: string) => hostOf(aliasOfHostId(hostId) ?? null).label
+
+/**
+ * 저장소 별칭(#73) — 이 PC 에 저장하는 값이라 연결 호스트처럼 아래 폼의 [저장] 과 따로 두고, 입력하면 바로 적용한다.
+ * 입력란은 자기 값을 따로 들고 정리한 값만 저장한다(저장값으로 그리면 칠 때마다 끝 공백이 지워져 띄어 쓸 수 없다)
+ */
+function RepoNicknameSection({ owner, repo }: { owner: string; repo: string }) {
+  const uid = useId()
+  const saved = useReposStore((s) => repoNicknameOf(s, owner, repo) ?? '')
+  const [draft, setDraft] = useState(saved)
+  // 바깥(원격 접속 화면 등)에서 바뀐 별칭을 입력란에 반영한다 — 입력 중인 값과 같은 뜻이면(끝 공백 차이) 그대로 둔다
+  const [seen, setSeen] = useState(saved)
+  if (saved !== seen) {
+    setSeen(saved)
+    if (normalizeNickname(draft) !== saved) setDraft(saved)
+  }
+  // 별칭이 없을 때 보이는 이름
+  const original = useReposStore((s) => repoShortNameOf({ local: s.local, nicknames: {} }, owner, repo))
+  // {alias} 를 경로에 쓰면 이름이 같은 저장소끼리 폴더가 겹친다 — 막지는 않고 알린다
+  const duplicate = useReposStore((s) => shortNameTaken(s, owner, repo, draft))
+  return (
+    <div className="grid gap-1 rounded border p-3" data-testid="repo-nickname-section">
+      <div className="flex items-center gap-2">
+        <label htmlFor={uid} className="shrink-0 text-sm font-medium">
+          별칭
+        </label>
+        <Input
+          id={uid}
+          value={draft}
+          placeholder={original}
+          aria-describedby={`${uid}-hint ${uid}-dup`}
+          onChange={(e) => {
+            // maxLength 는 UTF-16 단위라 저장 규칙(글자 수)과 어긋난다 — 같은 함수로 자른다
+            const v = clampNickname(e.target.value)
+            setDraft(v)
+            useReposStore.getState().setNickname(owner, repo, v)
+          }}
+          spellCheck={false}
+          className="ml-auto h-7 max-w-64 text-sm"
+        />
+      </div>
+      <p id={`${uid}-hint`} className="text-xs text-muted-foreground">
+        이 PC 에만 저장합니다. 트리·이슈 머리줄 등에 원래 이름 대신 보이고, worktree 경로의 {'{alias}'} 값이 됩니다. 비우면 원래 이름을 씁니다.
+      </p>
+      {/* live region 은 미리 렌더해 두어야 변화가 읽힌다 */}
+      <p id={`${uid}-dup`} role="status" className="text-xs text-amber-600 dark:text-amber-400">
+        {duplicate ? '이 PC 의 다른 저장소와 이름(별칭)이 같습니다 — 경로에 {alias} 를 쓰면 폴더가 겹칠 수 있습니다' : ''}
+      </p>
+    </div>
+  )
+}
 
 /**
  * 연결 호스트 — 이 저장소의 이슈를 여는 호스트. 원본 위치처럼 이 PC 에 저장하는 값이라 바꾸면 바로 적용한다.
@@ -326,6 +379,8 @@ function SettingsForm(props: {
 
   // 미리보기 이슈의 원본 폴더 — 이슈 열기(useWorktree)와 같은 규칙. 없으면 메인 clone 경로
   const origin = useOriginFolder(host.id, previewIssue?.owner ?? '', previewIssue?.repo ?? '')
+  // 경로의 {alias} — 이슈 열기와 같은 값(위의 별칭 칸을 고치면 바로 반영된다)
+  const previewNickname = useReposStore((st) => (previewIssue ? repoShortNameOf(st, previewIssue.owner, previewIssue.repo) : undefined))
 
   // 미리보기: 입력값(비어 있으면 상속값)으로 계산
   const effective = useMemo(() => {
@@ -342,13 +397,13 @@ function SettingsForm(props: {
     if (!previewIssue) return null
     let resolved: ReturnType<typeof issueBranchContext>
     try {
-      resolved = issueBranchContext(effective, previewIssue, { home, platform }, { checkEtcConflict: true })
+      resolved = issueBranchContext(effective, previewIssue, { home, platform, nickname: previewNickname }, { checkEtcConflict: true })
     } catch {
       return { branch: '브랜치명이 기타 브랜치와 충돌', path: '—' }
     }
     const values = { ...effective, mainClonePath: origin ?? effective.mainClonePath }
     return { branch: resolved.branch, path: issuePaths(values, resolved.ctx, baseDir).path }
-  }, [effective, previewIssue, home, platform, baseDir, origin])
+  }, [effective, previewIssue, home, platform, baseDir, origin, previewNickname])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
