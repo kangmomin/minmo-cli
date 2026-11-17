@@ -25,9 +25,13 @@ const xterm = vi.hoisted(() => ({
     host: HTMLElement | null
     textarea: HTMLTextAreaElement | undefined
     selection: string
+    unicode: { activeVersion: string }
+    addons: { kind?: string }[]
   }[],
   // 정적 Terminal.strings — 실제 xterm 처럼 open() 이전에 바꿔야 입력 textarea 라벨에 반영된다
   strings: { promptLabel: 'Terminal input', tooMuchOutput: '' },
+  // 만든 WebGL 렌더러들. WebGL2 를 쓸 수 없는 환경: failCreate 면 만들 때(Safari 16 미만), failLoad 면 붙일 때 실패한다
+  webgl: { instances: [] as { kind: string; disposed: boolean; lose(): void }[], failCreate: false, failLoad: false },
 }))
 
 vi.mock('@xterm/xterm', () => ({
@@ -41,12 +45,17 @@ vi.mock('@xterm/xterm', () => ({
     dataHandler: ((d: string) => void) | null = null
     host: HTMLElement | null = null
     textarea: HTMLTextAreaElement | undefined
+    unicode = { activeVersion: '6' }
+    addons: { kind?: string }[] = []
     static strings = xterm.strings
     constructor(options: Record<string, unknown>) {
       this.options = options
       xterm.instances.push(this)
     }
-    loadAddon() {}
+    loadAddon(addon: { kind?: string }) {
+      if (addon.kind === 'webgl' && xterm.webgl.failLoad) throw new Error('WebGL2 not supported')
+      this.addons.push(addon)
+    }
     // 실제 xterm 처럼 host 안에 입력 textarea 를 만든다
     open(el: HTMLElement) {
       this.host = el
@@ -90,6 +99,33 @@ vi.mock('@xterm/addon-fit', () => ({
     fit() {}
   },
 }))
+vi.mock('@xterm/addon-unicode11', () => ({
+  Unicode11Addon: class {
+    kind = 'unicode11'
+  },
+}))
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    kind = 'webgl'
+    disposed = false
+    lost: (() => void) | null = null
+    constructor() {
+      if (xterm.webgl.failCreate) throw new Error('Webgl2 is only supported on Safari 16 and above')
+      xterm.webgl.instances.push(this)
+    }
+    onContextLoss(cb: () => void) {
+      this.lost = cb
+      return { dispose() {} }
+    }
+    /** GPU 가 context 를 거둬 간 상황 */
+    lose() {
+      this.lost?.()
+    }
+    dispose() {
+      this.disposed = true
+    }
+  },
+}))
 
 const A: TerminalSessionSpec = { issueId: 'o/r#1', cwd: '/w/1' }
 const R: TerminalSessionSpec = { issueId: 'ssh:my-server|o/r#1', cwd: '/home/dev/w/1', remote: { host: 'my-server', tmux: true } }
@@ -99,6 +135,9 @@ const STARTED = { [A.issueId]: true, [R.issueId]: true } as const
 beforeEach(() => {
   xterm.instances.length = 0
   xterm.strings.promptLabel = 'Terminal input'
+  xterm.webgl.instances.length = 0
+  xterm.webgl.failCreate = false
+  xterm.webgl.failLoad = false
   useUiStore.setState({ panes: {}, focusRequest: null, terminalIds: {}, startedTerminals: { ...STARTED }, tab: 'terminal', selectedIssueId: null, theme: 'black' })
 })
 
@@ -135,6 +174,54 @@ describe('CR-03 세션이 사라지면 started 에서 제거', () => {
     t.rerender(<TerminalTab sessions={[A]} activeId={A.issueId} visible={false} />)
     await flush()
     expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('글자 그리기 — Unicode 11 폭·WebGL 렌더러(#58)', () => {
+  /** 지금 붙어 있는(떼지 않은) WebGL 렌더러 */
+  const liveWebgl = () => xterm.webgl.instances.filter((w) => !w.disposed)
+
+  it('글자 폭은 Unicode 11 로 센다 — 이모지를 ConPTY·Claude Code 처럼 2칸으로', async () => {
+    setup()
+    await flush()
+    const t = xterm.instances[0]
+    expect(t.options.allowProposedApi).toBe(true)
+    expect(t.addons.some((a) => a.kind === 'unicode11')).toBe(true)
+    expect(t.unicode.activeVersion).toBe('11')
+  })
+
+  it('보이는 터미널만 WebGL 로 그린다 — 숨기면 떼고, 다시 보이면 새로 붙인다', async () => {
+    const t = setup()
+    await flush()
+    expect(liveWebgl()).toHaveLength(1)
+    expect(xterm.instances[0].addons).toContain(liveWebgl()[0])
+
+    t.rerender(<TerminalTab sessions={[A]} activeId={A.issueId} visible={false} />)
+    await flush()
+    expect(liveWebgl()).toHaveLength(0)
+
+    t.rerender(<TerminalTab sessions={[A]} activeId={A.issueId} visible />)
+    await flush()
+    expect(liveWebgl()).toHaveLength(1)
+    expect(xterm.webgl.instances).toHaveLength(2)
+  })
+
+  it.each([
+    ['만들 때', 'failCreate'],
+    ['붙일 때', 'failLoad'],
+  ] as const)('WebGL 을 %s 실패하면 DOM 렌더러로 그대로 쓴다(오류를 띄우지 않는다)', async (_, failAt) => {
+    xterm.webgl[failAt] = true
+    const t = setup()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(liveWebgl()).toHaveLength(0)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('WebGL context 를 잃으면 떼고 DOM 렌더러로 그린다', async () => {
+    setup()
+    await flush()
+    act(() => liveWebgl()[0].lose())
+    expect(liveWebgl()).toHaveLength(0)
   })
 })
 
