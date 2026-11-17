@@ -55,6 +55,13 @@ describe('AX-22 포커스 스타일에 반투명(/50) ring·outline 을 쓰지 �
     expect(src).not.toMatch(/focus-visible:ring-ring\/\d+/)
   })
 
+  // AX-40: 구분선은 폭이 좁아(6px) ring 만으로는 잘 안 보인다 — 배경도 불투명 ring 색으로 칠한다
+  it('./features/tree/SidebarFrame.tsx 의 구분선 포커스 강조는 불투명 bg-ring', () => {
+    const src = read('./features/tree/SidebarFrame.tsx')
+    expect(src).toContain('focus-visible:bg-ring')
+    expect(src).not.toMatch(/bg-ring\/\d+/)
+  })
+
   // 메뉴 항목은 배경(accent)만으로 강조하면 대비가 부족하다 — 불투명 ring 을 함께 쓴다(AX-38)
   it('./components/ui/context-menu.tsx 의 ContextMenuItem 포커스 강조는 불투명 ring', () => {
     const src = read('./components/ui/context-menu.tsx')

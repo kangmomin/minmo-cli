@@ -75,7 +75,7 @@ export function SidebarFrame({ className, children }: SidebarFrameProps) {
         aria-valuetext={`${width}픽셀`}
         tabIndex={0}
         data-dragging={draft !== null ? '' : undefined}
-        className="absolute inset-y-0 left-full z-10 w-1.5 cursor-col-resize touch-none select-none outline-none hover:bg-ring data-[dragging]:bg-ring focus-visible:bg-ring focus-visible:ring-2 focus-visible:ring-ring max-md:hidden"
+        className="absolute inset-y-0 left-full z-10 w-1.5 cursor-col-resize touch-none select-none outline-hidden hover:bg-ring data-[dragging]:bg-ring focus-visible:bg-ring focus-visible:ring-2 focus-visible:ring-ring max-md:hidden"
         onPointerDown={(e) => {
           if (e.button !== 0 || !e.isPrimary) return
           // 끄는 동안 글자가 선택되지 않게 — 그래서 마우스로 눌러도 포커스는 가지 않는다(키보드는 Tab)
