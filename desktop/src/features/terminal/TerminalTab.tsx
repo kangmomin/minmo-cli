@@ -16,7 +16,9 @@ import { useUiStore } from '../../store/ui'
 import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
 import { noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
-import { CLIPBOARD_KEYS, EDIT_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
+import { CLIPBOARD_KEYS, EDIT_KEYS, MOUSE_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
+import { attachLinks } from './links'
+import { attachOsc52 } from './osc52'
 import { TerminalKeyBar, registerTerminalInput, useNarrow, useTouch } from './TerminalKeyBar'
 import { layoutPanes, leafIds } from './panes'
 import { attachWebgl } from './webgl'
@@ -41,6 +43,11 @@ function paneExists(issueId: string, paneId: string): boolean {
 
 /** ptySpawn 응답 전에 도착한 pty-data 를 id 별로 보관하는 상한(문자 수) */
 export const MAX_PENDING_PTY_CHARS = 256 * 1024
+
+/** 클립보드에 쓴다(Ctrl+C 복사·프로그램의 OSC 52). 쓸 수 없는 환경이어도 터미널은 계속 쓸 수 있게 실패는 무시한다 */
+function copyText(text: string): void {
+  void navigator.clipboard?.writeText(text).catch(() => undefined)
+}
 
 const windowsPtyCache = new WeakMap<TauriApi, Promise<WindowsPty | null>>()
 
@@ -135,7 +142,8 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
             <p>
               {openKeyWorks && `${PANE_KEYS.open}: 새 터미널 · `}
               {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기 · {CLIPBOARD_KEYS.copy}:
-              복사(선택했을 때) · {CLIPBOARD_KEYS.paste}: 붙여넣기 · {EDIT_KEYS.deleteWord}: 단어 지우기 · {EDIT_KEYS.newline}: 줄바꿈
+              복사(선택했을 때) · {CLIPBOARD_KEYS.paste}: 붙여넣기 · {EDIT_KEYS.deleteWord}: 단어 지우기 · {EDIT_KEYS.newline}: 줄바꿈 ·{' '}
+              {MOUSE_KEYS.openLink}: 링크 열기 · {MOUSE_KEYS.forceSelect}: 프로그램이 마우스를 쓸 때 선택
             </p>
           </div>
         )}
@@ -295,6 +303,8 @@ function TerminalSession({
     let disposed = false
     /** 한글 등의 조합이 방금 끝났다(그 글자를 xterm 이 아직 보내지 않았다) */
     let justComposed = false
+    /** 이미 떠 있던 터미널의 지난 출력을 다시 그리는 중이다 — 그 안의 질의 답·복사(OSC 52)는 그때 이미 처리됐다 */
+    let replaying = false
     const t = new Terminal({
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -309,6 +319,13 @@ function TerminalSession({
     // ConPTY 는 바뀐 칸만 절대 위치로 보내므로, 폭이 다르면 이모지가 있는 줄의 글자가 밀리고 지워지지 않은 조각이 남는다
     t.loadAddon(new Unicode11Addon())
     t.unicode.activeVersion = '11'
+    // ssh 원격의 프로그램은 이 PC 의 브라우저·클립보드를 쓸 수 없다(#76) — 링크는 Ctrl+클릭으로 이 화면에서 열고,
+    // 프로그램의 복사(OSC 52)는 이 화면의 클립보드에 쓴다. 둘 다 t.dispose() 때 함께 풀린다.
+    // 지난 출력을 다시 그릴 때의 옛 복사는 버린다 — 지금 클립보드를 옛 내용으로 덮어쓰지 않게
+    attachLinks(t, (url) => void tauri.openUrl(url).catch(() => undefined))
+    attachOsc52(t, (text) => {
+      if (!replaying) copyText(text)
+    })
     const ui = useUiStore.getState
     t.attachCustomKeyEventHandler(
       createTerminalKeyHandler(
@@ -322,8 +339,7 @@ function TerminalSession({
         {
           hasSelection: () => t.hasSelection(),
           selection: () => t.getSelection(),
-          // 클립보드를 쓸 수 없는 환경이어도 터미널은 계속 쓸 수 있게 실패는 무시한다
-          copy: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
+          copy: copyText,
           clearSelection: () => t.clearSelection(),
         },
         // 사용자가 친 글자처럼 넣는다 — onData 를 거쳐 PTY 로 간다.
@@ -422,7 +438,6 @@ function TerminalSession({
       const pending = new Map<string, { data: string; end?: number }[]>()
       let pendingChars = 0
       let settled = false
-      let replaying = false
       // [에이전트 실행] 으로 맡겨 둔 명령은 셸이 출력을 내고 잠잠해진 뒤에 한 번 넣는다.
       // null = 아직 꺼내지 않음, undefined = 없음(또는 이미 넣음)
       let launchCmd: string | undefined | null = null
