@@ -265,6 +265,59 @@ export function applyBaseDir(template: string, baseDir: string | undefined | nul
   return rest === '' || rest[0] === '/' || rest[0] === '\\' ? base + rest : template
 }
 
+/** 경로를 뿌리(`/`·`C:\`·`\\srv\share\`, 없으면 '')와 나머지 단계로 나눈다 */
+function splitRoot(path: string, platform: Platform): { root: string; segs: string[] } {
+  const rest = (head: string) => path.slice(head.length).split(/[\\/]+/).filter(Boolean)
+  if (platform !== 'win32') return path.startsWith('/') ? { root: '/', segs: rest('/') } : { root: '', segs: rest('') }
+  const drive = /^[A-Za-z]:/.exec(path)
+  if (drive) return { root: `${drive[0]}\\`, segs: rest(drive[0]) }
+  const unc = /^[\\/]{2}([^\\/]+)[\\/]+([^\\/]+)/.exec(path)
+  if (unc) return { root: `\\\\${unc[1]}\\${unc[2]}\\`, segs: rest(unc[0]) }
+  return { root: '', segs: rest('') }
+}
+
+/** 원본 기준 경로인가 — 첫 단계가 `.`·`..`(상대), 또는 Windows 에서 구분자 하나로 시작(원본 드라이브의 루트) */
+function fromMainKind(path: string, platform: Platform): 'relative' | 'driveRoot' | null {
+  const first = path.split(/[\\/]/)[0]
+  if (first === '.' || first === '..') return 'relative'
+  return platform === 'win32' && /^[\\/](?![\\/])/.test(path) ? 'driveRoot' : null
+}
+
+/**
+ * 렌더한 worktree 경로를 원본(메인 clone·기준 저장소·로컬 저장소 폴더) 기준으로 푼다.
+ * 경로 설정은 기기 간 공유된다 — 원본 기준으로 적으면 기기마다 원본 위치가 달라도 같은 모양으로 놓인다.
+ * - 첫 단계가 `.`·`..` → 원본 기준 상대 경로(`..` 는 루트 위로 가지 않는다)
+ * - Windows 에서 구분자 하나로 시작 → 원본이 있는 드라이브(UNC 는 공유)의 루트
+ * - 그 밖(~ 를 푼 경로·절대 경로) → 그대로
+ */
+export function resolveFromMain(path: string, main: string, platform: Platform): string {
+  const kind = fromMainKind(path, platform)
+  if (!kind) return path
+  const sep = platform === 'win32' ? '\\' : '/'
+  const base = splitRoot(main, platform)
+  const out = kind === 'relative' ? [...base.segs] : []
+  for (const seg of path.split(/[\\/]+/)) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') out.pop()
+    else out.push(seg)
+  }
+  return base.root + out.join(sep)
+}
+
+/** 이슈의 메인 clone·worktree 경로 — openIssue·"경로 변경됨" 배지·설정 미리보기가 같은 규칙으로 계산한다 */
+export function issuePaths(
+  values: Pick<SettingsValues, 'mainClonePath' | 'worktreePath'>,
+  ctx: PathContext,
+  baseDir?: string | null,
+): { main: string; path: string } {
+  const main = renderPath(applyBaseDir(values.mainClonePath, baseDir), ctx)
+  const template = applyBaseDir(values.worktreePath, baseDir)
+  const rendered = renderPath(template, ctx)
+  // 시작은 템플릿으로 본다 — 앞 토큰이 빈 값(★기타의 {number} 등)이라 렌더 결과만 구분자로 시작해도 드라이브 루트로 풀지 않게
+  const path = fromMainKind(template, ctx.platform) ? resolveFromMain(rendered, main, ctx.platform) : rendered
+  return { main, path }
+}
+
 /** worktreePathMap 키 */
 export function worktreeId(owner: string, repo: string, key: string): string {
   return `${owner}/${repo}#${key}`
@@ -443,21 +496,23 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       throw e
     }
     const { branch, ctx } = resolved
-    const baseDir = deps.baseDir?.()
-    const main = renderPath(applyBaseDir(values.mainClonePath, baseDir), ctx)
-    const path = renderPath(applyBaseDir(values.worktreePath, baseDir), ctx)
-    // 설정은 기기 간 공유된다 — 다른 OS 용 절대 경로(예: Linux 에서 C:\...)로는 clone 하지 않는다
-    for (const p of [main, path]) {
+    const { main, path } = issuePaths(values, ctx, deps.baseDir?.())
+    // 설정은 기기 간 공유된다 — 다른 OS 용 절대 경로(예: Linux 에서 C:\...)로는 clone 하지 않는다.
+    // 원본(main)을 먼저 본다 — worktree 의 상대 경로는 원본이 절대 경로일 때만 뜻이 있다
+    for (const [p, hint] of [
+      [main, '~ 또는 절대 경로'],
+      [path, '. (원본 기준)·~·절대 경로'],
+    ] as const) {
       if (!isAbsoluteFor(p, platform)) {
         log(issueId, 'effective', 'error', `이 OS 에서 쓸 수 없는 경로입니다: ${p}`)
         throw new WorktreeError('path_not_absolute', {
           path: p,
-          message: `이 OS 에서 쓸 수 없는 경로입니다(절대 경로 아님): ${p} — 설정의 경로는 ~ 로 시작하게 하세요`,
+          message: `이 OS 에서 쓸 수 없는 경로입니다(절대 경로 아님): ${p} — 설정의 경로는 ${hint}로 시작하게 하세요`,
         })
       }
     }
-    // EC-23: worktree 가 메인 clone 과 같거나 그 하위면 중단
-    if (isSameOrInside(path, main, platform)) {
+    // EC-23: worktree 가 메인 clone 과 같거나 그 하위면 중단. 상위 폴더도 막는다(원본 기준 `..` 로 원본을 품는 폴더가 될 수 있다)
+    if (isSameOrInside(path, main, platform) || isSameOrInside(main, path, platform)) {
       log(issueId, 'effective', 'error', `worktree 경로가 메인 clone 과 겹칩니다: ${path}`)
       throw new WorktreeError('overlaps_main_clone', { path, message: 'worktree 경로가 메인 clone 경로와 겹칩니다' })
     }

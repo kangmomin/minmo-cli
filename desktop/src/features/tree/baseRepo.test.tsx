@@ -9,7 +9,8 @@ import { DEFAULT_SETTINGS } from '@minmo/core'
 
 import { HostScope, hostOf } from '../../app/host'
 import type { SshProbe } from '../../lib/tauri'
-import { baseRepoOf, useHostsStore } from '../../store/hosts'
+import { baseRepoOf, originFolderOf, useHostsStore } from '../../store/hosts'
+import { LOCAL_OWNER } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
@@ -36,6 +37,23 @@ describe('repoOfRemote', () => {
     expect(repoOfRemote('git@github.com:acme/app.git')).toBe('acme/app')
     expect(repoOfRemote('ssh://git@github.com/acme/app.git/')).toBe('acme/app')
     expect(repoOfRemote('')).toBeNull()
+  })
+})
+
+describe('originFolderOf — 원본 폴더(이슈 열기·경로 변경됨 배지·설정 미리보기 공용)', () => {
+  const s = {
+    baseRepos: { local: { 'acme/app': '/src/app' }, 'ssh:srv': { 'acme/app': '/srv/app' } },
+    local: { proj: { hostId: 'local', path: '/w/proj' } },
+  }
+  it('GitHub 저장소는 그 호스트의 기준 저장소 폴더, 없으면 undefined', () => {
+    expect(originFolderOf(s, 'local', 'Acme', 'App')).toBe('/src/app')
+    expect(originFolderOf(s, 'ssh:srv', 'acme', 'app')).toBe('/srv/app')
+    expect(originFolderOf(s, 'local', 'acme', 'other')).toBeUndefined()
+  })
+  it('로컬 저장소는 그 폴더가 있는 호스트에서만', () => {
+    expect(originFolderOf(s, 'local', LOCAL_OWNER, 'proj')).toBe('/w/proj')
+    expect(originFolderOf(s, 'ssh:srv', LOCAL_OWNER, 'proj')).toBeUndefined()
+    expect(originFolderOf(s, 'local', LOCAL_OWNER, 'missing')).toBeUndefined()
   })
 })
 
