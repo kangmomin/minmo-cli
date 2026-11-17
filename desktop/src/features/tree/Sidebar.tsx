@@ -23,6 +23,7 @@ import { PublishDialog } from './LocalRepoDialogs'
 import { OrgNode } from './OrgNode'
 import { PublishContext } from './publishContext'
 import { RefreshButton } from './RefreshButton'
+import { SidebarFrame } from './SidebarFrame'
 import { githubErrorMessage, useGitHubSource, useOwners } from './useTree'
 import { useOwnerFilter, useRepoSelection } from './useVisibleRepos'
 import { VisibleReposDialog } from './VisibleReposDialog'
@@ -88,7 +89,7 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
     : []
 
   return (
-    <aside className={`flex h-full w-72 shrink-0 flex-col border-r ${className ?? ''}`} aria-label="이슈 트리">
+    <SidebarFrame className={className}>
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <select
           aria-label="작업 호스트"
@@ -174,7 +175,8 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
       )}
       <ScrollArea className={connection.ready ? 'min-h-0 flex-1' : 'hidden'}>
         <PublishContext.Provider value={setPublishId}>
-          <div className="p-2">
+          {/* 오른쪽 여백을 더 둔다 — 내용 위에 겹쳐 뜨는 세로 스크롤바(10px)가 행 끝 버튼을 가리지 않게(AC-02) */}
+          <div className="py-2 pl-2 pr-3">
             {owners.isLoading && (
               <div className="space-y-2 p-2" aria-label="트리 불러오는 중">
                 {[0, 1, 2].map((i) => (
@@ -211,6 +213,6 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
           </div>
         </PublishContext.Provider>
       </ScrollArea>
-    </aside>
+    </SidebarFrame>
   )
 }
