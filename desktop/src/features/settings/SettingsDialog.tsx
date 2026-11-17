@@ -12,9 +12,11 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { Textarea } from '../../components/ui/textarea'
-import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF, ignoredCopyNames, issueBranchContext } from '@minmo/core'
+import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF, applyBaseDir, ignoredCopyNames, issueBranchContext } from '@minmo/core'
+import { baseDirOf, baseRepoOf, useHostsStore } from '../../store/hosts'
 import { isLocalOwner, repoLabelOf, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
+import { BaseRepoDialog } from '../tree/BaseRepoDialog'
 import { useSettings } from './useSettings'
 
 export type PreviewIssue = { owner: string; repo: string; key: string; number: number | null; title: string }
@@ -67,9 +69,35 @@ export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: Sett
               : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'}
           </DialogDescription>
         </DialogHeader>
+        {open && scope.kind === 'project' && !isLocalOwner(scope.owner) && <BaseRepoSection owner={scope.owner} repo={scope.repo} />}
         {open && <SettingsBody scope={scope} previewIssue={previewIssue ?? null} onSaved={() => onOpenChange(false)} />}
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * 원본 위치(기준 저장소 폴더) — 서버 설정이 아니라 이 PC 에 호스트별로 저장하는 값이라 아래 폼의 [저장] 과 따로 둔다.
+ * 서버에 닿지 않아도 볼 수 있게 폼 밖에 있다
+ */
+function BaseRepoSection({ owner, repo }: { owner: string; repo: string }) {
+  const host = useHost()
+  const current = useHostsStore((s) => baseRepoOf(s, host.id, owner, repo))
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="grid gap-1 rounded border p-3" data-testid="base-repo-section">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium">원본 위치 ({host.label})</span>
+        <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={() => setOpen(true)}>
+          변경…
+        </Button>
+      </div>
+      <p className="break-all font-mono text-xs" data-testid="base-repo-current">
+        {current ?? '지정 안 함 — 아래 설정의 메인 clone 경로에 새로 clone 합니다'}
+      </p>
+      <p className="text-xs text-muted-foreground">이 호스트에 이미 있는 저장소 폴더입니다. 호스트마다 따로 정합니다.</p>
+      <BaseRepoDialog owner={owner} repo={repo} open={open} onOpenChange={setOpen} />
+    </div>
   )
 }
 
@@ -203,7 +231,9 @@ function SettingsForm(props: {
 }) {
   const { scope, record, inherited, previewIssue } = props
   const { home, platform } = useDeps()
-  const hostLabel = useHost().label
+  const host = useHost()
+  const hostLabel = host.label
+  const baseDir = useHostsStore((st) => baseDirOf(st, host.id))
   const offline = useSessionStore((st) => st.status === 'offline')
   const uid = useId()
   const isGlobal = scope.kind === 'global'
@@ -249,8 +279,8 @@ function SettingsForm(props: {
     } catch {
       return { branch: '브랜치명이 기타 브랜치와 충돌', path: '—' }
     }
-    return { branch: resolved.branch, path: renderPath(effective.worktreePath, resolved.ctx) }
-  }, [effective, previewIssue, home, platform])
+    return { branch: resolved.branch, path: renderPath(applyBaseDir(effective.worktreePath, baseDir), resolved.ctx) }
+  }, [effective, previewIssue, home, platform, baseDir])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()

@@ -145,6 +145,8 @@ export interface WorktreeDeps {
   platform: Platform
   /** 로컬 파일 보관 폴더를 직접 정한다(undefined 면 메인 clone 의 형제 `_local`) — 가져온 기존 저장소처럼 형제 폴더를 쓸 수 없을 때 */
   localDirFor?(main: string): string | undefined
+  /** 이 기기(호스트)의 기본 폴더(applyBaseDir) — 실행 중에 바뀔 수 있어 쓸 때마다 읽는다 */
+  baseDir?(): string | undefined
   onLog?(e: SetupLogEvent): void
   newRunId?(): string
 }
@@ -244,6 +246,23 @@ export function scriptFor(values: Pick<SettingsValues, 'postCreateScript' | 'pos
 /** 렌더한 경로가 이 OS 의 절대 경로인지 — Windows 는 드라이브·UNC, 그 외는 / 시작 */
 export function isAbsoluteFor(path: string, platform: Platform): boolean {
   return platform === 'win32' ? /^[A-Za-z]:[\\/]/.test(path) || /^\\\\[^\\]/.test(path) : path.startsWith('/')
+}
+
+/** 경로 설정의 기본 뿌리 — 기기(호스트)의 기본 폴더가 대신하는 부분 */
+export const DEFAULT_WORKSPACE_ROOT = '~/minmo-workspaces'
+
+/**
+ * 경로 템플릿이 기본 뿌리(~/minmo-workspaces)로 시작하면 그 부분을 이 기기의 기본 폴더로 바꾼다.
+ * 경로 설정은 모든 기기가 함께 쓰므로(서버는 호스트를 모른다) 기기마다 다른 위치는 이렇게만 정한다.
+ * 뿌리를 다른 값으로 바꾼 템플릿은 사용자가 위치를 직접 정한 것이라 그대로 둔다.
+ */
+export function applyBaseDir(template: string, baseDir: string | undefined | null): string {
+  const base = baseDir?.trim().replace(/[\\/]+$/, '')
+  // Windows 식 구분자로 적은 같은 뿌리(~\minmo-workspaces)도 받는다
+  if (!base || !template.replace(/^~\\/, '~/').startsWith(DEFAULT_WORKSPACE_ROOT)) return template
+  const rest = template.slice(DEFAULT_WORKSPACE_ROOT.length)
+  // ~/minmo-workspaces2 처럼 이름만 같은 앞부분은 다른 폴더다
+  return rest === '' || rest[0] === '/' || rest[0] === '\\' ? base + rest : template
 }
 
 /** worktreePathMap 키 */
@@ -424,8 +443,9 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       throw e
     }
     const { branch, ctx } = resolved
-    const main = renderPath(values.mainClonePath, ctx)
-    const path = renderPath(values.worktreePath, ctx)
+    const baseDir = deps.baseDir?.()
+    const main = renderPath(applyBaseDir(values.mainClonePath, baseDir), ctx)
+    const path = renderPath(applyBaseDir(values.worktreePath, baseDir), ctx)
     // 설정은 기기 간 공유된다 — 다른 OS 용 절대 경로(예: Linux 에서 C:\...)로는 clone 하지 않는다
     for (const p of [main, path]) {
       if (!isAbsoluteFor(p, platform)) {
@@ -723,8 +743,10 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
       const entry = deps.pathStore.get(issueId)
       if (!entry) throw new WorktreeError('not_found', { message: 'worktree 가 없습니다' })
       const p = await plan(t)
-      const defaultBranch = await resolveDefaultBranch(t, p.main, await lacksOrigin(tauri.gitRun, p.main))
-      return runScript(issueId, t, { cwd: entry.path, branch: entry.branch, main: p.main, defaultBranch }, scriptFor(p.values, platform))
+      // 지금 설정으로 계산한 위치가 아니라 이 worktree 가 실제로 딸린 메인 clone — 만든 뒤에 경로 설정·기본 폴더가 바뀌었을 수 있다
+      const main = await mainCloneFor(t, entry.path)
+      const defaultBranch = await resolveDefaultBranch(t, main, await lacksOrigin(tauri.gitRun, main))
+      return runScript(issueId, t, { cwd: entry.path, branch: entry.branch, main, defaultBranch }, scriptFor(p.values, platform))
     },
 
     inspect,

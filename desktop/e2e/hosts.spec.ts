@@ -49,6 +49,33 @@ test('"원격 터미널에 tmux 사용"을 켜면 그 호스트의 worktree 전�
   await expect(page.getByTestId('terminal-pane')).toContainText(/mock-server:.*\[tmux minmo-[0-9a-f]{10}\]/)
 })
 
+test('호스트의 기본 폴더를 정하면 그 호스트의 worktree 를 그 아래에 만든다 — 이 PC 는 그대로', async ({ page }) => {
+  await page.getByRole('button', { name: '원격 호스트 관리' }).click()
+  await page.getByTestId('ssh-host-mock-server').getByRole('button', { name: '추가' }).click()
+  const row = page.getByTestId('base-dir-ssh:mock-server')
+  await row.getByLabel('mock-server').fill('workspace')
+  await row.getByRole('button', { name: '저장' }).click()
+  await expect(row.getByRole('alert')).toContainText('절대 경로')
+  await row.getByLabel('mock-server').fill('/workspace')
+  await row.getByRole('button', { name: '저장' }).click()
+  await expect(row.getByRole('status')).toContainText('저장했습니다')
+  await page.keyboard.press('Escape')
+
+  const worktreePath = (id: string) =>
+    page.evaluate((key) => (JSON.parse(localStorage.getItem('minmo-ui') ?? '{}').state?.worktreePathMap?.[key]?.path as string | undefined) ?? null, id)
+  await page.getByRole('combobox', { name: '작업 호스트' }).selectOption('mock-server')
+  await expandWidgets(page)
+  await page.getByTestId('issue-row-42').click()
+  await expect(page.getByTestId('issue-row-42')).toHaveAttribute('data-worktree', 'true')
+  await expect.poll(() => worktreePath('ssh:mock-server|my-org/widgets#42')).toBe('/workspace/my-org/widgets/feat--42')
+
+  // 기본 폴더는 호스트마다 따로다 — 이 PC 에서는 경로 설정 그대로(~ = 홈)
+  await page.getByRole('combobox', { name: '작업 호스트' }).selectOption('')
+  await page.getByTestId('issue-row-42').click()
+  await expect(page.getByTestId('issue-row-42')).toHaveAttribute('data-worktree', 'true')
+  await expect.poll(() => worktreePath('my-org/widgets#42')).toBe('/home/minmo/minmo-workspaces/my-org/widgets/feat--42')
+})
+
 test('연결할 수 없는 호스트 → 원인 안내와 [이 PC 로 전환]', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('minmo-hosts', JSON.stringify({ state: { aliases: ['down'], selected: null }, version: 0 })))
   await page.reload()

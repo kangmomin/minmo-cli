@@ -1,14 +1,18 @@
 import { useEffect, useId, useState } from 'react'
 import type { FormEvent } from 'react'
 
+import type { Platform } from '@minmo/api-client'
+import { DEFAULT_WORKSPACE_ROOT, checkBaseDir } from '@minmo/core'
+
 import { useBaseDeps } from '../../app/deps'
+import { hostOf } from '../../app/host'
 import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { sshErrorOf, sshErrorText } from '../../lib/sshHost'
 import type { SshHostInfo, SshHostInput, SshProbe } from '../../lib/tauri'
-import { useHostsStore } from '../../store/hosts'
+import { baseDirOf, useHostsStore } from '../../store/hosts'
 
 export interface HostsDialogProps {
   open: boolean
@@ -40,7 +44,7 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const EMPTY: SshHostInput = { alias: '', hostName: '', user: '', port: 22, identityFile: null }
 
 function HostsBody() {
-  const { tauri } = useBaseDeps()
+  const { tauri, platform } = useBaseDeps()
   const aliases = useHostsStore((s) => s.aliases)
   const add = useHostsStore((s) => s.add)
   const remove = useHostsStore((s) => s.remove)
@@ -180,6 +184,22 @@ function HostsBody() {
         </div>
       )}
 
+      <div className="grid gap-2 border-t pt-3">
+        <span id={`${uid}-base`} className="text-sm font-medium">
+          기본 폴더
+        </span>
+        <p className="text-xs text-muted-foreground">
+          호스트마다 worktree 와 메인 clone 을 둘 폴더입니다. 경로 설정이 <code>{DEFAULT_WORKSPACE_ROOT}</code> 로 시작할 때 그 부분을 대신합니다(비우면 그대로). 이미 만든 worktree 는 옮기지 않습니다.
+        </p>
+        <ul className="grid gap-2" aria-labelledby={`${uid}-base`}>
+          <BaseDirRow alias={null} platform={platform} />
+          {aliases.map((a) => (
+            // 원격은 Linux·macOS 만 지원한다
+            <BaseDirRow key={a} alias={a} platform="linux" />
+          ))}
+        </ul>
+      </div>
+
       <div className="grid gap-1 border-t pt-3">
         <label htmlFor={`${uid}-tmux`} className="flex items-center gap-2 text-sm">
           <input id={`${uid}-tmux`} type="checkbox" checked={useTmux} onChange={(e) => setUseTmux(e.target.checked)} aria-describedby={`${uid}-tmux-hint`} />
@@ -190,6 +210,72 @@ function HostsBody() {
         </p>
       </div>
     </div>
+  )
+}
+
+/** 한 호스트의 기본 폴더 — 이 PC 에 저장한다(서버는 호스트를 모른다) */
+function BaseDirRow({ alias, platform }: { alias: string | null; platform: Platform }) {
+  const uid = useId()
+  const host = hostOf(alias)
+  const saved = useHostsStore((s) => baseDirOf(s, host.id))
+  const setBaseDir = useHostsStore((s) => s.setBaseDir)
+  const [value, setValue] = useState(saved ?? '')
+  const [note, setNote] = useState<{ error: boolean; text: string } | null>(null)
+  // 저장된 값이 바뀌면(다른 화면이 바꾼 경우 포함) 입력란을 맞춘다 — 옛 글자가 남아 있으면 [저장] 한 번으로 그 변경을 되돌리게 된다
+  const [seen, setSeen] = useState(saved)
+  if (seen !== saved) {
+    setSeen(saved)
+    setValue(saved ?? '')
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    const v = value.trim()
+    if (v === '') {
+      setBaseDir(host.id, null)
+      setNote({ error: false, text: '해제했습니다 — 경로 설정 그대로 씁니다' })
+      return
+    }
+    const error = checkBaseDir(v, platform)
+    if (error) {
+      setNote({ error: true, text: error })
+      return
+    }
+    setBaseDir(host.id, v)
+    setValue(v)
+    setNote({ error: false, text: '저장했습니다 — 다음에 여는 이슈부터 씁니다' })
+  }
+
+  return (
+    <li data-testid={`base-dir-${host.id}`}>
+      <form onSubmit={submit} className="grid gap-1">
+        <div className="flex items-center gap-2">
+          <Label htmlFor={`${uid}-dir`} className="w-28 shrink-0 truncate">
+            {host.label}
+          </Label>
+          <Input
+            id={`${uid}-dir`}
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value)
+              setNote(null)
+            }}
+            placeholder={DEFAULT_WORKSPACE_ROOT}
+            spellCheck={false}
+            className="font-mono"
+            aria-invalid={note?.error ? true : undefined}
+            aria-describedby={`${uid}-note`}
+          />
+          <Button type="submit" size="sm" variant="outline" disabled={value.trim() === (saved ?? '')}>
+            저장
+          </Button>
+        </div>
+        {/* live region 은 결과가 오기 전에 있어야 변화가 읽힌다 */}
+        <p id={`${uid}-note`} role={note?.error ? 'alert' : 'status'} className={note?.error ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+          {note?.text ?? ''}
+        </p>
+      </form>
+    </li>
   )
 }
 

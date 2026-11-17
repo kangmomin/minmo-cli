@@ -1,8 +1,9 @@
 // 명령·TUI 가 함께 쓰는 실행 컨텍스트: 모드별 데이터 출처(ctx.data), 서버(역터널) API, GitHub(gh 우선), worktree 서비스, 로컬 상태.
 import { homedir, platform as osPlatform } from 'node:os'
 
+import { normalizePath } from '@minmo/api-client'
 import type { ApiClient, Me, Platform } from '@minmo/api-client'
-import { createGitHubClient, createWorktreeService } from '@minmo/core'
+import { baseRepoLocalDir, createGitHubClient, createWorktreeService } from '@minmo/core'
 import type { GitHubClient, SetupLogEvent, WorktreeService } from '@minmo/core'
 
 import { checkLogin, localBackend, serverBackend } from './backend'
@@ -39,6 +40,11 @@ export type Ctx = {
   /** 준비 로그를 받을 곳(명령은 출력, TUI 는 화면) */
   onLog(cb: ((e: SetupLogEvent) => void) | null): void
 }
+
+export const baseRepoKey = (owner: string, repo: string) => `${owner}/${repo}`.toLowerCase()
+
+/** 이 기기에서 저장소의 원본 위치(없으면 undefined — 설정의 메인 clone 경로를 쓴다) */
+export const baseRepoOf = (config: Pick<Config, 'baseRepos'>, owner: string, repo: string): string | undefined => config.baseRepos?.[baseRepoKey(owner, repo)]
 
 export function toPlatform(p: NodeJS.Platform): Platform {
   return p === 'win32' ? 'win32' : p === 'darwin' ? 'darwin' : 'linux'
@@ -102,7 +108,18 @@ export async function createContext(o: CreateContextOptions = {}): Promise<Ctx> 
   let logger: ((e: SetupLogEvent) => void) | null = null
   const worktree = createWorktreeService({
     tauri: host,
-    getEffective: (owner, repo) => data.getEffective(owner, repo),
+    // 원본 위치(`minmo base-repo`)가 있으면 설정의 메인 clone 대신 그 저장소에서 worktree 를 만든다 — 데스크탑의 기준 저장소 폴더와 같다
+    getEffective: async (owner, repo) => {
+      const eff = await data.getEffective(owner, repo)
+      const base = baseRepoOf(config, owner, repo)
+      if (!base) return eff
+      // 폴더가 없어졌으면 그 자리에 새로 clone 하지 않고 알린다(사용자 폴더 자리에 빈 저장소를 만들지 않게)
+      if (!(await host.pathExists(base))) throw new CliError(`원본 위치 폴더가 없습니다: ${base} — \`minmo base-repo ${owner}/${repo} <경로>\` 로 다시 지정하거나 \`-\` 로 해제하세요`)
+      return { ...eff, values: { ...eff.values, mainClonePath: base } }
+    },
+    localDirFor: (main) => (Object.values(config.baseRepos ?? {}).some((p) => normalizePath(p, platform) === normalizePath(main, platform)) ? baseRepoLocalDir(main, platform) : undefined),
+    // config 는 명령이 바꾸면 메모리에 바로 반영된다 — 쓸 때마다 읽는다
+    baseDir: () => config.baseDir,
     defaultBranch: (owner, repo) => github.defaultBranch(owner, repo),
     pathStore: statePathStore(paths, state),
     home,

@@ -12,6 +12,7 @@ import { tmuxAvailable } from '../host/tmux'
 import { listProcesses } from '../host/win'
 import { WINDOWS_SERVER_HINT, describeServer } from '../server'
 import { clearCredentials, saveCredentials } from '../store'
+import { baseDirSummary } from './base'
 import { MODE_LABEL, describeCopy } from './mode'
 
 export async function login(ctx: Ctx, code: string): Promise<void> {
@@ -154,6 +155,8 @@ export async function doctor(ctx: Ctx): Promise<void> {
       add(true, `터미널: 일반 셸(${posixShell()})`)
     }
   }
+
+  add(true, baseDirSummary(ctx))
 
   for (const c of checks) {
     ctx.out.log(`${c.ok ? '✓' : '✗'} ${c.label}`)

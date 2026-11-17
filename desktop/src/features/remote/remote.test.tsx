@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SHARED_CONFLICT, SHARED_PUSH_DELAY_MS, bindShared, merge3 } from '../../lib/sharedState'
 import type { SharedChangedEvent } from '../../lib/tauri'
 import { DEVICE_HEADER, PairError, RemoteConnection, SESSION_PLACEHOLDER, TOKEN_SENTINEL, createRemoteTauri, pairDevice, remoteFetch } from '../../lib/tauri.remote'
+import { useHostsStore } from '../../store/hosts'
 import { useReposStore } from '../../store/repos'
-import { applySharedRepos, applySharedUi, pickSharedUi } from '../../store/shared'
+import { applySharedHosts, applySharedRepos, applySharedUi, bindSharedStores, pickSharedUi } from '../../store/shared'
 import { useUiStore } from '../../store/ui'
 import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
@@ -412,6 +413,38 @@ describe('store 의 함께 쓰는 부분', () => {
     applySharedRepos({ added: ['a/b', 3], local: 'x' })
     expect(useReposStore.getState().added).toEqual(['a/b'])
     expect(useReposStore.getState().local).toEqual({})
+  })
+
+  it('호스트별 기준 저장소 폴더·기본 폴더: 모양이 맞는 부분만 받고, 기기마다 다른 값(호스트 목록·tmux)은 건드리지 않는다', () => {
+    useHostsStore.setState({ aliases: ['mine'], useTmux: true, baseRepos: { local: { 'a/b': '/old' } }, baseDirs: { local: '/old' } })
+    applySharedHosts(null)
+    applySharedHosts({ baseRepos: 'nope', baseDirs: [] })
+    expect(useHostsStore.getState()).toMatchObject({ baseRepos: { local: { 'a/b': '/old' } }, baseDirs: { local: '/old' } })
+    applySharedHosts({ baseRepos: { 'ssh:srv': { 'a/b': '/src/b' }, bad: { 'a/b': 3 }, worse: 'x' }, baseDirs: { 'ssh:srv': '/workspace', bad: 1 }, aliases: ['theirs'], useTmux: false })
+    expect(useHostsStore.getState()).toMatchObject({ aliases: ['mine'], useTmux: true, baseRepos: { 'ssh:srv': { 'a/b': '/src/b' } }, baseDirs: { 'ssh:srv': '/workspace' } })
+    useHostsStore.setState({ aliases: [], useTmux: false, baseRepos: {}, baseDirs: {} })
+  })
+
+  it('기준 저장소 폴더: 화면마다 처음 한 번은 이 화면의 값을 호스트의 값에 합치고(옛 값 보존), 그 뒤로는 호스트의 값이 기준이다', async () => {
+    localStorage.clear()
+    const binding = (stored: string) => {
+      const sharedSet = vi.fn(async () => 2)
+      const { tauri } = createFakeTauri({ sharedGet: async () => ({ value: stored, rev: 1 }), sharedSet })
+      return { stop: bindSharedStores(tauri), sharedSet }
+    }
+    // 함께 쓰기 전에 이 화면에서만 정해 둔 폴더(a/b)가 있고, 호스트에는 다른 화면이 올린 값(a/c)이 있다
+    useHostsStore.setState({ baseRepos: { local: { 'a/b': '/mine' } }, baseDirs: {} })
+    const first = binding(JSON.stringify({ baseRepos: { local: { 'a/c': '/theirs' } }, baseDirs: { local: '/ws' } }))
+    await waitFor(() => expect(useHostsStore.getState().baseRepos).toEqual({ local: { 'a/c': '/theirs', 'a/b': '/mine' } }))
+    expect(useHostsStore.getState().baseDirs).toEqual({ local: '/ws' })
+    // 합친 값을 호스트에 올린다
+    await waitFor(() => expect(first.sharedSet.mock.calls.some((c) => (c as unknown as string[])[0] === 'hosts')).toBe(true))
+    first.stop()
+    // 다음에 뜰 때는 합치지 않는다 — 다른 화면에서 해제한 폴더가 이 화면의 옛 값으로 되살아나지 않는다
+    const second = binding(JSON.stringify({ baseRepos: { local: { 'a/c': '/theirs' } }, baseDirs: {} }))
+    await waitFor(() => expect(useHostsStore.getState().baseRepos).toEqual({ local: { 'a/c': '/theirs' } }))
+    second.stop()
+    useHostsStore.setState({ baseRepos: {}, baseDirs: {} })
   })
 })
 

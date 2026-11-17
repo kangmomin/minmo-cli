@@ -195,6 +195,8 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 
 트리 상단의 **표시할 저장소** 버튼으로 보일 저장소를 고른다(서버에 저장되어 원격 CLI 와 공유). 로컬 worktree 가 있는 저장소는 빼도 "숨김" 표시와 함께 보인다.
 
+저장소를 펼치면 이슈 목록은 ★기타 → 작업 중인 이슈(지금 보는 호스트에 worktree 가 있는 이슈) → 나머지 순이고, 각각 번호가 큰 것부터다. 이슈가 10개보다 많은 저장소에는 목록 위에 **이슈 검색** 칸이 생긴다 — 번호(`42`, `#42`)와 제목으로 찾고(여러 단어는 모두 맞아야 한다), Esc 로 지운다. 불러온 목록(열린 이슈와 worktree 가 있는 닫힌 이슈, 최대 500개) 안에서만 찾으며 본문·라벨은 보지 않는다(`desktop/src/features/tree/issueSearch.ts`).
+
 상단의 테마 버튼으로 색을 바꾼다: **Ghostty**(기본 — Ghostty 터미널의 기본 색을 터미널 16색·앱 화면·파일 편집기에 쓴다) → 블랙 → 라이트. 색 값은 `desktop/src/lib/ghostty.ts` 와 `index.css` 의 `.ghostty` 에 있다.
 
 터미널의 복사·붙여넣기는 Windows Terminal 과 같다: 글자를 선택하고 **Ctrl+C** 는 복사(선택이 없으면 셸로 보내 실행 중인 명령을 중단), **Ctrl+V** 는 붙여넣기. Ctrl+Shift+C / Ctrl+Shift+V 도 된다. **Ctrl+Backspace** 는 앞 단어 지우기, **Shift+Enter** 는 전송하지 않는 줄바꿈(Claude Code·Codex 의 입력창)이다. 패널 단축키는 Ctrl+D(오른쪽 분할)·Ctrl+Shift+D(아래 분할)·Ctrl+W(닫기)다(`desktop/src/features/terminal/keys.ts`). 이슈를 고르면 작업 폴더(worktree)만 준비하고 터미널은 만들지 않는다 — **Ctrl+T**(또는 [터미널 열기] 버튼)로 열고, 이미 열려 있으면 Ctrl+T 는 오른쪽에 새 패널을 만든다.
@@ -285,12 +287,25 @@ worktree 를 새로 만들면 `.gitignore` 로 빠진 파일(`.env` 등)을 원�
 
 ### 기준 저장소(기존 폴더 가져오기)
 
-저장소 노드의 **기준 저장소 폴더** 버튼(또는 우클릭 메뉴)에서 그 호스트에 이미 clone 해 둔 저장소 폴더를 지정하면, 새로 clone 하지 않고 그 저장소에서 이슈별 worktree 를 만든다(`git worktree add`).
+저장소 노드의 **기준 저장소 폴더** 버튼(또는 우클릭 메뉴), 또는 **프로젝트 설정**의 "원본 위치"에서 그 호스트에 이미 clone 해 둔 저장소 폴더를 지정하면, 새로 clone 하지 않고 그 저장소에서 이슈별 worktree 를 만든다(`git worktree add`).
 
 - 그 폴더의 체크아웃은 건드리지 않는다. worktree 는 설정의 worktree 경로 템플릿에 만든다.
 - 지정은 호스트마다 따로이며 "이 PC" 에서도 쓸 수 있다. 비워 두면 설정의 메인 clone 경로에 clone 한다.
 - 로컬 파일 보관 폴더는 그 저장소의 `.git/minmo-local` 이다(옆 폴더 `_local` 은 다른 저장소와 겹칠 수 있어 쓰지 않는다).
 - 그 폴더에서 이미 체크아웃한 브랜치와 같은 이슈 브랜치는 git 이 거부한다.
+- 지정한 값은 이 PC 의 창과 원격 접속한 기기(휴대폰·브라우저)가 함께 쓴다.
+- 원격 CLI 에서는 `minmo base-repo <owner/repo> <경로>` 로 그 기기의 원본 위치를 정한다.
+
+### 호스트별 기본 폴더
+
+**원격 호스트** 대화상자의 "기본 폴더"에서 이 PC 와 원격 호스트마다 worktree 와 메인 clone 을 둘 폴더를 정한다(예: 한 호스트는 `/workspace`).
+
+- 경로 설정(worktree 경로·메인 clone 경로)이 `~/minmo-workspaces` 로 시작할 때 그 부분을 대신한다. 예: `/workspace/{owner}/{repo}/{branch}`.
+- 경로 설정의 앞부분을 다른 값으로 바꿨으면(예: `~/work/...`) 적용하지 않는다 — 위치를 직접 정한 것으로 본다.
+- 값은 이 PC 에 저장하고 서버에 올리지 않는다(경로 설정은 모든 기기가 함께 쓴다). 이 PC 의 창과 원격 접속한 기기는 같은 값을 쓴다.
+- 이미 만든 worktree 는 옮기지 않는다. 기본 폴더를 바꾼 뒤 처음 여는 저장소는 새 위치에 메인 clone 을 다시 받는다.
+- 기준 저장소 폴더를 지정한 저장소는 메인 clone 대신 그 폴더를 쓰고, 기본 폴더는 worktree 위치에만 적용된다.
+- 원격 CLI 에서는 `minmo base-dir <경로>` 로 그 기기의 기본 폴더를 정한다.
 
 ### 원격 git 인증
 
@@ -311,7 +326,7 @@ worktree 를 새로 만들면 `.gitignore` 로 빠진 파일(`.env` 등)을 원�
 
 ### 그 밖에
 
-- 경로·스크립트 설정은 이 PC 와 같은 값을 쓴다: 경로 템플릿의 `~` 는 원격의 홈으로 풀리고, 생성 후 스크립트는 **Linux/macOS(sh)** 쪽이 실행된다.
+- 경로·스크립트 설정은 이 PC 와 같은 값을 쓴다: 경로 템플릿의 `~` 는 원격의 홈으로 풀리고(호스트마다 다른 위치는 [호스트별 기본 폴더](#호스트별-기본-폴더)로 정한다), 생성 후 스크립트는 **Linux/macOS(sh)** 쪽이 실행된다.
 - GitHub 조회·PR 만들기·메모는 계속 이 PC 에서 한다.
 - Windows 의 OpenSSH 는 연결 재사용(ControlMaster)을 지원하지 않아 동작마다 새로 접속한다 — 이 PC 보다 조금 느리다(변경 내역은 15초마다 확인).
 - Windows 에서는 기본 제공 OpenSSH(`C:\Windows\System32\OpenSSH\ssh.exe`)를 먼저 쓴다(키는 Windows ssh-agent).
@@ -389,6 +404,8 @@ CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인�
 | `minmo config [get\|set] … [--org o\|--project o/r]` | 설정(서버 모드는 데스크탑과 공유, 로컬 모드는 이 기기). 여러 줄 값은 `@파일`, `-` 는 상속(서버)·로컬 값 지움(로컬) |
 | `minmo mode [local\|server]` | 모드 보기·바꾸기 |
 | `minmo terminal [shell\|tmux]` | 터미널 방식 보기·바꾸기(기본 `shell`, 이 기기에만 저장) |
+| `minmo base-dir [경로\|-]` | 이 기기의 기본 폴더 보기·바꾸기 — 경로 설정의 `~/minmo-workspaces` 를 대신한다(`-` 는 해제, 이 기기에만 저장) |
+| `minmo base-repo [owner/repo] [경로\|-]` | 저장소의 원본 위치 보기·바꾸기 — 이 기기에 이미 있는 저장소 폴더에서 worktree 를 만든다(`-` 는 해제, 이 기기에만 저장) |
 | `minmo sessions [revoke <id>]` | 로그인된 기기 |
 
 - 터미널은 기본으로 worktree 에서 여는 사용자 셸(`$SHELL`)이다 — `exit` 로 돌아오고, SSH 가 끊기면 함께 끝난다.

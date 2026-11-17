@@ -68,7 +68,8 @@ export function useIssues(owner: string, repo: string, enabled: boolean) {
     const source: Pick<GitHubIssue, 'number' | 'title' | 'state'>[] = local ? (tasks ?? []) : (data ?? [])
     const rows: TreeIssue[] = source
       .filter((i) => i.state === 'open' || hasWorktree(String(i.number)))
-      .sort((a, b) => b.number - a.number)
+      // 작업 중인(이 호스트에 worktree 가 있는) 이슈를 위로 — 이슈가 많아도 하던 일을 바로 찾게. 그 안에서는 최신 번호 순
+      .sort((a, b) => Number(hasWorktree(String(b.number))) - Number(hasWorktree(String(a.number))) || b.number - a.number)
       .map((i) => ({ key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: 'htmlUrl' in i ? (i as GitHubIssue).htmlUrl : null }))
     return [ETC_ISSUE as TreeIssue, ...rows]
   }, [data, local, tasks, map, owner, repo, worktreeId])
