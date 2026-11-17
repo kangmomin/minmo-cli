@@ -1,17 +1,19 @@
-import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFile } from 'node:fs/promises'
 
-import { describe, expect, it, vi } from 'vitest'
+import type { CommanderError } from 'commander'
+import { describe, expect, it } from 'vitest'
 
 import { ApiError } from '@minmo/api-client'
-import { GitHubError, worktreeId } from '@minmo/core'
+import type { SettingsRecord } from '@minmo/api-client'
 
 import { CliError, requireLogin } from '../context'
 import { buildProgram } from '../program'
-import { createTestCtx } from '../test/fakes'
-import { login } from './account'
-import { ls, newIssue, note, removeWorktree } from './issues'
-import { configSet, reposAdd, reposRemove } from './settings'
+import { createTestCtx, EMPTY_RECORD } from '../test/fakes'
+import { doctor, login } from './account'
+import { note } from './note'
+import { configGet, configSet, reposAdd, reposList, reposRemove } from './settings'
+
+const offline = () => Promise.reject(new ApiError({ status: 0, code: 'network_error' }))
 
 describe('로그인·계정 확인', () => {
   it('login: 코드 교환(label=호스트명) → /me 로 계정 확인 → 0600 자격 증명 저장', async () => {
@@ -45,26 +47,26 @@ describe('로그인·계정 확인', () => {
     await expect(requireLogin(await createTestCtx({ loggedIn: false }))).rejects.toThrow('minmo login')
     const revoked = await createTestCtx({ api: { me: async () => Promise.reject(new ApiError({ status: 401, code: 'unauthorized' })) } })
     await expect(requireLogin(revoked)).rejects.toThrow('세션이 만료되었거나 끊겼습니다')
-    const offline = await createTestCtx({ api: { me: async () => Promise.reject(new ApiError({ status: 0, code: 'network_error' })) } })
-    await expect(requireLogin(offline)).rejects.toThrow('SSH 역터널')
+    const disconnected = await createTestCtx({ api: { me: offline } })
+    await expect(requireLogin(disconnected)).rejects.toThrow('SSH 역터널')
   })
 })
 
-describe('ls — 보일 저장소 필터(데스크탑과 같은 규칙)', () => {
-  it('선택한 저장소만, worktree 있는 숨긴 저장소는 (숨김)', async () => {
-    const ctx = await createTestCtx({ api: { getVisibleRepos: async () => ({ repos: ['acme/widgets'], updatedAt: 't' }) } })
-    ctx.state.worktrees[worktreeId('octocat', 'dotfiles', '1')] = { path: '/w/1', branch: 'b' }
-    await ls(ctx, undefined, {})
-    expect(ctx.logs).toEqual(['octocat/dotfiles  ●1  (숨김)', 'Acme/Widgets'])
+describe('doctor — 서버 연결만 점검', () => {
+  it('소켓·서버 응답·로그인을 보고, 하나라도 실패하면 종료 코드 1', async () => {
+    const ctx = await createTestCtx()
+    const err = (await doctor(ctx).catch((e: unknown) => e)) as CliError
+    expect(err).toBeInstanceOf(CliError)
+    expect(err.exitCode).toBe(1)
+    // 테스트의 소켓 경로는 없다 — 서버 응답·로그인은 가짜 API 로 통과
+    expect(ctx.logs).toEqual([`✗ 역터널 소켓 없음: ${ctx.paths.socket}`, expect.stringContaining('→ PC 의 ~/.ssh/config'), '✓ 서버 응답', '✓ 로그인: octocat'])
   })
 
-  it('owner/repo → ★기타 + open + closed 중 worktree 있는 것, --json', async () => {
-    const ctx = await createTestCtx()
-    ctx.state.worktrees[worktreeId('Acme', 'Widgets', '3')] = { path: '/w/3', branch: 'b3' }
-    await ls(ctx, 'acme/widgets', { json: true })
-    const rows = JSON.parse(ctx.logs[0])
-    expect(rows.map((r: { key: string }) => r.key)).toEqual(['etc', '7', '3'])
-    expect(rows[2]).toMatchObject({ state: 'closed', worktree: '/w/3', owner: 'Acme', repo: 'Widgets' })
+  it('서버에 닿지 않으면 로그인은 확인하지 않는다', async () => {
+    const ctx = await createTestCtx({ api: { healthz: offline } })
+    await expect(doctor(ctx)).rejects.toBeInstanceOf(CliError)
+    expect(ctx.logs).toContain('✗ 서버에 연결할 수 없음')
+    expect(ctx.api.me).not.toHaveBeenCalled()
   })
 })
 
@@ -94,11 +96,18 @@ describe('repos — 읽고 바꿔 baseUpdatedAt 으로 저장, 409 면 한 번 �
     const ctx = await createTestCtx()
     await expect(reposRemove(ctx, ['a/b'])).rejects.toThrow('먼저 `minmo repos add`')
   })
+
+  it('list: 서버에 닿지 않으면 "전체 표시" 대신 오류', async () => {
+    const ctx = await createTestCtx({ api: { getVisibleRepos: offline } })
+    await expect(reposList(ctx)).rejects.toThrow('minmo 서버에 연결할 수 없습니다')
+  })
 })
 
-describe('config set — 현재 레코드에서 그 키만 바꿔 보낸다', () => {
-  it('프로젝트 설정 postCreateScriptPosix, "-" 는 상속(null)', async () => {
-    const ctx = await createTestCtx({ api: { getSettings: async () => ({ ...(await import('../test/fakes')).EMPTY_RECORD, sparsePaths: 'desktop' }) } })
+describe('config', () => {
+  const GLOBAL: SettingsRecord = { ...EMPTY_RECORD, worktreePath: '~/ws/{owner}/{repo}/{branch}', updatedAt: 't' }
+
+  it('set: 현재 레코드에서 그 키만 바꿔 보낸다 — 프로젝트 설정 postCreateScriptPosix, "-" 는 상속(null)', async () => {
+    const ctx = await createTestCtx({ api: { getSettings: async () => ({ ...EMPTY_RECORD, sparsePaths: 'desktop' }) } })
     await configSet(ctx, 'postCreateScriptPosix', 'npm ci', { project: 'Acme/Widgets' })
     expect(ctx.api.putSettings).toHaveBeenLastCalledWith({ kind: 'project', owner: 'Acme', repo: 'Widgets' }, expect.objectContaining({ postCreateScriptPosix: 'npm ci', sparsePaths: 'desktop' }))
     await configSet(ctx, 'sparsePaths', '-', { project: 'Acme/Widgets' })
@@ -106,24 +115,23 @@ describe('config set — 현재 레코드에서 그 키만 바꿔 보낸다', ()
     await expect(configSet(ctx, 'worktreePath', '-', {})).rejects.toThrow('전역 설정은 상속')
     await expect(configSet(ctx, 'nope', 'x', {})).rejects.toThrow('알 수 없는 설정')
   })
-})
 
-describe('rm·note', () => {
-  it('rm: 미커밋이 있으면 묻고, 거절하면 지우지 않는다', async () => {
-    const ctx = await createTestCtx()
-    const t = { owner: 'Acme', repo: 'Widgets', key: '7', number: 7, title: 'Seven' }
-    ctx.state.worktrees[worktreeId('Acme', 'Widgets', '7')] = { path: '/w/7', branch: 'b' }
-    ctx.worktree.deleteWorktree = vi.fn(async (_t, o) => (o?.confirmed ? { status: 'deleted' as const } : { status: 'needs_confirmation' as const, uncommitted: 2, unpushed: 0 }))
-    const ask = vi.fn(async () => false)
-    await expect(removeWorktree(ctx, t, { ask })).rejects.toThrow('취소')
-    expect(ask).toHaveBeenCalledWith(expect.stringContaining('미커밋 변경 2개'))
-    ask.mockResolvedValueOnce(true)
-    await removeWorktree(ctx, t, { ask })
-    expect(ctx.worktree.deleteWorktree).toHaveBeenLastCalledWith(t, { confirmed: true })
-    await expect(removeWorktree(ctx, { ...t, key: 'etc', number: null }, {})).rejects.toThrow('★기타')
+  it('get: JSON 출력은 이전과 같다(updatedAt, sources 코드)', async () => {
+    const ctx = await createTestCtx({ api: { getSettings: async () => GLOBAL } })
+    await configGet(ctx, { json: true })
+    expect(JSON.parse(ctx.logs[0])).toMatchObject({ updatedAt: 't', worktreePath: '~/ws/{owner}/{repo}/{branch}' })
+    await configGet(ctx, { effective: 'acme/widgets', json: true })
+    expect(JSON.parse(ctx.logs[1]).sources.branchTemplate).toBe('global')
   })
 
-  it('note: 다른 기기가 먼저 저장(409)하면 내 내용을 파일로 남긴다', async () => {
+  it('get --effective: 서버에 닿지 않으면 오류(사본으로 대신하지 않는다)', async () => {
+    const ctx = await createTestCtx({ api: { getEffective: offline } })
+    await expect(configGet(ctx, { effective: 'acme/widgets' })).rejects.toThrow('minmo 서버에 연결할 수 없습니다')
+  })
+})
+
+describe('note', () => {
+  it('다른 기기가 먼저 저장(409)하면 내 내용을 파일로 남긴다', async () => {
     const ctx = await createTestCtx({
       api: {
         getNotes: async () => ({ body: 'old', updatedAt: 't1' }),
@@ -138,61 +146,37 @@ describe('rm·note', () => {
     expect(await readFile(path, 'utf8')).toBe('mine')
     expect(ctx.api.putNotes).toHaveBeenCalledWith('Acme', 'Widgets', '7', { body: 'mine', baseUpdatedAt: 't1' })
   })
-})
 
-describe('new — GitHub 이슈 등록', () => {
-  it('저장소를 GitHub 표기로 맞춰 제목·본문으로 등록하고 번호·주소를 알린다', async () => {
-    const ctx = await createTestCtx({ github: { createIssue: async (_o, _r, title) => ({ number: 12, title, state: 'open', htmlUrl: 'https://gh/12' }) } })
-    await newIssue(ctx, 'acme/widgets', '  새 기능  ', { body: '설명\r\n둘째 줄\n' })
-    expect(ctx.github.createIssue).toHaveBeenCalledWith('Acme', 'Widgets', '새 기능', '설명\n둘째 줄')
-    expect(ctx.logs).toEqual(['등록했습니다: Acme/Widgets#12 새 기능', '  https://gh/12'])
-  })
-
-  it('--body @파일 · --edit(편집기) · --json', async () => {
-    const ctx = await createTestCtx()
-    const file = join(ctx.paths.configDir, 'body.md')
-    await writeFile(file, '파일 본문\n')
-    await newIssue(ctx, 'Acme/Widgets', 't', { body: `@${file}` })
-    expect(ctx.github.createIssue).toHaveBeenLastCalledWith('Acme', 'Widgets', 't', '파일 본문')
-    await newIssue(ctx, 'Acme/Widgets', 't', { edit: true, editor: async () => '편집기 본문', json: true })
-    expect(ctx.github.createIssue).toHaveBeenLastCalledWith('Acme', 'Widgets', 't', '편집기 본문')
-    expect(JSON.parse(ctx.logs.at(-1)!)).toMatchObject({ owner: 'Acme', repo: 'Widgets', number: 1, title: 't' })
-  })
-
-  it('빈 제목·잘못된 저장소·없는 파일·--body 와 --edit 동시 사용은 등록 전에 막는다', async () => {
-    const ctx = await createTestCtx()
-    await expect(newIssue(ctx, 'Acme/Widgets', '   ')).rejects.toThrow('제목을 입력하세요')
-    await expect(newIssue(ctx, 'widgets', 't')).rejects.toThrow('owner/repo')
-    await expect(newIssue(ctx, 'Acme/Widgets', 't', { body: '@/no/such/file.md' })).rejects.toThrow('본문 파일을 읽을 수 없습니다')
-    await expect(newIssue(ctx, 'Acme/Widgets', 't', { body: 'x', edit: true })).rejects.toThrow('함께 쓸 수 없습니다')
-    expect(ctx.github.createIssue).not.toHaveBeenCalled()
-  })
-
-  it('GitHub 오류는 스택 없이 안내(CliError)', async () => {
-    const ctx = await createTestCtx({
-      github: {
-        createIssue: async () => {
-          throw new GitHubError('forbidden', { message: 'Issues are disabled' })
-        },
-      },
-    })
-    const err = await newIssue(ctx, 'Acme/Widgets', 't').catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(CliError)
-    expect((err as CliError).message).toContain('Issues are disabled')
+  it('편집기가 CRLF 로 저장해도 바꾸지 않았으면 올리지 않고, 바꿨으면 LF 로 올린다', async () => {
+    const ctx = await createTestCtx({ api: { getNotes: async () => ({ body: 'a\nb', updatedAt: 't1' }) } })
+    await note(ctx, 'Acme/Widgets#7', { edit: async () => 'a\r\nb' })
+    expect(ctx.logs.at(-1)).toBe('변경 없음')
+    expect(ctx.api.putNotes).not.toHaveBeenCalled()
+    await note(ctx, 'Acme/Widgets#7', { edit: async () => 'a\r\nc' })
+    expect(ctx.api.putNotes).toHaveBeenCalledWith('Acme', 'Widgets', '7', { body: 'a\nc', baseUpdatedAt: 't1' })
   })
 })
 
 describe('명령어 구성', () => {
-  it('인자·옵션이 각 명령으로 간다', async () => {
+  const run = async (argv: string[]) => {
     const ctx = await createTestCtx()
-    const runTui = vi.fn(async () => {})
-    const program = buildProgram({ createCtx: async () => ctx, runTui, version: '0.0.0' }).exitOverride()
-    await program.parseAsync(['node', 'minmo', 'repos', 'add', 'a/b'])
+    const program = buildProgram({ createCtx: async () => ctx, version: '0.0.0' })
+      .exitOverride()
+      .configureOutput({ writeOut: () => {}, writeErr: () => {} })
+    const err = (await program.parseAsync(['node', 'minmo', ...argv]).then(() => null, (e: unknown) => e)) as CommanderError | null
+    return { ctx, err }
+  }
+
+  it('인자·옵션이 각 명령으로 간다', async () => {
+    const { ctx, err } = await run(['repos', 'add', 'a/b'])
+    expect(err).toBeNull()
     expect(ctx.api.putVisibleRepos).toHaveBeenLastCalledWith({ repos: ['a/b'], baseUpdatedAt: null })
-    await program.parseAsync(['node', 'minmo'])
-    expect(runTui).toHaveBeenCalledTimes(1)
-    await expect(program.parseAsync(['node', 'minmo', 'open', 'not-a-ref', '--no-attach'])).rejects.toThrow('owner/repo#번호')
-    await program.parseAsync(['node', 'minmo', 'new', 'acme/widgets', '새 기능', '-b', '설명'])
-    expect(ctx.github.createIssue).toHaveBeenLastCalledWith('Acme', 'Widgets', '새 기능', '설명')
+  })
+
+  it('인자 없이 실행하면 도움말, 삭제된 명령(TUI·worktree)은 unknown command', async () => {
+    expect((await run([])).err?.code).toBe('commander.help')
+    for (const cmd of ['open', 'ls', 'rm', 'new', 'mode', 'terminal', 'base-dir', 'base-repo']) {
+      expect((await run([cmd, 'x'])).err?.code).toBe('commander.unknownCommand')
+    }
   })
 })

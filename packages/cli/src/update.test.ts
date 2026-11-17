@@ -153,7 +153,7 @@ describe('minmo update', () => {
   it('명령어로 연결된다(컨텍스트 없이)', async () => {
     const update = vi.fn(async () => {})
     const createCtx = vi.fn()
-    const program = buildProgram({ createCtx, runTui: vi.fn(), version: '0.4.0', update }).exitOverride()
+    const program = buildProgram({ createCtx, version: '0.4.0', update }).exitOverride()
     await program.parseAsync(['node', 'minmo', 'update', '--check'])
     expect(update).toHaveBeenCalledWith({ check: true })
     expect(createCtx).not.toHaveBeenCalled()

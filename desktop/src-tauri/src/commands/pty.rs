@@ -370,7 +370,7 @@ fn worktree_shell(dir: &str) -> String {
 }
 
 /// 원격 셸에서 실행할 한 줄. tmux 서버는 처음 실행한 cwd 를 가진 채 남으므로(그 worktree 를 지울 때 걸린다)
-/// 홈에서 시작하고 세션의 시작 폴더만 worktree 로 준다 — 원격 CLI(packages/cli/src/host/tmux.ts)와 같은 규칙
+/// 홈에서 시작하고 세션의 시작 폴더만 worktree 로 준다
 pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, String> {
     if !path.starts_with('/') {
         return Err(format!("원격 경로는 절대 경로여야 합니다: {path}"));
@@ -395,7 +395,7 @@ pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, 
             };
             // 창 제목으로 "지금 도는 프로그램 이름:그 프로그램이 정한 제목" 을 내보내게 한다 — 앱이 이것으로 에이전트의
             // 종류와 상태를 안다(tmux 는 기본으로 안쪽 프로그램의 제목을 바깥 터미널에 전달하지 않는다). 이 세션에만 켠다 —
-            // 전용 서버 전체(-g)에 켜면 같은 서버에 붙은 원격 CLI(minmo open)의 터미널 제목까지 바뀐다
+            // 전용 서버 전체(-g)에 켜면 같은 서버에 붙은 다른 클라이언트(이전 버전 원격 CLI 의 `minmo open` 등)의 터미널 제목까지 바뀐다
             let titles = ssh::quote(TMUX_TITLE_FORMAT);
             // 세션을 새로 만들 때 첫 창의 셸(이미 있는 세션에 붙을 때는 tmux 가 무시한다). tmux 는 이 명령을 기본 셸로
             // 실행하므로 sh 에 넘긴다

@@ -1,8 +1,5 @@
-// 이슈 지정: "owner/repo#42" · "owner/repo#etc"(★기타). owner/repo 는 GitHub 표기(대소문자)로 맞춘다.
-import { GitHubError } from '@minmo/core'
-import type { GitHubClient, IssueTarget } from '@minmo/core'
-
-import { CliError } from './context'
+// 이슈 지정: "owner/repo#42" · "owner/repo#etc"(★기타), 저장소 지정: "owner/repo"
+import { CliError } from './errors'
 
 export type Ref = { owner: string; repo: string; key: string }
 
@@ -20,17 +17,4 @@ export function parseRepo(input: string): { owner: string; repo: string } {
   const m = /^([^/#\s]+)\/([^/#\s]+)$/.exec(input.trim())
   if (!m || !NAME.test(m[1]) || !NAME.test(m[2])) throw new CliError(`저장소를 "owner/repo" 로 지정하세요: ${input}`, 2)
   return { owner: m[1], repo: m[2] }
-}
-
-/** GitHub 에서 저장소·이슈를 확인해 worktree 서비스용 대상을 만든다 */
-export async function resolveTarget(github: GitHubClient, ref: Ref): Promise<IssueTarget> {
-  try {
-    const repo = await github.getRepo(ref.owner, ref.repo)
-    if (ref.key === 'etc') return { owner: repo.owner, repo: repo.name, key: 'etc', number: null, title: '' }
-    const issue = await github.getIssue(repo.owner, repo.name, Number(ref.key))
-    return { owner: repo.owner, repo: repo.name, key: ref.key, number: issue.number, title: issue.title }
-  } catch (e) {
-    if (e instanceof GitHubError && e.code === 'not_found') throw new CliError(`찾을 수 없습니다: ${ref.owner}/${ref.repo}#${ref.key}`)
-    throw e
-  }
 }

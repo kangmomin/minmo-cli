@@ -1,19 +1,14 @@
-// 명령어 구성 — 컨텍스트 생성을 주입받아 테스트에서 가짜 서버·호스트로 돌릴 수 있게 한다.
+// 명령어 구성 — 컨텍스트 생성을 주입받아 테스트에서 가짜 서버로 돌릴 수 있게 한다.
 import { Command } from 'commander'
 
 import { doctor, login, logout, revokeSession, sessions } from './commands/account'
-import { baseDirCmd, baseRepoCmd } from './commands/base'
-import { ls, newIssue, note, openIssue, rm } from './commands/issues'
-import { modeCmd } from './commands/mode'
-import { configGet, configSet, reposAdd, reposAll, reposList, reposRemove, reposReset } from './commands/settings'
-import { terminalCmd } from './commands/terminal'
+import { note } from './commands/note'
+import { configGet, configSet, reposAdd, reposAll, reposList, reposRemove } from './commands/settings'
 import type { Ctx } from './context'
 import { captureOutput, runInherited, updateCmd } from './update'
 
 export type ProgramDeps = {
   createCtx(): Promise<Ctx>
-  /** 인자 없이 실행했을 때(TUI) */
-  runTui(ctx: Ctx): Promise<void>
   version: string
   /** `minmo update` — 테스트에서 바꿔 끼운다(기본: GitHub 에서 확인 후 npm 으로 설치) */
   update?(opts: { check?: boolean }): Promise<void>
@@ -21,7 +16,7 @@ export type ProgramDeps = {
 
 export function buildProgram(deps: ProgramDeps): Command {
   const program = new Command('minmo')
-    .description('minmo 원격 관리 — GitHub 이슈 단위 worktree 를 SSH 로 접속한 서버에서 관리합니다')
+    .description('minmo 원격 CLI — SSH 역터널로 데스크탑의 minmo 서버에 로그인해 메모·설정·보일 저장소를 다룹니다')
     .version(deps.version)
     .showHelpAfterError()
   const withCtx =
@@ -29,15 +24,15 @@ export function buildProgram(deps: ProgramDeps): Command {
     async (...args: A) =>
       fn(await deps.createCtx(), ...args)
 
-  program.action(withCtx((ctx) => deps.runTui(ctx)))
-
+  // 기본 action 은 두지 않는다 — 인자 없이 실행하면 commander 가 도움말을 보여 주고,
+  // 없는 명령(예: 이전 버전의 `minmo open`)은 "too many arguments" 대신 "unknown command" 로 안내한다
   program
     .command('login')
     .argument('<code>', '데스크탑 "원격 CLI 접속"에서 발급한 1회용 코드')
     .description('데스크탑에서 발급한 코드로 로그인')
     .action(withCtx((ctx, code: string) => login(ctx, code)))
   program.command('logout').description('이 기기의 세션을 끊고 로그인 정보를 지웁니다').action(withCtx((ctx) => logout(ctx)))
-  program.command('doctor').description('모드·서버(역터널)·로그인·git·gh·터미널 점검').action(withCtx((ctx) => doctor(ctx)))
+  program.command('doctor').description('서버(역터널)·로그인 점검').action(withCtx((ctx) => doctor(ctx)))
   // 서버·로그인이 필요 없어 컨텍스트를 만들지 않는다
   const update =
     deps.update ??
@@ -48,59 +43,6 @@ export function buildProgram(deps: ProgramDeps): Command {
     .option('--check', '설치하지 않고 현재·최신 버전만 보기')
     .description('새 버전으로 업데이트(GitHub Packages 의 npm 패키지)')
     .action((opts: { check?: boolean }) => update(opts))
-  program
-    .command('mode')
-    .argument('[mode]', 'server(PC 의 minmo 서버, 역터널) 또는 local(서버 없이 이 기기에서)')
-    .description('모드 보기·바꾸기 — local 로 바꿀 때 서버에 닿으면 서버 값을 사본으로 받아 둡니다')
-    .action(withCtx((ctx, mode: string | undefined) => modeCmd(ctx, mode)))
-  program
-    .command('terminal')
-    .argument('[kind]', 'shell(일반 셸, 기본) 또는 tmux(전용 tmux 세션 — 접속이 끊겨도 유지, Linux·macOS)')
-    .description('worktree 터미널 방식 보기·바꾸기')
-    .action(withCtx((ctx, kind: string | undefined) => terminalCmd(ctx, kind)))
-  program
-    .command('base-dir')
-    .argument('[path]', '절대 경로 또는 ~ 로 시작하는 경로 · -(해제)')
-    .description('이 기기의 기본 폴더 보기·바꾸기 — 경로 설정의 ~/minmo-workspaces 를 대신합니다(서버에 올리지 않음)')
-    .action(withCtx((ctx, path: string | undefined) => baseDirCmd(ctx, path)))
-  program
-    .command('base-repo')
-    .argument('[repo]', 'owner/repo — 없으면 정해 둔 목록')
-    .argument('[path]', '이 기기에 이미 있는 저장소 폴더 · -(해제)')
-    .description('저장소의 원본 위치 보기·바꾸기 — 새로 clone 하지 않고 그 저장소에서 worktree 를 만듭니다(이 기기만)')
-    .action(withCtx((ctx, repo: string | undefined, path: string | undefined) => baseRepoCmd(ctx, repo, path)))
-
-  program
-    .command('ls')
-    .argument('[target]', '조직(owner) 또는 저장소(owner/repo) — 없으면 보일 저장소 목록')
-    .option('--all', '보일 저장소 선택을 무시하고 전부')
-    .option('--json', 'JSON 으로 출력')
-    .description('저장소·이슈 목록')
-    .action(withCtx((ctx, target: string | undefined, opts: { all?: boolean; json?: boolean }) => ls(ctx, target, opts)))
-
-  program
-    .command('new')
-    .argument('<repo>', 'owner/repo')
-    .argument('<title>', '이슈 제목')
-    .option('-b, --body <text>', '본문 · @파일(여러 줄)')
-    .option('-e, --edit', '본문을 $EDITOR 로 작성')
-    .option('--json', 'JSON 으로 출력')
-    .description('GitHub 이슈 등록(worktree 는 `minmo open` 으로 준비)')
-    .action(withCtx((ctx, repo: string, title: string, opts: { body?: string; edit?: boolean; json?: boolean }) => newIssue(ctx, repo, title, opts)))
-
-  program
-    .command('open')
-    .argument('<issue>', 'owner/repo#번호 또는 owner/repo#etc')
-    .option('--no-attach', '터미널을 붙이지 않고 경로만 출력')
-    .description('이슈 worktree 를 준비하고 터미널을 붙입니다')
-    .action(withCtx((ctx, issue: string, opts: { attach: boolean }) => openIssue(ctx, issue, opts)))
-
-  program
-    .command('rm')
-    .argument('<issue>', 'owner/repo#번호')
-    .option('-y, --yes', '미커밋·미push 가 있어도 묻지 않고 삭제')
-    .description('worktree 삭제(그 안의 터미널·프로세스도 정리)')
-    .action(withCtx((ctx, issue: string, opts: { yes?: boolean }) => rm(ctx, issue, opts)))
 
   program
     .command('note')
@@ -108,7 +50,7 @@ export function buildProgram(deps: ProgramDeps): Command {
     .description('이슈 메모를 $EDITOR 로 편집')
     .action(withCtx((ctx, issue: string) => note(ctx, issue)))
 
-  const repos = program.command('repos').description('보일 저장소(서버 모드: 데스크탑과 공유 · 로컬 모드: 이 기기)')
+  const repos = program.command('repos').description('보일 저장소(데스크탑과 공유)')
   repos.command('list', { isDefault: true }).description('현재 선택').action(withCtx((ctx) => reposList(ctx)))
   repos
     .command('add')
@@ -121,9 +63,8 @@ export function buildProgram(deps: ProgramDeps): Command {
     .description('보일 저장소에서 빼기')
     .action(withCtx((ctx, entries: string[]) => reposRemove(ctx, entries)))
   repos.command('all').description('모든 저장소 표시(선택 해제)').action(withCtx((ctx) => reposAll(ctx)))
-  repos.command('reset').description('로컬 모드: 로컬 선택을 지우고 서버 사본으로').action(withCtx((ctx) => reposReset(ctx)))
 
-  const config = program.command('config').description('설정(전역 → 조직 → 프로젝트 상속 · 서버 모드: 데스크탑과 공유 · 로컬 모드: 이 기기의 로컬 값)')
+  const config = program.command('config').description('설정(전역 → 조직 → 프로젝트 상속 · 데스크탑과 공유)')
   config
     .command('get', { isDefault: true })
     .option('--org <owner>', '조직 설정')
@@ -135,7 +76,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   config
     .command('set')
     .argument('<key>', '설정 이름 (branchTemplate, worktreePath, postCreateScriptPosix …)')
-    .argument('<value>', '값 · @파일(여러 줄) · -(서버 모드: 상속으로 · 로컬 모드: 로컬 값 지움)')
+    .argument('<value>', '값 · @파일(여러 줄) · -(상속으로)')
     .option('--org <owner>', '조직 설정')
     .option('--project <owner/repo>', '프로젝트 설정')
     .description('설정 값 하나 바꾸기')

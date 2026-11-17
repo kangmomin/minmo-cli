@@ -121,7 +121,7 @@ function CliAccessBody() {
             <CopyIcon /> 설정 복사
           </Button>
           <span className="text-xs text-muted-foreground">
-            `ssh my-server` 로 접속한 뒤 `minmo` 를 실행합니다. 원격에 `~/.minmo` 폴더가 있어야 합니다(`minmo doctor` 로 확인).
+            `ssh my-server` 로 접속한 뒤 `minmo doctor` 로 연결을 확인합니다. 원격에 `~/.minmo` 폴더가 있어야 합니다.
           </span>
         </div>
         <p className="text-xs text-muted-foreground">{SSH_SERVER_NOTE}</p>

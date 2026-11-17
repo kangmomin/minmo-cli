@@ -1,7 +1,7 @@
 {
   "name": "@kangmomin/minmo-cli",
   "version": "0.21.0",
-  "description": "minmo 원격 관리 CLI — SSH 로 접속한 서버에서 GitHub 이슈 단위 worktree 를 관리하는 TUI·명령어",
+  "description": "minmo 원격 CLI — SSH 역터널로 데스크탑의 minmo 서버에 로그인해 메모·설정·보일 저장소를 다루는 명령어",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kangmomin/minmo-cli.git",
@@ -29,20 +29,15 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "commander": "^15.1.0",
-    "ink": "^8.0.0",
-    "react": "^19.3.1"
+    "commander": "^15.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@minmo/api-client": "*",
     "@minmo/core": "*",
     "@types/node": "^24.19.2",
-    "@types/react": "^19.3.0",
     "eslint": "^9.39.5",
-    "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^16.5.0",
-    "ink-testing-library": "^4.0.0",
     "tsup": "^9.0.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.72.1",

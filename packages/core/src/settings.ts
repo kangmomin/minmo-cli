@@ -1,5 +1,5 @@
 // 설정 기본값·검증·병합 — 서버(server/internal/settings)와 같은 규칙.
-// 서버 없이 쓰는 CLI 로컬 모드가 설정을 직접 검사·계산할 때 쓴다(서버 규칙을 바꾸면 여기도 함께 바꾼다).
+// mergeSettings·validateSettingValue 는 원격 CLI 로컬 모드(삭제됨)가 쓰던 것으로 지금은 앱 코드에서 쓰지 않는다. 서버 규칙을 바꾸면 여기도 함께 바꾼다.
 import { isValidRef } from '@minmo/api-client'
 import type { SettingsField, SettingsValues } from '@minmo/api-client'
 

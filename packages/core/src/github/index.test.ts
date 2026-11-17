@@ -235,7 +235,7 @@ describe('PF-01 개별 보충 중 삭제·이전된 이슈(404/410) → 그 번�
   })
 })
 
-describe('getRepo · getIssue (원격 CLI 의 이슈 지정용)', () => {
+describe('getRepo · getIssue', () => {
   it('getRepo 는 GitHub 표기(대소문자)로, getIssue 는 PR 이면 not_found', async () => {
     const t = setup({
       route: (u) =>
