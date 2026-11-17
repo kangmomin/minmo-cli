@@ -24,6 +24,7 @@ import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
+import { shrinkBadge } from './badgeClasses'
 import { BaseRepoDialog } from './BaseRepoDialog'
 import { issueStatus, useAgentStore } from '../agents/agentStore'
 import { IssueRow } from './IssueRow'
@@ -41,9 +42,6 @@ export interface RepoNodeProps {
   hidden?: boolean
   onOpenSettings(scope: SettingsScope, preview: PreviewIssue | null): void
 }
-
-// Badge 기본 shrink-0 이면 좁은 폭에서 배지가 줄지 않아 이름이 0px 로 사라진다 — 이름(min-w-10)과 함께 줄고 … 를 보인다 (#70)
-const shrinkBadge = 'block min-w-0 shrink truncate'
 
 /**
  * 연결 호스트를 정한 저장소는 사이드바의 작업 호스트와 관계없이 그 호스트에서 연다. 연결을 확인하기 전에는

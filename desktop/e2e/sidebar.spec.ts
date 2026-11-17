@@ -110,6 +110,44 @@ test('AC-02 최소 폭(240)에서 배지가 있는 저장소·연결 대기 행 
   }
 })
 
+test('AC-01·AC-02 최소 폭(240)에서 닫힘·경로 변경됨 배지가 함께 있는 이슈 행 — 제목은 40px 이상, 배지는 줄고 행 안에서 잘린다', async ({ page }) => {
+  // closed 이슈는 worktree 가 있을 때만 보이고, 저장된 worktree 경로가 설정(effective)으로 계산한 경로와 다르면 '경로 변경됨' 이 붙는다
+  const CLOSED = 777
+  const closedTitle = '닫혔지만 작업 폴더가 남아 있는 이슈 — 배지 두 개와 함께 보인다'
+  await page.route(isGitHubPath('/repos/my-org/widgets/issues'), getOnly([...WIDGETS_ISSUES, { ...ghIssue(CLOSED, closedTitle), state: 'closed' }]))
+  // 앱이 저장 값을 읽기 전에 넣는다 — 실행 중에 쓰면 앱의 다음 저장이 덮어쓸 수 있다
+  await page.addInitScript((id) => {
+    const saved = JSON.parse(localStorage.getItem('minmo-ui') ?? '{"state":{},"version":1}')
+    saved.state.worktreePathMap = { ...saved.state.worktreePathMap, [id]: { path: '/elsewhere/widgets-closed', branch: 'old/branch' } }
+    localStorage.setItem('minmo-ui', JSON.stringify(saved))
+  }, `my-org/widgets#${CLOSED}`)
+  await page.reload()
+  const row = page.getByTestId(`issue-row-${CLOSED}`)
+  await expect(row).toBeVisible()
+  // 전제: 두 배지가 모두 있다. '경로 변경됨' 은 툴팁 trigger 가 data-slot 을 덮어써서 글자로 찾는다
+  const badges = [row.getByText('닫힘', { exact: true }), row.getByText('경로 변경됨', { exact: true })]
+  for (const badge of badges) await expect(badge).toBeVisible()
+  await expect(separator(page)).toBeVisible()
+  await narrowest(page)
+
+  const title = row.getByText(closedTitle, { exact: true })
+  const t = await title.evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth, overflow: getComputedStyle(el).textOverflow }))
+  expect(t.width, '제목 폭').toBeGreaterThanOrEqual(40)
+  expect(t.scroll).toBeGreaterThan(t.width)
+  expect(t.overflow).toBe('ellipsis')
+  // 전제: 240px 에서 배지가 다 들어가지 않는다(넘침이 실제로 생긴다) — 줄어든 배지는 … 를 보인다
+  const measured = await Promise.all(
+    badges.map((badge) =>
+      badge.evaluate((el) => ({ shrunk: el.scrollWidth > el.clientWidth, overflow: getComputedStyle(el).textOverflow, parentOverflow: getComputedStyle(el.parentElement!).overflowX })),
+    ),
+  )
+  expect(measured.filter((b) => b.shrunk).length, '줄어든 배지 수').toBeGreaterThan(0)
+  for (const b of measured) {
+    if (b.shrunk) expect(b.overflow).toBe('ellipsis')
+    expect(b.parentOverflow, '배지를 담은 칸').toBe('hidden')
+  }
+})
+
 test('AC-02 최소 폭(240)에서 세로 스크롤바가 행 끝 버튼(⚙)을 가리지 않는다', async ({ page }) => {
   await expect(separator(page)).toBeVisible()
   await narrowest(page)
