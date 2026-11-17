@@ -4,16 +4,10 @@ import { hostname } from 'node:os'
 
 import { ApiError } from '@minmo/api-client'
 
-import { CliError, GITHUB_AUTH_REQUIRED, requireLogin, serverErrorMessage } from '../context'
+import { CliError, requireLogin, serverErrorMessage } from '../context'
 import type { Ctx } from '../context'
-import { run } from '../host/proc'
-import { posixShell } from '../host/terminal'
-import { tmuxAvailable } from '../host/tmux'
-import { listProcesses } from '../host/win'
 import { WINDOWS_SERVER_HINT, describeServer } from '../server'
 import { clearCredentials, saveCredentials } from '../store'
-import { baseDirSummary } from './base'
-import { MODE_LABEL, describeCopy } from './mode'
 
 export async function login(ctx: Ctx, code: string): Promise<void> {
   let session: string
@@ -32,7 +26,6 @@ export async function login(ctx: Ctx, code: string): Promise<void> {
   })
   await saveCredentials(ctx.paths, { session, login: me.githubLogin, savedAt: new Date().toISOString() })
   ctx.out.log(`로그인했습니다: ${me.githubLogin} (이 기기: ${hostname()})`)
-  if (ctx.mode === 'local') ctx.out.log('  지금은 로컬 모드입니다 — 서버 값을 쓰려면 `minmo mode server`')
 }
 
 export async function logout(ctx: Ctx): Promise<void> {
@@ -71,92 +64,45 @@ export async function revokeSession(ctx: Ctx, id: string): Promise<void> {
 
 type Check = { ok: boolean; label: string; hint?: string }
 
-type Add = (ok: boolean, label: string, hint?: string) => void
+/** 데스크탑 서버 연결을 점검한다 — 역터널 소켓·서버 응답·로그인. 하나라도 실패하면 종료 코드 1 */
+export async function doctor(ctx: Ctx): Promise<void> {
+  const checks: Check[] = []
+  const add = (ok: boolean, label: string, hint?: string) => checks.push({ ok, label, hint })
 
-/** 서버 모드 점검: 역터널 소켓·서버 응답·로그인. 서버가 응답하면 true */
-async function checkServer(ctx: Ctx, add: Add): Promise<boolean> {
   if (ctx.server.kind === 'unset') {
     // Windows: 주소가 없으면 연결해 볼 곳도 없다
     add(false, 'MINMO_SERVER 미설정', WINDOWS_SERVER_HINT)
-    return false
-  }
-  if (ctx.server.kind === 'socket' && !existsSync(ctx.server.path)) {
-    add(false, `역터널 소켓 없음: ${ctx.server.path}`, 'PC 의 ~/.ssh/config 에 RemoteForward <이 경로> 127.0.0.1:8787 을 넣고 다시 접속하세요(원격 sshd 가 AllowStreamLocalForwarding 을 허용해야 함)')
   } else {
-    add(true, `서버 경로: ${describeServer(ctx.server)}`)
-  }
-  const health = await ctx.api.healthz().then(
-    () => true,
-    () => false,
-  )
-  const socket = ctx.server.kind === 'socket' ? ctx.server.path : null
-  const stale = !health && socket !== null && existsSync(socket)
-  add(
-    health,
-    health ? '서버 응답' : stale ? '소켓은 있지만 응답 없음 — 이전 접속의 소켓이 남았을 수 있습니다' : '서버에 연결할 수 없음',
-    health
-      ? undefined
-      : stale
-        ? `rm ${socket} 후 다시 접속하세요(원격 sshd_config 에 StreamLocalBindUnlink yes 가 있으면 자동으로 바뀝니다). PC 의 minmo 서버가 켜져 있는지도 확인하세요`
-        : 'SSH 역터널·PC 의 minmo 서버 실행 여부를 확인하세요',
-  )
-  if (!ctx.creds?.session) add(false, '로그인 안 됨', '`minmo login <코드>`')
-  else if (health) {
-    try {
-      const me = await requireLogin(ctx)
-      add(true, `로그인: ${me.githubLogin}`)
-    } catch (e) {
-      add(false, e instanceof Error ? e.message : String(e))
-    }
-  }
-  return health
-}
-
-/** 원격 사용에 필요한 것을 점검한다 — 하나라도 실패하면 종료 코드 1 */
-export async function doctor(ctx: Ctx): Promise<void> {
-  const checks: Check[] = []
-  const add: Add = (ok, label, hint) => checks.push({ ok, label, hint })
-
-  add(true, `모드: ${MODE_LABEL[ctx.mode]}${ctx.mode === 'local' ? ` — ${describeCopy(ctx)}` : ''}`)
-  // 로컬 모드는 서버를 쓰지 않는다 — 터널·로그인 점검을 건너뛴다
-  const health = ctx.mode === 'server' ? await checkServer(ctx, add) : false
-
-  const git = await run('git', ['--version'])
-  const ver = /(\d+)\.(\d+)/.exec(git.stdout)
-  const gitOk = git.code === 0 && !!ver && (Number(ver[1]) > 2 || (Number(ver[1]) === 2 && Number(ver[2]) >= 31))
-  add(gitOk, git.code === 0 ? `git ${git.stdout.trim().replace(/^git version /, '')}` : 'git 없음', gitOk ? undefined : 'git 2.31 이상이 필요합니다(worktree·부분 clone)')
-
-  const gh = await ctx.host.ghAvailable()
-  const envToken = !!(process.env.GITHUB_TOKEN || process.env.GH_TOKEN)
-  if (ctx.mode === 'local') {
-    // 서버 토큰이 없으므로 gh 또는 환경 변수 토큰이 꼭 있어야 한다
-    add(gh || envToken, gh ? 'gh 로그인됨' : envToken ? 'GitHub 토큰: 환경 변수' : 'GitHub 인증 없음', GITHUB_AUTH_REQUIRED)
-  } else {
-    add(
-      gh || envToken || health,
-      gh ? 'gh 로그인됨' : envToken ? 'GitHub 토큰: 환경 변수' : 'gh 미사용 — 서버 토큰으로 REST 사용',
-      gh ? undefined : 'private 저장소 clone 에는 `gh auth login` 후 `gh auth setup-git` 을 권장합니다',
-    )
-  }
-
-  if (process.platform === 'win32') {
-    // 터미널·생성 후 스크립트가 PowerShell 을 쓴다(세션 유지는 없다 — 필요하면 WSL 의 Linux 버전)
-    const ps = (await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'])).stdout.trim()
-    add(ps !== '', ps ? `PowerShell ${ps}` : 'PowerShell 없음', ps ? undefined : '터미널(`minmo open`, TUI 의 t)과 생성 후 스크립트에 PowerShell 이 필요합니다')
-    // worktree 삭제 전 정리가 프로세스 목록(WMI)을 쓴다 — 읽지 못하면 삭제가 실패한다
-    const procs = await listProcesses().then((l) => l.length, (e: unknown) => (e instanceof Error ? e.message : String(e)))
-    add(typeof procs === 'number', typeof procs === 'number' ? `프로세스 목록(WMI) ${procs}개` : `프로세스 목록을 읽을 수 없음: ${procs}`, typeof procs === 'number' ? undefined : 'worktree 삭제 전 정리에 필요합니다 — PowerShell 의 Get-CimInstance 가 동작하는지 확인하세요')
-  } else {
-    // tmux 는 `minmo terminal tmux` 로 켰을 때만 필요하다
-    if (ctx.config.terminal === 'tmux') {
-      const tmux = await tmuxAvailable()
-      add(tmux, tmux ? '터미널: tmux 있음' : '터미널: tmux 없음', tmux ? undefined : 'tmux 를 설치하거나 `minmo terminal shell` 로 일반 셸을 쓰세요')
+    if (ctx.server.kind === 'socket' && !existsSync(ctx.server.path)) {
+      add(false, `역터널 소켓 없음: ${ctx.server.path}`, 'PC 의 ~/.ssh/config 에 RemoteForward <이 경로> 127.0.0.1:8787 을 넣고 다시 접속하세요(원격 sshd 가 AllowStreamLocalForwarding 을 허용해야 함)')
     } else {
-      add(true, `터미널: 일반 셸(${posixShell()})`)
+      add(true, `서버 경로: ${describeServer(ctx.server)}`)
+    }
+    const health = await ctx.api.healthz().then(
+      () => true,
+      () => false,
+    )
+    const socket = ctx.server.kind === 'socket' ? ctx.server.path : null
+    const stale = !health && socket !== null && existsSync(socket)
+    add(
+      health,
+      health ? '서버 응답' : stale ? '소켓은 있지만 응답 없음 — 이전 접속의 소켓이 남았을 수 있습니다' : '서버에 연결할 수 없음',
+      health
+        ? undefined
+        : stale
+          ? `rm ${socket} 후 다시 접속하세요(원격 sshd_config 에 StreamLocalBindUnlink yes 가 있으면 자동으로 바뀝니다). PC 의 minmo 서버가 켜져 있는지도 확인하세요`
+          : 'SSH 역터널·PC 의 minmo 서버 실행 여부를 확인하세요',
+    )
+    if (!ctx.creds?.session) add(false, '로그인 안 됨', '`minmo login <코드>`')
+    else if (health) {
+      try {
+        const me = await requireLogin(ctx)
+        add(true, `로그인: ${me.githubLogin}`)
+      } catch (e) {
+        add(false, e instanceof Error ? e.message : String(e))
+      }
     }
   }
-
-  add(true, baseDirSummary(ctx))
 
   for (const c of checks) {
     ctx.out.log(`${c.ok ? '✓' : '✗'} ${c.label}`)

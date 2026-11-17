@@ -1,14 +1,13 @@
 import { createContext, CliError } from './context'
 import { buildProgram } from './program'
 import { defaultPaths } from './store'
-import { runTui } from './tui/run'
 import { notifyUpdate } from './update'
 
 declare const __VERSION__: string | undefined
 
 const version = typeof __VERSION__ === 'string' ? __VERSION__ : '0.0.0-dev'
 
-const program = buildProgram({ createCtx: () => createContext(), runTui, version })
+const program = buildProgram({ createCtx: () => createContext(), version })
 
 program
   .parseAsync(process.argv)

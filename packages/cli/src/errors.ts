@@ -19,9 +19,9 @@ export class CliError extends Error {
 /** 서버 오류 → 사용자 안내 */
 export function serverErrorMessage(e: unknown, server: ServerTarget): string {
   if (isUnauthorized(e)) return '세션이 만료되었거나 끊겼습니다 — 데스크탑의 "원격 CLI 접속"에서 새 코드를 발급해 `minmo login <코드>` 하세요'
-  if (isOfflineError(e) && server.kind === 'unset') return `${WINDOWS_SERVER_HINT}. 서버 없이 쓰려면 \`minmo mode local\``
+  if (isOfflineError(e) && server.kind === 'unset') return WINDOWS_SERVER_HINT
   if (isOfflineError(e))
-    return `minmo 서버에 연결할 수 없습니다(${describeServer(server)}) — SSH 역터널(RemoteForward)로 접속했는지, PC 의 minmo 서버가 켜져 있는지 확인하세요(\`minmo doctor\`). 터널 없이 쓰려면 \`minmo mode local\``
+    return `minmo 서버에 연결할 수 없습니다(${describeServer(server)}) — SSH 역터널(RemoteForward)로 접속했는지, PC 의 minmo 서버가 켜져 있는지 확인하세요(\`minmo doctor\`)`
   if (e instanceof ApiError) return `서버 오류(${e.code})`
   return e instanceof Error ? e.message : String(e)
 }
@@ -31,5 +31,3 @@ export function toCliError(e: unknown, server: ServerTarget): CliError {
   if (e instanceof CliError) return e
   return new CliError(e instanceof ApiError || isOfflineError(e) ? serverErrorMessage(e, server) : e instanceof Error ? e.message : String(e))
 }
-
-export const NOTES_SERVER_ONLY = '메모는 서버 모드에서만 쓸 수 있습니다 — 역터널로 접속한 뒤 `minmo mode server`'
