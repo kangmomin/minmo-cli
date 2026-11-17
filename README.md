@@ -203,6 +203,8 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 
 터미널과 파일 편집기의 글자 크기는 **Ctrl +**(키우기) · **Ctrl -**(줄이기) · **Ctrl 0**(기본 13px)으로 바꾼다(9~28px, 이 PC 에 저장). 서버 설정 대화상자의 "글자 크기" 에서도 바꿀 수 있다(`desktop/src/lib/fontSize.ts`).
 
+사이드바 폭은 사이드바 오른쪽 경계를 끌어(또는 경계에 포커스하고 **←/→** · **Home** · **End**) 240~480px 로 바꾼다. 경계를 더블클릭하면 기본 폭(288px)으로 돌아가며, 폭은 이 PC 에 저장한다(`desktop/src/features/tree/SidebarFrame.tsx`).
+
 ## 에이전트 현황
 
 터미널에서 도는 코딩 에이전트(Claude Code · Codex · Gemini CLI)와 그 밖의 프로그램이 지금 무엇을 하는지 보여 준다. 상태는 터미널 출력으로 **추정**한다(`desktop/src/features/agents/`).
