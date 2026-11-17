@@ -1,7 +1,7 @@
 import { useId, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 
-import { ApiError, renderPath } from '@minmo/api-client'
+import { ApiError } from '@minmo/api-client'
 import type { SettingsInput, SettingsRecord, SettingsScope, SettingsValues } from '@minmo/api-client'
 
 import { useDeps } from '../../app/deps'
@@ -13,8 +13,8 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { Textarea } from '../../components/ui/textarea'
-import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF, applyBaseDir, ignoredCopyNames, issueBranchContext } from '@minmo/core'
-import { LOCAL_HOST_ID, aliasOfHostId, baseDirOf, baseRepoOf, hostIdOf, repoAliasOf, repoHostOf, useHostsStore } from '../../store/hosts'
+import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF, ignoredCopyNames, issueBranchContext, issuePaths } from '@minmo/core'
+import { LOCAL_HOST_ID, aliasOfHostId, baseDirOf, baseRepoOf, hostIdOf, repoAliasOf, repoHostOf, useHostsStore, useOriginFolder } from '../../store/hosts'
 import { isLocalOwner, repoLabelOf, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { BaseRepoDialog } from '../tree/BaseRepoDialog'
@@ -38,7 +38,7 @@ type IgnoredMode = 'inherit' | 'on' | 'off'
 const TEXT_FIELDS: { field: TextField; label: string; hint: string }[] = [
   { field: 'branchTemplate', label: '브랜치 템플릿', hint: '{number} 필수 · {slug} {title}' },
   { field: 'etcBranchName', label: '기타 브랜치명', hint: '★기타 이슈의 브랜치' },
-  { field: 'worktreePath', label: 'worktree 경로', hint: '{branch} 또는 {key} 필수 · {owner} {repo} {number} {slug} · ~ = 홈' },
+  { field: 'worktreePath', label: 'worktree 경로', hint: '{branch} 또는 {key} 필수 · {owner} {repo} {number} {slug} · ~ = 홈 · ./ ../ = 원본 폴더 기준(예: ../{repo}-wt/{branch})' },
   { field: 'mainClonePath', label: '메인 clone 경로', hint: '{owner} {repo}' },
 ]
 
@@ -324,6 +324,9 @@ function SettingsForm(props: {
   const [errors, setErrors] = useState<Partial<Record<keyof SettingsValues, string>>>({})
   const [formError, setFormError] = useState<string | null>(null)
 
+  // 미리보기 이슈의 원본 폴더 — 이슈 열기(useWorktree)와 같은 규칙. 없으면 메인 clone 경로
+  const origin = useOriginFolder(host.id, previewIssue?.owner ?? '', previewIssue?.repo ?? '')
+
   // 미리보기: 입력값(비어 있으면 상속값)으로 계산
   const effective = useMemo(() => {
     const pick = (f: TextField) => (text[f] !== '' || !inherited ? text[f] : inherited[f])
@@ -331,6 +334,7 @@ function SettingsForm(props: {
       branchTemplate: pick('branchTemplate'),
       etcBranchName: pick('etcBranchName'),
       worktreePath: pick('worktreePath'),
+      mainClonePath: pick('mainClonePath'),
     }
   }, [text, inherited])
 
@@ -342,8 +346,9 @@ function SettingsForm(props: {
     } catch {
       return { branch: '브랜치명이 기타 브랜치와 충돌', path: '—' }
     }
-    return { branch: resolved.branch, path: renderPath(applyBaseDir(effective.worktreePath, baseDir), resolved.ctx) }
-  }, [effective, previewIssue, home, platform, baseDir])
+    const values = { ...effective, mainClonePath: origin ?? effective.mainClonePath }
+    return { branch: resolved.branch, path: issuePaths(values, resolved.ctx, baseDir).path }
+  }, [effective, previewIssue, home, platform, baseDir, origin])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
