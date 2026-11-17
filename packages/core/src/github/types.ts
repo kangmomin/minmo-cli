@@ -1,6 +1,12 @@
 export type GitHubOwner = { login: string; kind: 'user' | 'org'; avatarUrl: string | null }
 export type GitHubRepo = { owner: string; name: string; defaultBranch: string }
 export type GitHubIssue = { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string }
+/** 이슈 하나를 조회할 때만 본문을 받는다(목록 캐시에는 본문을 두지 않음) */
+export type GitHubIssueDetail = GitHubIssue & { body: string }
+/** 보낼 필드만 넣는다 — 넣지 않은 필드는 GitHub 값을 그대로 둔다 */
+export type UpdateIssueInput = { title?: string; body?: string }
+/** GitHub state_reason: 완료 / 계획 없음 */
+export type IssueCloseReason = 'completed' | 'not_planned'
 export type CreateRepoInput = {
   /** 내 계정이면 null, 조직이면 그 login */
   org: string | null

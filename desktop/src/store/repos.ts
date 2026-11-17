@@ -41,6 +41,7 @@ export interface ReposState {
   removeLocal(id: string): void
   addTask(id: string, title: string): number | null
   setTaskState(id: string, number: number, state: LocalTask['state']): void
+  renameTask(id: string, number: number, title: string): void
   setPublish(id: string, publish: PublishProgress | null): void
   setLastParent(hostId: string, path: string): void
 }
@@ -100,6 +101,12 @@ export const useReposStore = create<ReposState>()(
           const repo = s.local[id]
           if (!repo) return s
           return { local: { ...s.local, [id]: { ...repo, tasks: repo.tasks.map((t) => (t.number === number ? { ...t, state } : t)) } } }
+        }),
+      renameTask: (id, number, title) =>
+        set((s) => {
+          const repo = s.local[id]
+          if (!repo) return s
+          return { local: { ...s.local, [id]: { ...repo, tasks: repo.tasks.map((t) => (t.number === number ? { ...t, title } : t)) } } }
         }),
       setPublish: (id, publish) =>
         set((s) => {

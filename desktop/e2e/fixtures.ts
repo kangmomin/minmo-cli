@@ -80,6 +80,11 @@ const issue = (n: number, title: string, state = 'open') => ({ number: n, title,
 
 /** GitHub REST(gh 미사용 폴백 경로) 응답 */
 export async function routeGitHub(page: Page) {
+  // 수정·닫기(PATCH)가 이후 조회에도 보이도록 페이지마다 이슈를 들고 있는다
+  const issues = new Map([
+    [42, { ...issue(42, 'Add login'), body: '로그인 화면을 만든다' }],
+    [7, { ...issue(7, 'Old bug', 'closed'), body: '' }],
+  ])
   await page.route(`${GITHUB}/**`, async (route) => {
     const req = route.request()
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
@@ -93,7 +98,16 @@ export async function routeGitHub(page: Page) {
       const input = req.postDataJSON() as { title: string }
       return json(route, 201, issue(43, input.title))
     }
-    if (path === '/repos/my-org/widgets/issues') return json(route, 200, [issue(42, 'Add login'), issue(7, 'Old bug', 'closed')])
+    if (path === '/repos/my-org/widgets/issues') return json(route, 200, [...issues.values()])
+    const one = /^\/repos\/my-org\/widgets\/issues\/(\d+)$/.exec(path)
+    const found = one ? issues.get(Number(one[1])) : undefined
+    if (found && req.method() === 'PATCH') {
+      const input = req.postDataJSON() as { title?: string; body?: string; state?: string }
+      const next = { ...found, ...(input.title !== undefined && { title: input.title }), ...(input.body !== undefined && { body: input.body }), ...(input.state !== undefined && { state: input.state }) }
+      issues.set(next.number, next)
+      return json(route, 200, next)
+    }
+    if (found) return json(route, 200, found)
     if (path.startsWith('/repos/my-org/widgets/pulls')) return json(route, 200, [])
     return json(route, 404, { message: 'Not Found' })
   })

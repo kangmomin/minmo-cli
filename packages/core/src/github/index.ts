@@ -4,7 +4,17 @@ import { GhFailure, createGhTransport } from './ghCli'
 import { createRestTransport } from './rest'
 import type { GitHubTransport } from './transport'
 import { GitHubError } from './types'
-import type { CreatePrInput, CreateRepoInput, GitHubIssue, GitHubOwner, GitHubPr, GitHubRepo } from './types'
+import type {
+  CreatePrInput,
+  CreateRepoInput,
+  GitHubIssue,
+  GitHubIssueDetail,
+  GitHubOwner,
+  GitHubPr,
+  GitHubRepo,
+  IssueCloseReason,
+  UpdateIssueInput,
+} from './types'
 
 export * from './types'
 
@@ -33,20 +43,23 @@ export interface GitHubClient {
   defaultBranch(owner: string, repo: string): Promise<string>
   /** 저장소 하나 — 대소문자를 GitHub 표기(canonical)로 맞출 때 쓴다 */
   getRepo(owner: string, repo: string): Promise<GitHubRepo>
-  /** 이슈 하나(PR 이면 not_found) */
-  getIssue(owner: string, repo: string, number: number): Promise<GitHubIssue>
+  /** 이슈 하나(PR 이면 not_found). 본문 줄바꿈은 \n 으로 맞춘다 */
+  getIssue(owner: string, repo: string, number: number): Promise<GitHubIssueDetail>
   openPrForBranch(owner: string, repo: string, branch: string): Promise<GitHubPr | null>
   createPr(input: CreatePrInput): Promise<GitHubPr>
   /** 빈 저장소를 만든다(README 등 첫 커밋 없이 — 로컬 저장소를 그대로 push 할 수 있게) */
   createRepo(input: CreateRepoInput): Promise<GitHubRepo>
   /** body 가 비어 있으면 보내지 않는다(본문 없는 이슈) */
   createIssue(owner: string, repo: string, title: string, body?: string): Promise<GitHubIssue>
-  closeIssue(owner: string, repo: string, number: number): Promise<void>
+  /** input 에 있는 필드만 보낸다 */
+  updateIssue(owner: string, repo: string, number: number, input: UpdateIssueInput): Promise<GitHubIssue>
+  /** reason 이 없으면 state_reason 을 보내지 않는다(GitHub 기본값). 닫은 뒤의 이슈를 돌려준다 */
+  closeIssue(owner: string, repo: string, number: number, reason?: IssueCloseReason): Promise<GitHubIssue>
 }
 
 type RawOwner = { login: string; avatar_url?: string | null }
 type RawRepo = { name: string; owner: { login: string }; default_branch?: string | null }
-type RawIssue = { number: number; title: string; state: string; html_url: string; pull_request?: unknown }
+type RawIssue = { number: number; title: string; state: string; html_url: string; body?: string | null; pull_request?: unknown }
 type RawPr = { number: number; html_url: string }
 
 const enc = encodeURIComponent
@@ -158,7 +171,8 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
       withTransport(async (t) => {
         const r = (await t.get(`repos/${enc(owner)}/${enc(repo)}/issues/${number}`)).data as RawIssue
         if (r.pull_request !== undefined) throw new GitHubError('not_found', { message: `#${number} 은 PR 입니다` })
-        return toIssue(r)
+        // GitHub 웹에서 쓴 본문은 \r\n 이다 — textarea 는 \n 으로 바꾸므로 맞춰 두어야 "안 바뀐 본문"을 바뀐 것으로 보지 않는다
+        return { ...toIssue(r), body: (r.body ?? '').replace(/\r\n/g, '\n') }
       }),
 
     openPrForBranch: (owner, repo, branch) =>
@@ -191,9 +205,18 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
     createIssue: (owner, repo, title, body) =>
       withTransport(async (t) => toIssue((await t.post(`repos/${enc(owner)}/${enc(repo)}/issues`, body ? { title, body } : { title })).data as RawIssue)),
 
-    closeIssue: (owner, repo, number) =>
+    updateIssue: (owner, repo, number, input) =>
       withTransport(async (t) => {
-        await t.patch(`repos/${enc(owner)}/${enc(repo)}/issues/${number}`, { state: 'closed' })
+        const patch: UpdateIssueInput = {}
+        if (input.title !== undefined) patch.title = input.title
+        if (input.body !== undefined) patch.body = input.body
+        return toIssue((await t.patch(`repos/${enc(owner)}/${enc(repo)}/issues/${number}`, patch)).data as RawIssue)
+      }),
+
+    closeIssue: (owner, repo, number, reason) =>
+      withTransport(async (t) => {
+        const body = reason ? { state: 'closed', state_reason: reason } : { state: 'closed' }
+        return toIssue((await t.patch(`repos/${enc(owner)}/${enc(repo)}/issues/${number}`, body)).data as RawIssue)
       }),
   }
 }

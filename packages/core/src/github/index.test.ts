@@ -248,8 +248,64 @@ describe('getRepo · getIssue (원격 CLI 의 이슈 지정용)', () => {
               : json({}, { status: 404 }),
     })
     await expect(t.gh.getRepo('acme', 'widgets')).resolves.toEqual({ owner: 'Acme', name: 'Widgets', defaultBranch: 'main' })
-    await expect(t.gh.getIssue('acme', 'widgets', 7)).resolves.toEqual({ number: 7, title: 'Seven', state: 'open', htmlUrl: 'u7' })
+    // 본문이 없으면(null·필드 없음) 빈 문자열
+    await expect(t.gh.getIssue('acme', 'widgets', 7)).resolves.toEqual({ number: 7, title: 'Seven', state: 'open', htmlUrl: 'u7', body: '' })
     await expect(t.gh.getIssue('acme', 'widgets', 8)).rejects.toMatchObject({ code: 'not_found' })
+  })
+
+  it('getIssue: 본문의 \\r\\n 을 \\n 으로 맞춘다(수정 화면이 안 바뀐 본문을 바뀐 것으로 보지 않게)', async () => {
+    const t = setup({ route: () => json(issue(3, 'open', { body: '첫 줄\r\n둘째 줄\r\n' })) })
+    await expect(t.gh.getIssue('o', 'r', 3)).resolves.toMatchObject({ body: '첫 줄\n둘째 줄\n' })
+  })
+})
+
+describe('updateIssue · closeIssue(이유)', () => {
+  it('updateIssue: 넣은 필드만 PATCH 로 보낸다(gh)', async () => {
+    const stdin: string[] = []
+    const t = setup({
+      ghAvailable: true,
+      ghRun: async (_args, opts) => {
+        stdin.push(opts?.stdin ?? '')
+        return ok(JSON.stringify(issue(5, 'open', { title: '새 제목' })))
+      },
+    })
+    await expect(t.gh.updateIssue('o', 'r', 5, { title: '새 제목' })).resolves.toEqual({
+      number: 5,
+      title: '새 제목',
+      state: 'open',
+      htmlUrl: 'https://github.com/o/r/issues/5',
+    })
+    await t.gh.updateIssue('o', 'r', 5, { body: '' })
+    await t.gh.updateIssue('o', 'r', 5, { title: 't', body: 'b' })
+    expect(t.tauri.ghRun.mock.calls[0][0]).toEqual(['api', '-X', 'PATCH', 'repos/o/r/issues/5', '--input', '-'])
+    // 빈 본문도 "본문 지우기"로 보낸다
+    expect(stdin.map((s) => JSON.parse(s))).toEqual([{ title: '새 제목' }, { body: '' }, { title: 't', body: 'b' }])
+  })
+
+  it('updateIssue: REST 는 PATCH issues/{n}', async () => {
+    const t = setup({ route: () => json(issue(5)) })
+    await t.gh.updateIssue('o', 'r', 5, { title: 'x' })
+    expect(t.rest.calls.map((c) => [c.method, new URL(c.url).pathname])).toEqual([['PATCH', '/repos/o/r/issues/5']])
+  })
+
+  it('closeIssue: 이유가 있으면 state_reason 을 보내고, 없으면 state 만 보낸다', async () => {
+    const stdin: string[] = []
+    const t = setup({
+      ghAvailable: true,
+      ghRun: async (_args, opts) => {
+        stdin.push(opts?.stdin ?? '')
+        return ok(JSON.stringify(issue(3, 'closed')))
+      },
+    })
+    // 닫은 뒤의 이슈를 돌려준다 — 화면이 다시 조회하지 않고 목록 캐시를 고친다
+    await expect(t.gh.closeIssue('o', 'r', 3, 'not_planned')).resolves.toMatchObject({ number: 3, state: 'closed' })
+    await t.gh.closeIssue('o', 'r', 3, 'completed')
+    await t.gh.closeIssue('o', 'r', 3)
+    expect(stdin.map((s) => JSON.parse(s))).toEqual([
+      { state: 'closed', state_reason: 'not_planned' },
+      { state: 'closed', state_reason: 'completed' },
+      { state: 'closed' },
+    ])
   })
 })
 

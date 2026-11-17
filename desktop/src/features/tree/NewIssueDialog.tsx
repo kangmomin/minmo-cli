@@ -3,16 +3,13 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useId, useState } from 'react'
 import type { FormEvent } from 'react'
 
-import type { GitHubIssue } from '@minmo/core'
-
 import { useDeps } from '../../app/deps'
 import { Button } from '../../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { Textarea } from '../../components/ui/textarea'
-import { queryKeys } from '../../lib/queryKeys'
-import { githubErrorMessage } from './useTree'
+import { githubErrorMessage, upsertIssueCache } from './useTree'
 
 export interface NewIssueDialogProps {
   owner: string
@@ -55,11 +52,7 @@ function NewIssueBody({ owner, repo, busy, setBusy, onDone }: { owner: string; r
     void github
       .createIssue(owner, repo, title.trim(), body.trim())
       .then((issue) => {
-        // 다시 조회하지 않고 캐시에 넣는다 — GitHub 목록은 방금 만든 이슈가 늦게 보일 수 있다.
-        // 캐시가 없으면(아직 안 펼친 저장소) 그대로 둔다: 펼칠 때 조회한다
-        queryClient.setQueryData<GitHubIssue[]>(queryKeys.githubIssues(owner, repo), (list) =>
-          list === undefined || list.some((i) => i.number === issue.number) ? list : [issue, ...list],
-        )
+        upsertIssueCache(queryClient, owner, repo, issue)
         onDone()
       })
       .catch((err: unknown) => setError(githubErrorMessage(err)))
