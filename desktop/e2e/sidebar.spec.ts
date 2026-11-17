@@ -148,6 +148,39 @@ test('AC-01·AC-02 최소 폭(240)에서 닫힘·경로 변경됨 배지가 함�
   }
 })
 
+test('AC-01 짧은 이름(ui)의 저장소 행 — 기본 폭·최소 폭(240) 모두 이름 칸이 글자보다 넓어지지 않고 배지가 바로 뒤에 붙는다', async ({ page }) => {
+  // ui: gadgets 처럼 연결되는 mock-server 에 묶고 기준 저장소를 정한다(호스트 배지 + 기준 저장소 배지)
+  await page.route(isGitHubPath('/orgs/my-org/repos'), getOnly([ghRepo('widgets'), ghRepo('gadgets'), ghRepo('doohickeys'), ghRepo('ui')]))
+  await page.addInitScript(() => {
+    const saved = JSON.parse(localStorage.getItem('minmo-hosts') ?? '{}')
+    saved.state.baseRepos['ssh:mock-server']['my-org/ui'] = '/home/dev/src/ui'
+    saved.state.repoHosts['my-org/ui'] = 'ssh:mock-server'
+    localStorage.setItem('minmo-hosts', JSON.stringify(saved))
+  })
+  await page.reload()
+  const row = page.getByTestId('repo-node-my-org/ui')
+  await expect(row.getByTestId('base-repo-badge')).toBeVisible()
+  await expect(row.getByTestId('repo-host-badge')).toBeVisible()
+  await expect(separator(page)).toBeVisible()
+
+  const measure = () =>
+    row.getByText('ui', { exact: true }).evaluate((el) => {
+      const name = el.getBoundingClientRect()
+      const badge = el.closest('button')!.querySelector('[data-slot=badge]')!.getBoundingClientRect()
+      return { client: el.clientWidth, scroll: el.scrollWidth, right: name.right, badgeLeft: badge.left }
+    })
+  // 이름과 첫 배지 사이: 행의 gap-1(4px) + 배지의 ml-1(4px)
+  const GAP = 8
+  for (const width of [288, 240]) {
+    if (width === 240) await narrowest(page)
+    await expect.poll(() => asideWidth(page)).toBe(width)
+    const m = await measure()
+    expect(m.client, `${width}px 이름 칸 = 글자 폭`).toBe(m.scroll)
+    expect(m.client, `${width}px 이름 칸`).toBeLessThan(40)
+    expect(m.badgeLeft, `${width}px 첫 배지 위치`).toBeLessThanOrEqual(m.right + GAP + 0.5)
+  }
+})
+
 test('AC-02 최소 폭(240)에서 세로 스크롤바가 행 끝 버튼(⚙)을 가리지 않는다', async ({ page }) => {
   await expect(separator(page)).toBeVisible()
   await narrowest(page)
