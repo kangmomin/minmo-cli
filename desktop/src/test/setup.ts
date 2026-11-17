@@ -11,8 +11,11 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   }
 }
 
-// jsdom 에는 canvas 가 없다 — 불러올 때 canvas 를 찾는 xterm WebGL 렌더러가 "Not implemented" 를 찍지 않게 "없음"(null)으로 답한다
-HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext
+// jsdom 에는 canvas 가 없다 — 불러올 때 canvas 를 찾는 xterm WebGL 렌더러가 "Not implemented" 를 찍지 않게 "없음"(null)으로 답한다.
+// node 환경 테스트(@vitest-environment node)에는 HTMLCanvasElement 자체가 없으므로 건너뛴다
+if (typeof globalThis.HTMLCanvasElement !== 'undefined') {
+  HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext
+}
 
 afterEach(() => {
   cleanup()
