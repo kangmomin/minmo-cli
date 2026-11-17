@@ -20,6 +20,12 @@ export function isTerminalOpenKey(e: KeyboardEvent): boolean {
 export const CLIPBOARD_KEYS = { copy: 'Ctrl+C', paste: 'Ctrl+V' } as const
 
 /**
+ * 마우스 — 링크는 Ctrl+클릭으로 연다(links.ts). 프로그램(ssh 의 tmux·에이전트 CLI 등)이 마우스를 쓰면 드래그가 그 프로그램으로 가므로,
+ * Shift 를 누른 채 드래그해야 터미널이 선택한다(xterm 기본 동작)
+ */
+export const MOUSE_KEYS = { openLink: 'Ctrl+클릭', forceSelect: 'Shift+드래그' } as const
+
+/**
  * 편집 키 — xterm 은 Ctrl+Backspace 를 ^H(한 글자 지우기), Shift+Enter 를 Enter 와 같은 \r 로 보낸다.
  * 셸(PSReadLine·bash)과 에이전트 CLI(Claude Code·Codex·Gemini)가 알아듣는 글자로 바꿔 보낸다:
  * ^W = 앞 단어 지우기, ESC+\r(Alt+Enter) = 전송하지 않는 줄바꿈.

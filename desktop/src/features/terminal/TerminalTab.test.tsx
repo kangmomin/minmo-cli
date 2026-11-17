@@ -26,7 +26,8 @@ const xterm = vi.hoisted(() => ({
     textarea: HTMLTextAreaElement | undefined
     selection: string
     unicode: { activeVersion: string }
-    addons: { kind?: string }[]
+    addons: { kind?: string; handler?: (e: MouseEvent, uri: string) => void }[]
+    oscHandlers: Map<number, (data: string) => boolean | Promise<boolean>>
   }[],
   // 정적 Terminal.strings — 실제 xterm 처럼 open() 이전에 바꿔야 입력 textarea 라벨에 반영된다
   strings: { promptLabel: 'Terminal input', tooMuchOutput: '' },
@@ -49,6 +50,14 @@ vi.mock('@xterm/xterm', () => ({
     textarea: HTMLTextAreaElement | undefined
     unicode = { activeVersion: '6' }
     addons: { kind?: string }[] = []
+    // 프로그램이 보낸 OSC 신호(번호별) 처리기
+    oscHandlers = new Map<number, (data: string) => boolean | Promise<boolean>>()
+    parser = {
+      registerOscHandler: (id: number, cb: (data: string) => boolean | Promise<boolean>) => {
+        this.oscHandlers.set(id, cb)
+        return { dispose: () => this.oscHandlers.delete(id) }
+      },
+    }
     static strings = xterm.strings
     constructor(options: Record<string, unknown>) {
       this.options = options
@@ -68,6 +77,12 @@ vi.mock('@xterm/xterm', () => ({
     }
     write(d: string, done?: () => void) {
       this.written.push(d)
+      // 실제 xterm 처럼 쓰는 동안 OSC 신호(ESC ] <번호> ; <데이터> BEL)를 처리하고, 콜백은 그 뒤에 부른다
+      for (const part of d.split('\x1b]').slice(1)) {
+        const body = part.slice(0, part.indexOf('\x07'))
+        const sep = body.indexOf(';')
+        this.oscHandlers.get(Number(body.slice(0, sep)))?.(body.slice(sep + 1))
+      }
       done?.()
     }
     resize(cols: number, rows: number) {
@@ -106,6 +121,12 @@ vi.mock('@xterm/addon-fit', () => ({
     fit() {
       if (this.term && xterm.fitTo) Object.assign(this.term, xterm.fitTo)
     }
+  },
+}))
+vi.mock('@xterm/addon-web-links', () => ({
+  WebLinksAddon: class {
+    kind = 'web-links'
+    constructor(public handler: (e: MouseEvent, uri: string) => void) {}
   },
 }))
 vi.mock('@xterm/addon-unicode11', () => ({
@@ -974,6 +995,59 @@ describe('복사·붙여넣기 (Ctrl+C / Ctrl+V — Windows Terminal 방식)', (
   })
 })
 
+describe('ssh 원격 프로그램의 링크·복사 (#76)', () => {
+  const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
+
+  it('프로그램의 복사(OSC 52)를 이 화면의 클립보드에 쓴다 · 클립보드를 읽는 요청에는 답하지 않는다', async () => {
+    const writeText = vi.fn(async (_text: string) => {})
+    const readText = vi.fn(async () => '비밀')
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText, readText } })
+    try {
+      const t = setup()
+      await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+      const term = xterm.instances[0]
+      const osc52 = term.oscHandlers.get(52)
+      expect(osc52?.(`c;${b64('git push origin 브랜치')}`)).toBe(true)
+      expect(writeText).toHaveBeenCalledWith('git push origin 브랜치')
+      osc52?.('c;?')
+      await flush()
+      expect(readText).not.toHaveBeenCalled()
+      // 읽기 요청에 답하면 그 답이 PTY 입력으로 간다 — 아무것도 보내지 않는다
+      expect(t.tauri.ptyWrite).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('링크는 Ctrl+클릭으로만 연다 — 일반 URL·OSC 8 링크 모두 이 화면의 openUrl 로', async () => {
+    const t = setup()
+    await flush()
+    const term = xterm.instances[0]
+    const webLinks = term.addons.find((a) => a.kind === 'web-links')?.handler
+    const osc8 = term.options.linkHandler as { activate(e: MouseEvent, uri: string): void } | undefined
+    webLinks?.(new MouseEvent('mouseup'), 'https://example.com')
+    osc8?.activate(new MouseEvent('mouseup'), 'https://example.com')
+    expect(t.tauri.openUrl).not.toHaveBeenCalled()
+    webLinks?.(new MouseEvent('mouseup', { ctrlKey: true }), 'https://github.com/o/r/pull/1')
+    osc8?.activate(new MouseEvent('mouseup', { ctrlKey: true }), 'https://example.com/docs')
+    expect(vi.mocked(t.tauri.openUrl).mock.calls).toEqual([['https://github.com/o/r/pull/1'], ['https://example.com/docs']])
+  })
+
+  it('브라우저를 열지 못해도(거절) 터미널은 그대로 동작한다', async () => {
+    const t = setup({ openUrl: vi.fn(async () => Promise.reject(new Error('not allowed'))) })
+    await flush()
+    const webLinks = xterm.instances[0].addons.find((a) => a.kind === 'web-links')?.handler
+    expect(() => webLinks?.(new MouseEvent('mouseup', { ctrlKey: true }), 'https://example.com')).not.toThrow()
+    await flush()
+    expect(t.tauri.openUrl).toHaveBeenCalledTimes(1)
+  })
+
+  it('안내 줄에 링크 열기·마우스를 쓰는 프로그램에서의 선택 방법을 보인다', () => {
+    setup()
+    expect(screen.getByText(/Ctrl\+클릭: 링크 열기 · Shift\+드래그: 프로그램이 마우스를 쓸 때 선택/)).toBeInTheDocument()
+  })
+})
+
 describe('글자 크기 (Ctrl + / Ctrl - / Ctrl 0)', () => {
   const key = (init: KeyboardEventInit) => new KeyboardEvent('keydown', { ctrlKey: true, cancelable: true, ...init })
 
@@ -1031,6 +1105,23 @@ describe('함께 쓰는 터미널 — 이미 떠 있는 터미널에 붙기(원�
     // 입력은 그 터미널로 간다
     act(() => xterm.instances[0].dataHandler?.('ls\r'))
     expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-9', 'ls\r')
+  })
+
+  it('지난 출력을 다시 그릴 때 그 안의 옛 복사(OSC 52)는 클립보드에 쓰지 않는다 · 붙은 뒤의 새 복사는 쓴다(#76)', async () => {
+    const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
+    const writeText = vi.fn(async (_text: string) => {})
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    try {
+      const data = emitter<{ id: string; data: string; end?: number }>()
+      setup({ onPtyData: data.on, ptyFind: async () => ({ ...FOUND, scrollback: `${FOUND.scrollback}\x1b]52;c;${b64('옛 복사')}\x07` }) })
+      await vi.waitFor(() => expect(xterm.instances[0].written).toHaveLength(1))
+      await flush()
+      expect(writeText).not.toHaveBeenCalled()
+      act(() => data.emit({ id: 'pty-9', data: `\x1b]52;c;${b64('새 복사')}\x07` }))
+      expect(writeText).toHaveBeenCalledWith('새 복사')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('붙는 사이에 온 출력은 지난 출력(scrollback)과 겹치는 것은 버리고 그 뒤의 것만 이어 그린다', async () => {
