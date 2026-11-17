@@ -698,6 +698,44 @@ pub fn pty_resize(
     Ok(())
 }
 
+/// 화면(xterm)의 windowsPty 옵션 값 — 이 PC 의 터미널이 쓰는 ConPTY 와 그 Windows 빌드 번호
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsPty {
+    backend: &'static str,
+    build_number: u32,
+}
+
+/// 터미널이 Windows ConPTY 위에서 돌면 그 정보를, 아니면 None 을 돌려준다.
+/// xterm 은 이 값으로 ConPTY 와 같은 방식으로 크기를 바꾼다(행이 늘면 스크롤백을 끌어오지 않고 아래에 빈 행을 둔다).
+/// 원격(ssh) 터미널도 이 PC 의 ConPTY 를 거친다. portable-pty 는 함께 넣은 conpty.dll 이 없으면 OS 의 ConPTY 를 쓰므로
+/// OS 빌드 번호가 곧 ConPTY 의 버전이다
+#[tauri::command]
+pub fn pty_windows() -> Option<WindowsPty> {
+    windows_build().map(|build_number| WindowsPty {
+        backend: "conpty",
+        build_number,
+    })
+}
+
+#[cfg(windows)]
+fn windows_build() -> Option<u32> {
+    use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
+    use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
+    // GetVersionEx 는 매니페스트가 없으면 8 이후의 버전을 감춘다 — RtlGetVersion 은 실제 버전을 돌려준다
+    // SAFETY: 크기를 채운 구조체를 넘기고, 성공(STATUS_SUCCESS)일 때만 값을 읽는다
+    unsafe {
+        let mut info: OSVERSIONINFOW = std::mem::zeroed();
+        info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
+        (RtlGetVersion(&mut info) == 0).then_some(info.dwBuildNumber)
+    }
+}
+
+#[cfg(not(windows))]
+fn windows_build() -> Option<u32> {
+    None
+}
+
 /// ConPTY 닫기 대기 상한. 정상 닫기는 수십 ms 이고, 이 시간이 지나도 닫히지 않는 세션은 포기한다
 const CLOSE_DEADLINE: Duration = Duration::from_secs(3);
 
@@ -811,6 +849,19 @@ pub async fn pty_kill_by_cwd(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pty_windows_reports_conpty_build_only_on_windows() {
+        let info = pty_windows();
+        if cfg!(windows) {
+            let info = info.expect("Windows 에서는 ConPTY 정보가 있어야 한다");
+            assert_eq!(info.backend, "conpty");
+            // ConPTY 는 Windows 10 1809(17763)부터 있다
+            assert!(info.build_number >= 17763, "{}", info.build_number);
+        } else {
+            assert!(info.is_none());
+        }
+    }
 
     fn remote(session: Option<&str>, ephemeral: bool) -> RemotePty {
         RemotePty {

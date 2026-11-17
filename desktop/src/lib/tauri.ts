@@ -42,6 +42,8 @@ export type PtyFound = { id: string; scrollback: string; offset: number; cols: n
 export type PtyInfo = { id: string; key: string | null; cwd: string; host: string | null }
 /** by: 크기를 바꾼 화면이 ptyResize 에 넘긴 표시(없으면 null) — 화면이 자기가 바꾼 것을 알아본다 */
 export type PtyResizedEvent = { id: string; cols: number; rows: number; by?: string | null }
+/** 터미널이 Windows ConPTY 위에서 돈다 — xterm 의 windowsPty 옵션 값 */
+export type WindowsPty = { backend: 'conpty'; buildNumber: number }
 
 /** 원격 접속(src-tauri/src/remote.rs) — 다른 PC·휴대폰의 브라우저가 이 앱에 붙는다 */
 export type RemoteAddress = { kind: 'local' | 'tailscale' | 'tailscale-https' | 'lan'; url: string }
@@ -149,6 +151,8 @@ export interface TauriApi extends WorktreeHost, GhHost {
   ptyWrite(id: string, data: string): Promise<void>
   /** by: 이 화면의 표시 — 뒤따르는 pty-resized 에 그대로 실린다 */
   ptyResize(id: string, cols: number, rows: number, by?: string): Promise<void>
+  /** 이 PC 의 터미널이 Windows ConPTY 면 그 빌드 번호(아니면 null) */
+  ptyWindows(): Promise<WindowsPty | null>
   ptyKill(id: string): Promise<void>
   /** cwd 가 path(또는 하위)인 PTY 를 모두 종료하고 종료 개수를 돌려준다 (worktree 삭제 전) */
   ptyKillByCwd(path: string, host?: string): Promise<number>
@@ -300,6 +304,7 @@ export const TAURI_COMMANDS = {
   ptySpawn: 'pty_spawn',
   ptyWrite: 'pty_write',
   ptyResize: 'pty_resize',
+  ptyWindows: 'pty_windows',
   ptyKill: 'pty_kill',
   ptyKillByCwd: 'pty_kill_by_cwd',
   ptyProcesses: 'pty_processes',
@@ -426,6 +431,7 @@ export function createTauriApi(): TauriApi {
     onSyncApplied: async (cb) => (await event()).listen(TAURI_EVENTS.syncApplied, () => cb()),
     ptyWrite: (id, data) => call(C.ptyWrite, { id, data }),
     ptyResize: (id, cols, rows, by) => call(C.ptyResize, { id, cols, rows, by: by ?? null }),
+    ptyWindows: () => call(C.ptyWindows),
     ptyKill: (id) => call(C.ptyKill, { id }),
     ptyKillByCwd: (path, host) => call(C.ptyKillByCwd, { path, host: host ?? null }),
     onPtyData: async (cb) => (await event()).listen<PtyDataEvent>(TAURI_EVENTS.ptyData, (e) => cb(e.payload)),

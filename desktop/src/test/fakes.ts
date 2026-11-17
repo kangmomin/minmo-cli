@@ -32,6 +32,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     ptySpawn: async () => 'pty-1',
     ptyWrite: async () => {},
     ptyResize: async () => {},
+    ptyWindows: async () => null,
     ptyKill: async () => {},
     ptyKillByCwd: async () => 0,
     ptyFind: async () => null,

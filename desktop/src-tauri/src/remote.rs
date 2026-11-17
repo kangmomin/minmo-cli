@@ -52,6 +52,7 @@ const ALLOWED: &[&str] = &[
     "ptyFind",
     "ptyWrite",
     "ptyResize",
+    "ptyWindows",
     "ptyKill",
     "ptyKillByCwd",
     "ptyList",
@@ -916,6 +917,8 @@ async fn call(ctx: &Ctx, method: &str, args: Value) -> Result<Value, String> {
             arg(&args, 2)?,
             arg(&args, 3)?,
         )),
+        // 터미널을 열 때마다 기다리는 값이다 — 이 PC 의 화면을 거치지 않고 바로 답한다(화면이 바쁘거나 다시 불러오는 중이어도)
+        "ptyWindows" => to(serde_json::to_value(pty::pty_windows())),
         "ptySpawn" => {
             #[derive(Deserialize)]
             struct Spawn {

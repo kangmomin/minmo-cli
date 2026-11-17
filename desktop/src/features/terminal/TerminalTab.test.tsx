@@ -233,6 +233,57 @@ describe('글자 그리기 — Unicode 11 폭·WebGL 렌더러(#58)', () => {
     act(() => liveWebgl()[0].lose())
     expect(liveWebgl()).toHaveLength(0)
   })
+
+  it('호스트가 Windows ConPTY 면 PTY 를 열기(첫 출력) 전에 xterm 에 그 정보(windowsPty)를 준다', async () => {
+    const info = { backend: 'conpty', buildNumber: 26200 } as const
+    let atSpawn: unknown
+    const t = setup({
+      ptyWindows: async () => info,
+      ptySpawn: async () => {
+        atSpawn = xterm.instances[0].options.windowsPty
+        return 'pty-1'
+      },
+    })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(atSpawn).toEqual(info)
+  })
+
+  it.each([
+    ['ConPTY 가 아니면(null)', async () => null],
+    ['묻지 못하면(reject)', async () => Promise.reject(new Error('원격에서 쓸 수 없는 기능입니다: ptyWindows'))],
+  ])('%s windowsPty 없이 터미널을 연다', async (_, ptyWindows) => {
+    const t = setup({ ptyWindows })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(xterm.instances[0].options.windowsPty).toBeUndefined()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('ConPTY 정보는 터미널이 여럿이어도 한 번만 묻고, 묻지 못했으면 다음에 여는 터미널이 다시 묻는다', async () => {
+    const info = { backend: 'conpty', buildNumber: 26200 } as const
+    const ptyWindows = vi.fn<TauriApi['ptyWindows']>().mockRejectedValueOnce(new Error('연결 끊김')).mockResolvedValue(info)
+    const fake = createFakeTauri({ ptyWindows })
+    const r = renderWithDeps(<TerminalTab sessions={[A]} activeId={A.issueId} visible />, makeDeps({ tauri: fake.tauri }))
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(xterm.instances[0].options.windowsPty).toBeUndefined()
+
+    // 나중에 연 터미널은 다시 묻는다
+    const S2: TerminalSessionSpec = { issueId: 'o/r#2', cwd: '/w/2' }
+    const S3: TerminalSessionSpec = { issueId: 'o/r#3', cwd: '/w/3' }
+    // 세션 목록에 없는 이슈는 열린 터미널에서 빠지므로(CR-03) 세션을 넣기 직전에 연다
+    const open = (s: TerminalSessionSpec) => act(() => useUiStore.setState((u) => ({ startedTerminals: { ...u.startedTerminals, [s.issueId]: true } })))
+    open(S2)
+    r.rerender(<TerminalTab sessions={[A, S2]} activeId={A.issueId} visible />)
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(xterm.instances[1].options.windowsPty).toEqual(info)
+    expect(ptyWindows).toHaveBeenCalledTimes(2)
+
+    // 이미 읽은 값은 다시 묻지 않는다
+    open(S3)
+    r.rerender(<TerminalTab sessions={[A, S2, S3]} activeId={A.issueId} visible />)
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(3))
+    expect(xterm.instances[2].options.windowsPty).toEqual(info)
+    expect(ptyWindows).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('AX-02 터미널 포커스·탈출', () => {

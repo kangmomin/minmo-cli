@@ -10,6 +10,7 @@ import { useBaseDeps } from '../../app/deps'
 import { Button } from '../../components/ui/button'
 import { newOrigin } from '../../lib/sharedState'
 import { remotePty } from '../../lib/sshHost'
+import type { TauriApi, WindowsPty } from '../../lib/tauri'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
 import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
@@ -40,6 +41,24 @@ function paneExists(issueId: string, paneId: string): boolean {
 
 /** ptySpawn 응답 전에 도착한 pty-data 를 id 별로 보관하는 상한(문자 수) */
 export const MAX_PENDING_PTY_CHARS = 256 * 1024
+
+const windowsPtyCache = new WeakMap<TauriApi, Promise<WindowsPty | null>>()
+
+/**
+ * 터미널 호스트(이 PC)의 ConPTY 정보 — 바뀌지 않으므로 API 마다 한 번만 묻는다. 묻지 못하면 null(옵션 없이 그린다)이고,
+ * 다음 터미널이 다시 묻는다(원격 화면이 잠시 끊긴 경우 등)
+ */
+function hostWindowsPty(tauri: TauriApi): Promise<WindowsPty | null> {
+  let info = windowsPtyCache.get(tauri)
+  if (!info) {
+    info = tauri.ptyWindows().catch(() => {
+      windowsPtyCache.delete(tauri)
+      return null
+    })
+    windowsPtyCache.set(tauri, info)
+  }
+  return info
+}
 
 export interface TerminalTabProps {
   /** 세션을 유지할 이슈들(worktree 준비 완료) */
@@ -452,6 +471,11 @@ function TerminalSession({
         } catch {
           // 숨김 상태에서는 크기를 잴 수 없다 — 표시될 때 다시 맞춘다
         }
+        // 첫 출력을 그리기 전에 ConPTY 정보를 준다 — 행이 늘 때 xterm 이 스크롤백을 화면으로 끌어오지 않고 ConPTY 처럼
+        // 아래에 빈 행을 둔다(다르면 두 화면이 어긋난다). 기다리는 동안 온 출력은 위의 pending 에 쌓인다
+        const windowsPty = await hostWindowsPty(tauri)
+        if (disposed) return
+        if (windowsPty) t.options.windowsPty = windowsPty
         const remote = remoteHost === undefined ? undefined : remotePty(remoteHost, remoteTmux, spec.cwd, paneRole(spec.issueId, paneId))
         // 이 패널의 터미널이 이미 떠 있으면(다른 화면이 열었거나, 이 화면이 잠시 내려갔다 돌아온 경우) 새로 만들지 않고 붙는다
         const found = await tauri.ptyFind(paneId)

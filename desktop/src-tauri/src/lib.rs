@@ -72,6 +72,7 @@ pub fn run() {
             pty::pty_list,
             pty::pty_write,
             pty::pty_resize,
+            pty::pty_windows,
             pty::pty_kill,
             pty::pty_kill_by_cwd,
             pty::pty_processes,
