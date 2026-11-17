@@ -6,8 +6,11 @@ import { cn } from '@/lib/utils'
 export function ScrollArea({ className, children, ...props }: ComponentProps<typeof ScrollAreaPrimitive.Root>) {
   return (
     <ScrollAreaPrimitive.Root data-slot="scroll-area" className={cn('relative overflow-hidden', className)} {...props}>
-      <ScrollAreaPrimitive.Viewport data-slot="scroll-area-viewport" className="size-full rounded-[inherit]">
-        {children}
+      <ScrollAreaPrimitive.Viewport data-slot="scroll-area-viewport" className="size-full rounded-[inherit]" disableImplicitContentElement>
+        {/* 세로 스크롤 전용 — Radix 1.4 기본 display:table 이면 truncate 가 안 되고 포커스가 가로로 밀린다 (#70) */}
+        <ScrollAreaPrimitive.Content style={{ display: 'block' }} className="overflow-x-clip">
+          {children}
+        </ScrollAreaPrimitive.Content>
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
       <ScrollAreaPrimitive.Corner />

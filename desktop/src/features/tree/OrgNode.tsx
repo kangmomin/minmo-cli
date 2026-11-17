@@ -64,7 +64,9 @@ export function OrgNode({ owner, extra, fixed = false, label = owner.login, onOp
             >
               {expanded ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
               {local ? <HardDriveIcon className="size-3.5" /> : owner.kind === 'user' ? <UserIcon className="size-3.5" /> : <BuildingIcon className="size-3.5" />}
-              <span className="truncate">{label}</span>
+              <span className="truncate" title={label}>
+                {label}
+              </span>
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent>

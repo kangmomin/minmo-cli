@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../components/ui/dropdown-menu'
 import type { GitHubRepo } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
+import { cn } from '../../lib/utils'
 import { issueBranchContext, issuePaths, lacksOrigin } from '@minmo/core'
 import { useHost } from '../../app/host'
 import { baseDirOf, baseRepoOf, repoAliasOf, useHostsStore, useOriginFolder } from '../../store/hosts'
@@ -23,6 +24,7 @@ import { isLocalOwner, useRepoFullNameIfNicknamed, useRepoShortName, useReposSto
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
+import { shrinkBadge } from './badgeClasses'
 import { BaseRepoDialog } from './BaseRepoDialog'
 import { issueStatus, useAgentStore } from '../agents/agentStore'
 import { IssueRow } from './IssueRow'
@@ -41,6 +43,10 @@ export interface RepoNodeProps {
   onOpenSettings(scope: SettingsScope, preview: PreviewIssue | null): void
 }
 
+// 배지가 있는 행의 이름 칸: 글자 폭에서 시작해 배지와 함께 줄되 min(글자 폭, 40px) 아래로는 줄지 않는다 (#70).
+// overflow 가 없는 바깥 칸의 자동 최소 폭이 min(width 2.5rem, 글자 폭) 이라 짧은 이름은 늘지 않는다 — 말줄임은 안쪽 span 이 맡는다
+const nameSlot = 'w-10 basis-[content]'
+
 /**
  * 연결 호스트를 정한 저장소는 사이드바의 작업 호스트와 관계없이 그 호스트에서 연다. 연결을 확인하기 전에는
  * 이슈 목록을 보이지 않는다 — HostScope 가 연결 안 된 원격을 이 PC 로 바꾸므로 이 PC 에 worktree 를 만들 수 있다
@@ -58,7 +64,7 @@ export function RepoNode(props: RepoNodeProps) {
 
 function RepoHostBadge({ label }: { label: string }) {
   return (
-    <Badge variant="secondary" className="ml-1 px-1 py-0 text-[10px]" title={`연결 호스트: ${label}`} data-testid="repo-host-badge">
+    <Badge variant="secondary" className={cn('ml-1 px-1 py-0 text-[10px]', shrinkBadge)} title={`연결 호스트: ${label}`} data-testid="repo-host-badge">
       {label}
     </Badge>
   )
@@ -73,11 +79,14 @@ function PendingRepoNode({ repo, onOpenSettings, alias, status }: RepoNodeProps 
   return (
     <div data-testid={`repo-pending-${repo.owner}/${repo.name}`}>
       <div className="group flex items-center">
-        <div className="flex min-w-0 flex-1 items-center gap-1 px-1 py-1 text-sm text-muted-foreground">
-          <ChevronRightIcon className="size-3.5 opacity-40" />
-          <FolderGit2Icon className="size-3.5" />
-          <span className="truncate" title={fullName}>
-            {label}
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden px-1 py-1 text-sm text-muted-foreground">
+          <ChevronRightIcon className="size-3.5 shrink-0 opacity-40" />
+          <FolderGit2Icon className="size-3.5 shrink-0" />
+          <span className={nameSlot}>
+            {/* 별칭이 있으면 전체 이름, 없으면 줄어든 이름 전체를 title 로 보인다 */}
+            <span className="block truncate" title={fullName ?? label}>
+              {label}
+            </span>
           </span>
           <RepoHostBadge label={alias} />
         </div>
@@ -204,21 +213,24 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
               aria-expanded={expanded}
               aria-controls={childrenId}
               onClick={() => setExpanded(nodeId, !expanded)}
-              className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-1 text-left text-sm hover:bg-accent"
+              className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden rounded px-1 py-1 text-left text-sm hover:bg-accent"
             >
-              {expanded ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
-              <FolderGit2Icon className="size-3.5 text-muted-foreground" />
-              <span className="truncate" title={fullName ?? localRepo?.path}>
-                {label}
+              {expanded ? <ChevronDownIcon className="size-3.5 shrink-0" /> : <ChevronRightIcon className="size-3.5 shrink-0" />}
+              <FolderGit2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className={nameSlot}>
+                {/* title: 별칭이면 전체 이름, 로컬 저장소면 폴더 경로, 그 밖에는 이름 */}
+                <span className="block truncate" title={fullName ?? localRepo?.path ?? label}>
+                  {label}
+                </span>
               </span>
               {bound && <RepoHostBadge label={host.label} />}
               {hidden && (
-                <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]" title="표시 목록에서 뺐지만 로컬 worktree 가 있어 보입니다">
+                <Badge variant="outline" className={cn('ml-1 px-1 py-0 text-[10px]', shrinkBadge)} title="표시 목록에서 뺐지만 로컬 worktree 가 있어 보입니다">
                   숨김
                 </Badge>
               )}
               {baseRepo && !local && (
-                <Badge variant="outline" className="ml-1 px-1 py-0 text-[10px]" title={`기준 저장소(${host.label}): ${baseRepo}`} data-testid="base-repo-badge">
+                <Badge variant="outline" className={cn('ml-1 px-1 py-0 text-[10px]', shrinkBadge)} title={`기준 저장소(${host.label}): ${baseRepo}`} data-testid="base-repo-badge">
                   기준 저장소
                 </Badge>
               )}

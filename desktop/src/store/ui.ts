@@ -18,6 +18,8 @@ const THEME_VALUES: readonly Theme[] = ['ghostty', 'black', 'light']
 
 /** 터미널·파일 편집기의 글자 크기(px) */
 export const FONT_SIZE = { default: 13, min: 9, max: 28 } as const
+/** 사이드바 폭(px) — 끌기·←/→(step)·Home/End 로 바꾼다 */
+export const SIDEBAR_WIDTH = { default: 288, min: 240, max: 480, step: 16 } as const
 /** 전체 현황(에이전트 목록)의 보기 옵션 — 값의 뜻은 features/agents/overview.ts */
 export type AgentsView = {
   /** 보일 상태(빈 목록 = 전부) */
@@ -34,6 +36,8 @@ export const DEFAULT_AGENTS_VIEW: AgentsView = { statuses: [], agents: [], query
 
 export const clampFontSize = (n: unknown): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(FONT_SIZE.max, Math.max(FONT_SIZE.min, Math.round(n))) : FONT_SIZE.default
+export const clampSidebarWidth = (n: unknown): number =>
+  typeof n === 'number' && Number.isFinite(n) ? Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, Math.round(n))) : SIDEBAR_WIDTH.default
 const isTheme = (v: unknown): v is Theme => THEME_VALUES.includes(v as Theme)
 
 export interface UiState {
@@ -47,6 +51,8 @@ export interface UiState {
   theme: Theme
   /** 터미널·파일 편집기의 글자 크기(px, persist) */
   fontSize: number
+  /** 사이드바 폭(px, persist) */
+  sidebarWidth: number
   /** 에이전트가 끝났거나 입력을 기다릴 때 OS 알림을 띄운다(persist) */
   agentNotify: boolean
   /** 하단 바에 AI 별 사용량을 보인다(persist) */
@@ -80,6 +86,8 @@ export interface UiState {
   setTheme(t: Theme): void
   /** 범위(FONT_SIZE)를 벗어나면 가까운 값으로 맞춘다 */
   setFontSize(n: number): void
+  /** 범위(SIDEBAR_WIDTH)를 벗어나면 가까운 값으로 맞춘다 */
+  setSidebarWidth(n: number): void
   setAgentNotify(v: boolean): void
   setShowUsage(v: boolean): void
   setAgentsView(patch: Partial<AgentsView>): void
@@ -124,6 +132,7 @@ export const useUiStore = create<UiState>()(
       terminalIds: {},
       theme: 'ghostty',
       fontSize: FONT_SIZE.default,
+      sidebarWidth: SIDEBAR_WIDTH.default,
       agentNotify: true,
       showUsage: true,
       agentsView: DEFAULT_AGENTS_VIEW,
@@ -155,6 +164,11 @@ export const useUiStore = create<UiState>()(
         }),
       setTheme: (theme) => set({ theme }),
       setFontSize: (n) => set({ fontSize: clampFontSize(n) }),
+      setSidebarWidth: (n) => {
+        const sidebarWidth = clampSidebarWidth(n)
+        // persist 는 set 만 불러도(값이 같아도) localStorage 에 쓴다 — 같은 값이면 set 하지 않는다
+        if (sidebarWidth !== get().sidebarWidth) set({ sidebarWidth })
+      },
       setAgentNotify: (agentNotify) => set({ agentNotify }),
       setShowUsage: (showUsage) => set({ showUsage }),
       setAgentsView: (patch) => set((s) => ({ agentsView: { ...s.agentsView, ...patch } })),
@@ -290,6 +304,7 @@ export const useUiStore = create<UiState>()(
         worktreePathMap: s.worktreePathMap,
         theme: s.theme,
         fontSize: s.fontSize,
+        sidebarWidth: s.sidebarWidth,
         agentNotify: s.agentNotify,
         showUsage: s.showUsage,
         agentsView: s.agentsView,
@@ -308,6 +323,7 @@ export const useUiStore = create<UiState>()(
       merge: (persisted, current) => {
         const state = (persisted ?? {}) as Partial<UiState>
         return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme, fontSize: state.fontSize === undefined ? current.fontSize : clampFontSize(state.fontSize),
+          sidebarWidth: state.sidebarWidth === undefined ? current.sidebarWidth : clampSidebarWidth(state.sidebarWidth),
           // 예전 버전의 저장 값에는 없거나 모양이 다를 수 있다 — 기본값 위에 얹는다
           agentsView: { ...current.agentsView, ...(typeof state.agentsView === 'object' && state.agentsView !== null ? state.agentsView : {}) },
           // 저장된 값이 글자가 아니면 버린다(대화상자가 그 값을 명령으로 쓴다)

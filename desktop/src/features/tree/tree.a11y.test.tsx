@@ -8,6 +8,8 @@ import { Workspace } from '../../app/Workspace'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import type { TauriApi } from '../../lib/tauri'
 import { worktreeId } from '@minmo/core'
+import { useHostsStore } from '../../store/hosts'
+import { LOCAL_OWNER, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
@@ -15,6 +17,7 @@ import { createFakeApi, createFakeGitHub, createFakeTauri, fail, ok } from '../.
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { WorktreeProvider } from '../issue/useWorktree'
 import { IssueRow } from './IssueRow'
+import { registerLocalRepo } from './localRepos'
 import type { TreeIssue } from './useTree'
 
 const ORG = { login: 'my-org', kind: 'org' as const, avatarUrl: null }
@@ -239,5 +242,61 @@ describe('AX-23 삭제 확인 대화상자: 데이터 손실 경고는 설명, �
     expect(alert.tagName).toBe('PRE')
     expect(alert).toHaveTextContent('worktree 가 없습니다')
     expect(screen.getByRole('dialog')).toContainElement(alert)
+  })
+})
+
+describe('AC-07 전체 이름 title', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    useHostsStore.setState({ aliases: ['srv'], selected: null, probes: {}, connecting: {}, errors: {}, baseRepos: {}, baseDirs: {}, repoHosts: {} })
+    useReposStore.setState({ added: [], local: {}, lastParent: {} })
+  })
+
+  /** renderWorkspace 와 같되, 연결 확인(sshProbe)이 끝나지 않는다 — 연결 대기 행을 보기 위해 */
+  function renderPendingWorkspace() {
+    const api = createFakeApi({ getSettings: async (s) => (s.kind === 'global' ? GLOBAL : SCOPE_EMPTY) })
+    const github = createFakeGitHub({ listOwners: async () => [ORG], listRepos: async () => [REPO] })
+    const { tauri } = createFakeTauri({ sshProbe: () => new Promise(() => {}) })
+    return renderWithDeps(wrap(<Workspace />), makeDeps({ api, github, tauri }))
+  }
+
+  it('조직: label', async () => {
+    renderWorkspace()
+    const org = await screen.findByTestId('org-node-my-org')
+    expect(within(org).getByText('my-org', { exact: true })).toHaveAttribute('title', 'my-org')
+    expect(org).toHaveAccessibleName('my-org')
+  })
+
+  it('GitHub 저장소: 이름', async () => {
+    const user = userEvent.setup()
+    renderWorkspace()
+    await user.click(await screen.findByTestId('org-node-my-org'))
+    const repo = await screen.findByTestId('repo-node-my-org/widgets')
+    expect(within(repo).getByText('widgets', { exact: true })).toHaveAttribute('title', 'widgets')
+    expect(repo).toHaveAccessibleName('widgets')
+  })
+
+  it('로컬 저장소: 폴더 경로', async () => {
+    const id = registerLocalRepo('local', '/src/my-app')
+    renderWorkspace()
+    const repo = await screen.findByTestId(`repo-node-${LOCAL_OWNER}/${id}`)
+    expect(within(repo).getByText('my-app', { exact: true })).toHaveAttribute('title', '/src/my-app')
+    expect(repo).toHaveAccessibleName('my-app')
+  })
+
+  it('연결 대기 저장소: 이름', async () => {
+    useHostsStore.getState().setRepoHost('my-org', 'widgets', 'ssh:srv')
+    const user = userEvent.setup()
+    renderPendingWorkspace()
+    await user.click(await screen.findByTestId('org-node-my-org'))
+    const pending = await screen.findByTestId('repo-pending-my-org/widgets')
+    expect(within(pending).getByText('widgets', { exact: true })).toHaveAttribute('title', 'widgets')
+  })
+
+  it('이슈: 제목', () => {
+    renderRow(ISSUE)
+    const row = screen.getByTestId('issue-row-42')
+    expect(within(row).getByText('Add login', { exact: true })).toHaveAttribute('title', 'Add login')
+    expect(row).toHaveAccessibleName('#42 Add login')
   })
 })

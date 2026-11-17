@@ -12,6 +12,7 @@ import { isLocalOwner, useRepoLabel, useReposStore } from '../../store/repos'
 import { useUiStore } from '../../store/ui'
 import { IssueAgentDot } from '../agents/AgentBadge'
 import { describeOpenError, useIssueActions } from '../issue/useWorktree'
+import { shrinkBadge } from './badgeClasses'
 import type { TreeIssue } from './useTree'
 
 export interface IssueRowProps {
@@ -93,7 +94,7 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
             aria-describedby={pathChanged ? pathChangedId : undefined}
             onClick={() => void actions.open(target)}
             className={cn(
-              'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-sm hover:bg-accent',
+              'flex w-full items-center gap-1.5 overflow-hidden rounded px-2 py-1 text-left text-sm hover:bg-accent',
               selected && 'bg-accent font-medium',
               issue.state === 'closed' && 'text-muted-foreground',
             )}
@@ -110,14 +111,21 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
             ) : (
               <>
                 <span className="text-muted-foreground">#{issue.number}</span>
-                <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+                {/* 배지(닫힘·경로 변경됨)가 함께 있어도 제목은 최소 40px 보인다 — 배지가 줄고 … 를 보인다 (#70) */}
+                <span className="min-w-10 flex-1 truncate" title={issue.title}>
+                  {issue.title}
+                </span>
               </>
             )}
-            {issue.state === 'closed' && <Badge variant="secondary">닫힘</Badge>}
+            {issue.state === 'closed' && (
+              <Badge variant="secondary" className={shrinkBadge}>
+                닫힘
+              </Badge>
+            )}
             {pathChanged && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-400">
+                  <Badge variant="outline" className={cn('border-amber-500 text-amber-700 dark:text-amber-400', shrinkBadge)}>
                     경로 변경됨
                   </Badge>
                 </TooltipTrigger>
