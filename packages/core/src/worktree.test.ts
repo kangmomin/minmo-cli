@@ -1022,6 +1022,137 @@ describe('deleteWorktree (AC-14, EC-15, EC-16, EC-24, PTY 선종료)', () => {
     expect(t.tauri.scriptCancel.mock.invocationCallOrder[0]).toBeLessThan(t.callOrder(t.isRemove))
     await opening
   })
+
+  // #72: Windows 의 git 은 npm workspace junction 을 못 지우면 등록만 해제하고 폴더를 남긴다
+  describe('git worktree remove 실패 시 남은 폴더 정리 (#72)', () => {
+    /** worktree remove 만 바꾸고 나머지는 시뮬레이터로 */
+    function setupRemove(remove: (sim: Sim) => CmdResult, sim: Partial<Sim> = {}) {
+      const t = setupDelete(sim)
+      t.tauri.gitRun.mockImplementation(async (args, opts) => {
+        const [a] = normalize(args, opts)
+        if (a[0] === 'worktree' && a[1] === 'remove') return remove(t.sim)
+        return simGit(t.sim, args, opts)
+      })
+      return t
+    }
+    const isBranchDelete = (a: string[]) => a[0] === 'branch' && (a.includes('-d') || a.includes('-D'))
+
+    /** pred 에 맞는 git 호출만 result 로 바꾼다(앞의 -c 옵션은 a 에 남아 있다) */
+    function override(t: ReturnType<typeof setupRemove>, pred: (a: string[], cwd?: string) => boolean, result: () => CmdResult) {
+      const base = t.tauri.gitRun.getMockImplementation()!
+      t.tauri.gitRun.mockImplementation(async (args, opts) => {
+        const [a, cwd] = normalize(args, opts)
+        return pred(a, cwd) ? result() : base(args, opts)
+      })
+    }
+    const isProbe = (a: string[], cwd?: string) => a.includes('rev-parse') && a.includes('--git-dir') && cwd === P
+    /** P 가 저장소로 읽힌다(`rev-parse --git-dir` 성공) */
+    const insideRepo = (t: ReturnType<typeof setupRemove>, gitDir: string) => override(t, isProbe, () => ok(`${gitDir}\n`))
+    /** n 번째 `worktree list` 만 실패 */
+    function listFailsAt(t: ReturnType<typeof setupRemove>, n: number) {
+      let i = 0
+      override(t, (a) => a[0] === 'worktree' && a[1] === 'list' && ++i === n, () => fail('fatal: unable to read worktrees', 128))
+    }
+    const junctionFailure = (sim: Sim) => {
+      sim.worktrees.delete(P)
+      return fail(`error: failed to delete '${P}': Directory not empty`, 255)
+    }
+    const notAWorktree = () => fail(`fatal: '${P}' is not a working tree`, 128)
+
+    it('첫 삭제: 이번 remove 가 등록만 해제하고 실패(Directory not empty) → 남은 폴더를 지우고 삭제 완료', async () => {
+      const t = setupRemove(junctionFailure)
+      await expect(t.svc.deleteWorktree(ISSUE42, { confirmed: true })).resolves.toEqual({ status: 'deleted' })
+      expect(t.tauri.removeDir).toHaveBeenCalledWith(P)
+      expect(t.sim.existing.has(P)).toBe(false)
+      expect(t.find(isBranchDelete)[0]).toContain(BR42)
+      expect(t.pathStore.delete).toHaveBeenCalledWith(ID42)
+    })
+
+    it('첫 삭제는 작업 폴더가 다른 저장소 안에 있어도 지운다(이번 remove 가 등록을 푼 것이 정체의 근거)', async () => {
+      const t = setupRemove(junctionFailure)
+      insideRepo(t, `${HOME}/.git`)
+      await expect(t.svc.deleteWorktree(ISSUE42, { confirmed: true })).resolves.toEqual({ status: 'deleted' })
+      expect(t.tauri.removeDir).toHaveBeenCalledWith(P)
+    })
+
+    it('재시도: 전부터 등록이 없던 경로(is not a working tree)·저장소 밖 → 남은 폴더를 지우고 삭제 완료', async () => {
+      const t = setupRemove(notAWorktree, { worktrees: new Map() })
+      await expect(t.svc.deleteWorktree(ISSUE42, { confirmed: true })).resolves.toEqual({ status: 'deleted' })
+      expect(t.tauri.removeDir).toHaveBeenCalledWith(P)
+      expect(t.find(isBranchDelete)[0]).toContain(BR42)
+      expect(t.pathStore.delete).toHaveBeenCalledWith(ID42)
+    })
+
+    it.each([
+      ['그 경로가 다른 저장소', '.git'],
+      ['그 경로가 bare 저장소', '.'],
+      ['다른 저장소 안의 폴더', `${HOME}/.git`],
+    ])('재시도: 전부터 등록이 없던 경로가 %s → 지우지 않고 git_failed', async (_label, gitDir) => {
+      const t = setupRemove(notAWorktree, { worktrees: new Map() })
+      insideRepo(t, gitDir)
+      await expect(t.svc.deleteWorktree(ISSUE42, { confirmed: true })).rejects.toMatchObject({ code: 'git_failed' })
+      expect(t.tauri.removeDir).not.toHaveBeenCalled()
+      expect(t.sim.existing.has(P)).toBe(true)
+      expect(t.find(isBranchDelete)).toHaveLength(0)
+      expect(t.pathStore.delete).not.toHaveBeenCalled()
+    })
+
+    it('재시도: 저장소 검사는 언어를 고정하고 소유권 검사로 실패하지 않게 실행', async () => {
+      const t = setupRemove(notAWorktree, { worktrees: new Map() })
+      await t.svc.deleteWorktree(ISSUE42, { confirmed: true })
+      const [args, opts] = t.tauri.gitRun.mock.calls.find(([args, opts]) => isProbe(...normalize(args, opts)))!
+      expect(args.slice(0, 2)).toEqual(['-c', 'safe.directory=*'])
+      expect(opts?.env).toMatchObject({ LC_ALL: 'C' })
+    })
+
+    it('재시도: 경로가 없음(cannot change to) → 기록만 정리하고 삭제 완료', async () => {
+      const t = setupRemove(notAWorktree, { worktrees: new Map() })
+      override(t, isProbe, () => fail(`fatal: cannot change to '${P}': No such file or directory`, 128))
+      await expect(t.svc.deleteWorktree(ISSUE42, { confirmed: true })).resolves.toEqual({ status: 'deleted' })
+      expect(t.pathStore.delete).toHaveBeenCalledWith(ID42)
+    })
+
+    /** 지우지 않고 git_failed — 폴더·브랜치·기록을 모두 그대로 둔다 */
+    async function expectKept(t: ReturnType<typeof setupRemove>) {
+      await expect(t.svc.deleteWorktree(ISSUE42, { confirmed: true })).rejects.toMatchObject({ code: 'git_failed' })
+      expect(t.tauri.removeDir).not.toHaveBeenCalled()
+      expect(t.find(isBranchDelete)).toHaveLength(0)
+      expect(t.pathStore.delete).not.toHaveBeenCalled()
+    }
+
+    it('재시도: 경로에 .git 이 있음(git 이 못 읽는 저장소일 수 있음) → 지우지 않음', async () => {
+      const t = setupRemove(notAWorktree, { worktrees: new Map() })
+      t.sim.existing.add(`${P}/.git`)
+      await expectKept(t)
+    })
+
+    it.each([
+      ['권한 없음', `fatal: cannot change to '${P}': Permission denied`],
+      ['소유권 등 그 밖의 오류', 'fatal: detected dubious ownership in repository'],
+    ])('재시도: 저장소 검사가 %s 로 실패 → 저장소가 아니라고 확인하지 못했으므로 지우지 않음', async (_label, stderr) => {
+      const t = setupRemove(notAWorktree, { worktrees: new Map() })
+      override(t, isProbe, () => fail(stderr, 128))
+      await expectKept(t)
+    })
+
+    it('삭제 전 등록 여부 불명(list 실패) → 첫 삭제로 보지 않고 저장소 검사를 거친다', async () => {
+      const t = setupRemove(junctionFailure)
+      listFailsAt(t, 1)
+      insideRepo(t, `${HOME}/.git`)
+      await expectKept(t)
+    })
+
+    it('실패 후 등록 여부 불명(list 실패) → 지우지 않음', async () => {
+      const t = setupRemove(junctionFailure)
+      listFailsAt(t, 2)
+      await expectKept(t)
+    })
+
+    it('아직 등록된 채 실패(파일 잠금 등) → 폴더를 직접 지우지 않고 git_failed', async () => {
+      const t = setupRemove(() => fail('error: failed to delete: Permission denied', 255))
+      await expectKept(t)
+    })
+  })
 })
 
 describe('F-4 EC-15 삭제 전 검사 실패 → 개수 불명으로 확인 요구 (데이터 손실 방지)', () => {
