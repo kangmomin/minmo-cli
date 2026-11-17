@@ -5,13 +5,14 @@
 // 라디오 그룹 "생성 후 스크립트"(라디오 "상속"/"없음"/"직접 입력"), 텍스트영역 "스크립트 내용", 버튼 "저장",
 // 라디오 그룹 "체크아웃 범위"(라디오 "상속"/"전체"/"지정한 폴더만"), 텍스트영역 "폴더 목록",
 // 미리보기 data-testid "preview-branch" / "preview-path", 필드 오류는 aria-invalid="true".
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { SettingsInput, SettingsRecord, SettingsScope } from '@minmo/api-client'
 
 import { useHostsStore } from '../../store/hosts'
+import { LOCAL_OWNER, NICKNAME_MAX, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { apiError, createFakeApi } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
@@ -66,6 +67,70 @@ beforeEach(() => {
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online' })
   useHostsStore.setState({ baseRepos: {}, baseDirs: {} })
+  useReposStore.setState({ local: {}, nicknames: {} })
+})
+
+describe('저장소 별칭(#73, 이 PC 에 저장)', () => {
+  const ALIAS_ORG: SettingsRecord = { ...EMPTY, worktreePath: '~/w/{alias}/{key}', updatedAt: '2026-11-09T00:00:00.000Z' }
+
+  it('입력하면 [저장] 없이 바로 저장되고, 제목·미리보기 경로({alias})에 반영된다', async () => {
+    const { api, user } = setup({ scope: PROJECT, org: ALIAS_ORG })
+    await waitFor(() => expect(screen.getByTestId('preview-path')).toHaveTextContent('/home/u/w/Repo-A/42'))
+    const input = await field('별칭')
+    expect(input).toHaveAttribute('placeholder', 'Repo-A')
+    await user.type(input, 'my app ')
+    // 입력란은 친 그대로(끝 공백 포함), 저장값은 정리한 값
+    expect(input).toHaveValue('my app ')
+    expect(useReposStore.getState().nicknames).toEqual({ 'myorg/repo-a': 'my app' })
+    expect(screen.getByRole('dialog', { name: '프로젝트 설정 — my app' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('preview-path')).toHaveTextContent('/home/u/w/my app/42'))
+    expect(api.putSettings).not.toHaveBeenCalled()
+    // 비우면 원래 이름
+    await user.clear(input)
+    expect(useReposStore.getState().nicknames).toEqual({})
+    await waitFor(() => expect(screen.getByTestId('preview-path')).toHaveTextContent('/home/u/w/Repo-A/42'))
+  })
+
+  it('이 PC 의 다른 저장소와 이름이 같으면 경고만 한다(대소문자 무시)', async () => {
+    useReposStore.setState({ nicknames: { 'myorg/repo-b': 'ra' } })
+    const { user } = setup({ scope: PROJECT })
+    const status = within(screen.getByTestId('repo-nickname-section')).getByRole('status')
+    await user.type(await field('별칭'), 'RA')
+    expect(useReposStore.getState().nicknames['myorg/repo-a']).toBe('RA')
+    expect(status).toHaveTextContent('이름(별칭)이 같습니다')
+    await user.type(await field('별칭'), 'x')
+    expect(status).toHaveTextContent('')
+  })
+
+  it('다른 화면에서 별칭이 바뀌면 입력란도 바뀐다 · 입력 중인 끝 공백은 그대로', async () => {
+    const { user } = setup({ scope: PROJECT })
+    const input = await field('별칭')
+    await user.type(input, 'my ')
+    expect(input).toHaveValue('my ')
+    act(() => useReposStore.getState().setNickname('MyOrg', 'Repo-A', 'theirs'))
+    expect(input).toHaveValue('theirs')
+  })
+
+  it(`${NICKNAME_MAX}글자(코드 포인트)까지 받는다`, async () => {
+    const { user } = setup({ scope: PROJECT })
+    const input = await field('별칭')
+    await user.click(input)
+    await user.paste('😀'.repeat(NICKNAME_MAX + 5))
+    expect(Array.from((input as HTMLInputElement).value)).toHaveLength(NICKNAME_MAX)
+    expect(Array.from(useReposStore.getState().nicknames['myorg/repo-a'])).toHaveLength(NICKNAME_MAX)
+  })
+
+  it('로컬 저장소 프로젝트 설정에도 있다(기본 이름 = 폴더명)', async () => {
+    useReposStore.setState({ local: { 'app-0001': { hostId: 'local', path: '/src/app', displayName: 'app', tasks: [] } } })
+    setup({ scope: { kind: 'project', owner: LOCAL_OWNER, repo: 'app-0001' } })
+    expect(await field('별칭')).toHaveAttribute('placeholder', 'app')
+  })
+
+  it('조직 설정에는 별칭 칸이 없다', async () => {
+    setup({ scope: ORG })
+    await field('브랜치 템플릿')
+    expect(screen.queryByTestId('repo-nickname-section')).toBeNull()
+  })
 })
 
 describe('호스트별 값(이 PC 에 저장) — 원본 위치·기본 폴더', () => {
