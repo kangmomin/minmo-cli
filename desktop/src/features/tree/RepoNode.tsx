@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../components/ui/dropdown-menu'
 import type { GitHubRepo } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
+import { cn } from '../../lib/utils'
 import { issueBranchContext, issuePaths, lacksOrigin } from '@minmo/core'
 import { useHost } from '../../app/host'
 import { baseDirOf, baseRepoOf, repoAliasOf, useHostsStore, useOriginFolder } from '../../store/hosts'
@@ -41,6 +42,9 @@ export interface RepoNodeProps {
   onOpenSettings(scope: SettingsScope, preview: PreviewIssue | null): void
 }
 
+// Badge 기본 shrink-0 이면 좁은 폭에서 배지가 줄지 않아 이름이 0px 로 사라진다 — 이름(min-w-10)과 함께 줄고 … 를 보인다 (#70)
+const shrinkBadge = 'block min-w-0 shrink truncate'
+
 /**
  * 연결 호스트를 정한 저장소는 사이드바의 작업 호스트와 관계없이 그 호스트에서 연다. 연결을 확인하기 전에는
  * 이슈 목록을 보이지 않는다 — HostScope 가 연결 안 된 원격을 이 PC 로 바꾸므로 이 PC 에 worktree 를 만들 수 있다
@@ -56,12 +60,9 @@ export function RepoNode(props: RepoNodeProps) {
   )
 }
 
-// Badge 기본 shrink-0 이면 좁은 폭에서 배지가 줄지 않아 이름이 0px 로 사라진다 — 이름(min-w-10)과 함께 줄고 … 를 보인다 (#70)
-const shrinkBadge = 'block min-w-0 shrink truncate'
-
 function RepoHostBadge({ label }: { label: string }) {
   return (
-    <Badge variant="secondary" className={`ml-1 px-1 py-0 text-[10px] ${shrinkBadge}`} title={`연결 호스트: ${label}`} data-testid="repo-host-badge">
+    <Badge variant="secondary" className={cn('ml-1 px-1 py-0 text-[10px]', shrinkBadge)} title={`연결 호스트: ${label}`} data-testid="repo-host-badge">
       {label}
     </Badge>
   )
@@ -212,12 +213,12 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
               </span>
               {bound && <RepoHostBadge label={host.label} />}
               {hidden && (
-                <Badge variant="outline" className={`ml-1 px-1 py-0 text-[10px] ${shrinkBadge}`} title="표시 목록에서 뺐지만 로컬 worktree 가 있어 보입니다">
+                <Badge variant="outline" className={cn('ml-1 px-1 py-0 text-[10px]', shrinkBadge)} title="표시 목록에서 뺐지만 로컬 worktree 가 있어 보입니다">
                   숨김
                 </Badge>
               )}
               {baseRepo && !local && (
-                <Badge variant="outline" className={`ml-1 px-1 py-0 text-[10px] ${shrinkBadge}`} title={`기준 저장소(${host.label}): ${baseRepo}`} data-testid="base-repo-badge">
+                <Badge variant="outline" className={cn('ml-1 px-1 py-0 text-[10px]', shrinkBadge)} title={`기준 저장소(${host.label}): ${baseRepo}`} data-testid="base-repo-badge">
                   기준 저장소
                 </Badge>
               )}

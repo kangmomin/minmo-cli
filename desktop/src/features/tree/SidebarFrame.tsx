@@ -4,6 +4,11 @@ import type { CSSProperties, KeyboardEvent, PointerEvent, ReactNode } from 'reac
 import { cn } from '../../lib/utils'
 import { SIDEBAR_WIDTH, clampSidebarWidth, useUiStore } from '../../store/ui'
 
+interface SidebarFrameProps {
+  className?: string
+  children: ReactNode
+}
+
 /** 누른 위치에서 이만큼(px) 가로로 움직여야 끌기로 본다 — 더 작은 떨림은 클릭(더블클릭 포함)이다 */
 const DRAG_THRESHOLD = 3
 
@@ -12,7 +17,7 @@ const DRAG_THRESHOLD = 3
  * 폭의 주인은 store 다 — 끄는 동안에는 화면에만 반영하고 놓을 때 한 번 저장한다.
  * 트리는 children 으로 받아 끄는 동안 다시 렌더하지 않는다.
  */
-export function SidebarFrame({ className, children }: { className?: string; children: ReactNode }) {
+export function SidebarFrame({ className, children }: SidebarFrameProps) {
   const id = useId()
   const stored = useUiStore((s) => s.sidebarWidth)
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth)
@@ -23,7 +28,7 @@ export function SidebarFrame({ className, children }: { className?: string; chil
   const width = draft ?? stored
 
   // 이미 끝난 드래그의 이벤트(pointerup 뒤의 lostpointercapture 등)는 무시한다 — 저장은 움직인 경우에만 1회
-  const end = (e: PointerEvent) => {
+  const end = (e: PointerEvent<HTMLDivElement>) => {
     const d = drag.current
     if (!d || e.pointerId !== d.id) return
     drag.current = null
@@ -32,7 +37,7 @@ export function SidebarFrame({ className, children }: { className?: string; chil
     if (d.moved) setSidebarWidth(d.last)
   }
 
-  const onKeyDown = (e: KeyboardEvent) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (drag.current || e.ctrlKey || e.altKey || e.metaKey) return
     const next =
       e.key === 'ArrowLeft'
