@@ -24,7 +24,7 @@ export interface GhHost {
 
 export interface FsHost {
   pathExists(path: string): Promise<boolean>
-  /** 재귀 삭제 — "이번 실행이 새로 만든 경로" 정리에만 사용 */
+  /** 재귀 삭제 — "이번 실행이 새로 만든 경로"와 삭제 요청한 worktree 중 git 이 지우지 못하고 남긴 폴더 정리에만 사용 */
   removeDir(path: string): Promise<void>
   /** src 의 파일을 dst 의 같은 상대 경로로 복사(기존 파일은 유지)하고 복사한 개수를 돌려준다. src 가 없으면 0 */
   copyTree(src: string, dst: string): Promise<number>
