@@ -1,0 +1,66 @@
+// UI store — 트리에서 이슈를 눌렀을 때의 터미널 포커스 요청(#78)·이슈 선택 번호
+import { beforeEach, describe, expect, it } from 'vitest'
+
+import { useUiStore } from './ui'
+
+const ID = 'o/r#1'
+const P1 = `${ID}::1`
+const P2 = `${ID}::2`
+/** P1 | P2 로 나눈 패널 구성 */
+const SPLIT = { tree: { kind: 'split' as const, dir: 'row' as const, a: { kind: 'leaf' as const, id: P1 }, b: { kind: 'leaf' as const, id: P2 } }, seq: 2 }
+
+beforeEach(() => {
+  useUiStore.setState({ tab: 'terminal', panes: {}, terminalIds: {}, startedTerminals: {}, focusRequest: null, selectedIssueId: null, selectSeq: 0 })
+})
+
+const request = () => useUiStore.getState().focusRequest
+
+describe('focusIssueTerminal (#78)', () => {
+  it('터미널 탭 + 이 화면이 연 터미널: 그 이슈에서 마지막으로 쓴 패널에 포커스를 요청한다', () => {
+    useUiStore.setState({ panes: { [ID]: { ...SPLIT, focused: P2 } }, startedTerminals: { [ID]: true }, focusRequest: { paneId: 'x::1', token: 4 } })
+    useUiStore.getState().focusIssueTerminal(ID)
+    expect(request()).toEqual({ paneId: P2, token: 5 })
+  })
+
+  it('마지막으로 쓴 패널이 없거나 이미 닫혔으면 첫 패널', () => {
+    useUiStore.setState({ panes: { [ID]: { ...SPLIT, focused: null } }, startedTerminals: { [ID]: true } })
+    useUiStore.getState().focusIssueTerminal(ID)
+    expect(request()).toEqual({ paneId: P1, token: 1 })
+    useUiStore.setState({ panes: { [ID]: { ...SPLIT, focused: `${ID}::9` } } })
+    useUiStore.getState().focusIssueTerminal(ID)
+    expect(request()).toEqual({ paneId: P1, token: 2 })
+  })
+
+  it('다른 화면이 열어 떠 있는 터미널(이 화면은 아직 열지 않음)에도 요청한다 — 보이면 붙는다', () => {
+    useUiStore.setState({ panes: { [ID]: { ...SPLIT, focused: null } }, terminalIds: { [P2]: 'pty-9' } })
+    useUiStore.getState().focusIssueTerminal(ID)
+    expect(request()).toEqual({ paneId: P1, token: 1 })
+  })
+
+  it('터미널이 없으면(열지 않음·패널을 모두 닫음) 아무것도 하지 않는다 — 셸을 만들지 않는다', () => {
+    useUiStore.getState().focusIssueTerminal(ID)
+    expect(request()).toBeNull()
+    useUiStore.setState({ panes: { [ID]: { ...SPLIT, focused: null } } })
+    useUiStore.getState().focusIssueTerminal(ID)
+    expect(request()).toBeNull()
+    useUiStore.setState({ panes: { [ID]: { tree: null, focused: null, seq: 2 } }, startedTerminals: { [ID]: true } })
+    useUiStore.getState().focusIssueTerminal(ID)
+    expect(request()).toBeNull()
+    expect(useUiStore.getState().startedTerminals).toEqual({ [ID]: true })
+  })
+
+  it('다른 탭(메모 등)을 보는 중이면 탭을 바꾸지 않고 요청하지 않는다', () => {
+    useUiStore.setState({ tab: 'notes', panes: { [ID]: { ...SPLIT, focused: P1 } }, startedTerminals: { [ID]: true } })
+    useUiStore.getState().focusIssueTerminal(ID)
+    expect(request()).toBeNull()
+    expect(useUiStore.getState().tab).toBe('notes')
+  })
+})
+
+describe('selectIssue', () => {
+  it('같은 이슈를 다시 골라도 선택 번호가 오른다(좁은 화면이 작업 화면으로 넘어가는 신호)', () => {
+    useUiStore.getState().selectIssue(ID)
+    useUiStore.getState().selectIssue(ID)
+    expect(useUiStore.getState()).toMatchObject({ selectedIssueId: ID, selectSeq: 2 })
+  })
+})

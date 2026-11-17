@@ -1438,3 +1438,55 @@ describe('터미널은 사용자가 열 때만 만든다 (Ctrl+T · [터미널 �
     expect(t.tauri.ptyKill).not.toHaveBeenCalled()
   })
 })
+
+describe('#78 트리에서 이슈를 누르면 그 이슈의 터미널로 포커스', () => {
+  const B: TerminalSessionSpec = { issueId: 'o/r#2', cwd: '/w/2' }
+
+  /** 화면처럼 고른 이슈의 터미널을 보인다 */
+  function Selected() {
+    const id = useUiStore((s) => s.selectedIssueId)
+    return <TerminalTab sessions={[A, B]} activeId={id} visible />
+  }
+
+  it('고른 렌더에서 새 이슈의 터미널이 보이는 채로 포커스하고, 요청 없이 고르기만 하면 포커스하지 않는다(AX-02)', async () => {
+    useUiStore.setState({ selectedIssueId: A.issueId, startedTerminals: { [A.issueId]: true, [B.issueId]: true } })
+    const fake = createFakeTauri()
+    renderWithDeps(<Selected />, makeDeps({ tauri: fake.tauri }))
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    const hidden = (x: (typeof xterm.instances)[number]) => x.host!.closest('.hidden') !== null
+    const a = xterm.instances.find((x) => !hidden(x))!
+    const b = xterm.instances.find(hidden)!
+    let shownAtFocus: boolean | null = null
+    b.focus.mockImplementation(() => {
+      shownAtFocus = !hidden(b)
+    })
+
+    act(() => {
+      useUiStore.getState().selectIssue(B.issueId)
+      useUiStore.getState().focusIssueTerminal(B.issueId)
+    })
+    expect(b.focus).toHaveBeenCalledTimes(1)
+    expect(shownAtFocus).toBe(true)
+    expect(a.focus).not.toHaveBeenCalled()
+
+    act(() => useUiStore.getState().selectIssue(A.issueId))
+    await flush()
+    expect(a.focus).not.toHaveBeenCalled()
+  })
+
+  it('처리한 요청을 지운 뒤 같은 패널에 다시 요청해도(token 이 다시 1) 포커스한다', async () => {
+    useUiStore.setState({ selectedIssueId: A.issueId, startedTerminals: {} })
+    const fake = createFakeTauri()
+    renderWithDeps(<Selected />, makeDeps({ tauri: fake.tauri }))
+    // [터미널 열기] 와 같다 — 첫 패널을 만들고 포커스(요청 token 1)
+    act(() => useUiStore.getState().openTerminal(A.issueId))
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    const [a] = xterm.instances
+    expect(a.focus).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(useUiStore.getState().focusRequest).toBeNull())
+
+    act(() => useUiStore.getState().focusIssueTerminal(A.issueId))
+    expect(useUiStore.getState().focusRequest).toEqual({ paneId: `${A.issueId}::1`, token: 1 })
+    expect(a.focus).toHaveBeenCalledTimes(2)
+  })
+})

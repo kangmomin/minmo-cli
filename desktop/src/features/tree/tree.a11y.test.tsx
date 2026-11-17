@@ -241,3 +241,33 @@ describe('AX-23 삭제 확인 대화상자: 데이터 손실 경고는 설명, �
     expect(screen.getByRole('dialog')).toContainElement(alert)
   })
 })
+
+describe('#78 이슈 행을 누르면(마우스·Enter·터치) 떠 있는 그 이슈의 터미널로 포커스를 요청한다', () => {
+  const id = worktreeId('my-org', 'widgets', '42')
+  const pane = `${id}::1`
+
+  beforeEach(() => {
+    useUiStore.setState({ panes: { [id]: { tree: { kind: 'leaf', id: pane }, focused: null, seq: 1 } }, startedTerminals: { [id]: true }, focusRequest: null })
+  })
+
+  it('작업 폴더가 준비된 이슈: 클릭과 Enter 모두 요청한다', async () => {
+    useSetupStore.setState({ open: { [id]: { phase: 'ready', path: '/w/42', branch: 'issue/42', pathChanged: false } } })
+    renderRow(ISSUE, { hasWorktree: true })
+    const row = screen.getByTestId('issue-row-42')
+    fireEvent.click(row)
+    expect(useUiStore.getState()).toMatchObject({ selectedIssueId: id, focusRequest: { paneId: pane, token: 1 } })
+
+    const user = userEvent.setup()
+    row.focus()
+    await user.keyboard('{Enter}')
+    expect(useUiStore.getState().focusRequest).toEqual({ paneId: pane, token: 2 })
+  })
+
+  it('준비 중인 이슈에는 요청하지 않는다(터미널이 없다)', () => {
+    useSetupStore.setState({ open: { [id]: { phase: 'opening' } } })
+    renderRow(ISSUE, { hasWorktree: true })
+    fireEvent.click(screen.getByTestId('issue-row-42'))
+    expect(useUiStore.getState().selectedIssueId).toBe(id)
+    expect(useUiStore.getState().focusRequest).toBeNull()
+  })
+})
