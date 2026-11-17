@@ -199,7 +199,7 @@ Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사�
 
 상단의 테마 버튼으로 색을 바꾼다: **Ghostty**(기본 — Ghostty 터미널의 기본 색을 터미널 16색·앱 화면·파일 편집기에 쓴다) → 블랙 → 라이트. 색 값은 `desktop/src/lib/ghostty.ts` 와 `index.css` 의 `.ghostty` 에 있다.
 
-터미널의 복사·붙여넣기는 Windows Terminal 과 같다: 글자를 선택하고 **Ctrl+C** 는 복사(선택이 없으면 셸로 보내 실행 중인 명령을 중단), **Ctrl+V** 는 붙여넣기. Ctrl+Shift+C / Ctrl+Shift+V 도 된다. **Ctrl+Backspace** 는 앞 단어 지우기, **Shift+Enter** 는 전송하지 않는 줄바꿈(Claude Code·Codex 의 입력창)이다. 패널 단축키는 Ctrl+D(오른쪽 분할)·Ctrl+Shift+D(아래 분할)·Ctrl+W(닫기)다(`desktop/src/features/terminal/keys.ts`). 이슈를 고르면 작업 폴더(worktree)만 준비하고 터미널은 만들지 않는다 — **Ctrl+T**(또는 [터미널 열기] 버튼)로 열고, 이미 열려 있으면 Ctrl+T 는 오른쪽에 새 패널을 만든다.
+터미널의 복사·붙여넣기는 Windows Terminal 과 같다: 글자를 선택하고 **Ctrl+C** 는 복사(선택이 없으면 셸로 보내 실행 중인 명령을 중단), **Ctrl+V** 는 붙여넣기. Ctrl+Shift+C / Ctrl+Shift+V 도 된다. **Ctrl+Backspace** 는 앞 단어 지우기, **Shift+Enter** 는 전송하지 않는 줄바꿈(Claude Code·Codex 의 입력창)이다. 패널 단축키는 Ctrl+D(오른쪽 분할)·Ctrl+Shift+D(아래 분할)·Ctrl+W(닫기)다(`desktop/src/features/terminal/keys.ts`). 이슈를 고르면 작업 폴더(worktree)만 준비하고 터미널은 만들지 않는다 — **Ctrl+T**(또는 [터미널 열기] 버튼)로 열고, 이미 열려 있으면 Ctrl+T 는 오른쪽에 새 패널을 만든다. 터미널 탭을 보는 중에 터미널이 열린 이슈를 트리에서 누르면(클릭·Enter·터치) 그 이슈에서 마지막으로 쓴 터미널 패널로 포커스가 가서 바로 입력할 수 있다. 터미널이 없거나 다른 탭(변경·파일·메모)을 보는 중이면 포커스는 누른 행에 남는다.
 
 터미널의 링크(일반 URL·OSC 8 링크)는 **Ctrl+클릭** 으로 브라우저에서 연다(http·https 만, `desktop/src/features/terminal/links.ts`). ssh 로 접속한 원격의 프로그램(tmux 복사 모드, Claude Code 의 드래그 복사 등)이 OSC 52 로 복사하면 이 PC 의 클립보드에 들어간다 — 쓰기만 받고, 클립보드를 읽는 요청에는 답하지 않는다(`osc52.ts`). 프로그램이 마우스를 쓰면 드래그가 그 프로그램으로 가므로, 터미널에서 선택하려면 **Shift+드래그** 한 뒤 Ctrl+C 를 누른다.
 
