@@ -44,6 +44,41 @@ test('이슈를 고르기만 해서는 터미널이 뜨지 않는다 · Ctrl+T �
   await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(1)
 })
 
+test('#78 터미널 탭에서 터미널이 떠 있는 이슈를 트리에서 누르면(마우스·Enter) 바로 입력한다 · 터미널이 없거나 다른 탭이면 포커스는 그대로', async ({ page }) => {
+  // 터미널은 #42 의 하나뿐이다
+  const input42 = page.getByTestId('terminal-pane').getByLabel('터미널 입력')
+  const row42 = page.getByTestId('issue-row-42')
+  const rowEtc = page.getByTestId('issue-row-etc')
+
+  // 기타: 터미널이 없다 → 만들지 않고, 포커스는 누른 행에 남는다
+  await rowEtc.click()
+  await expect(page.getByRole('button', { name: '터미널 열기' })).toBeVisible()
+  await expect(rowEtc).toBeFocused()
+
+  // 마우스: 그 터미널로 포커스 → 바로 친 글자가 셸로 간다
+  await row42.click()
+  await expect(input42).toBeFocused()
+  await page.keyboard.type('ls')
+  await expect.poll(async () => (await sent(page)).join('')).toBe('ls')
+
+  // 키보드: 행에서 Enter 로 열어도 같다
+  await rowEtc.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('button', { name: '터미널 열기' })).toBeVisible()
+  await expect(rowEtc).toBeFocused()
+  await row42.focus()
+  await page.keyboard.press('Enter')
+  await expect(input42).toBeFocused()
+
+  // 다른 탭(메모)을 보는 중이면 탭을 바꾸지 않고 포커스도 옮기지 않는다
+  await page.getByRole('tab', { name: '메모' }).click()
+  await row42.click()
+  await expect(page.getByRole('tab', { name: '메모' })).toHaveAttribute('aria-selected', 'true')
+  await expect(row42).toBeFocused()
+  // 어느 경우에도 터미널을 새로 만들지 않았다
+  await expect(page.getByTestId('terminal-pane')).toHaveCount(1)
+})
+
 test('Ctrl+V · Ctrl+Shift+V 로 클립보드 내용을 한 번만 붙여 넣는다(^V 는 보내지 않는다)', async ({ page }) => {
   await page.evaluate(() => navigator.clipboard.writeText('echo pasted-by-ctrl-v'))
   await page.getByLabel('터미널 입력').focus()

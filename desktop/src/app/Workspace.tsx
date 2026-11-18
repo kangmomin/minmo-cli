@@ -1,6 +1,6 @@
 import { ListTreeIcon, LogOutIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import type { SettingsScope } from '@minmo/api-client'
 
@@ -49,11 +49,16 @@ export function Workspace() {
   const [cliOpen, setCliOpen] = useState(false)
   const [agentsOpen, setAgentsOpen] = useState(false)
   const [remoteOpen, setRemoteOpen] = useState(false)
-  // 좁은 화면(휴대폰)에서는 트리와 작업 화면을 한 번에 하나만 보인다 — 이슈를 고르면 작업 화면으로 넘어간다
-  const [showTree, setShowTree] = useState(true)
-  useEffect(() => {
+  // 좁은 화면(휴대폰)에서는 트리와 작업 화면을 한 번에 하나만 보인다 — 이슈를 고르면(같은 이슈를 다시 골라도) 작업 화면으로 넘어간다.
+  // effect 가 아니라 고른 그 렌더에서 넘긴다: 자식(터미널)의 포커스 요청은 이 컴포넌트의 effect 보다 먼저 처리되므로,
+  // effect 로 넘기면 터미널이 아직 가려진 채 포커스를 받지 못한다(#78)
+  const selectSeq = useUiStore((s) => s.selectSeq)
+  const [showTree, setShowTree] = useState(() => !useUiStore.getState().selectedIssueId)
+  const [seenSelectSeq, setSeenSelectSeq] = useState(selectSeq)
+  if (seenSelectSeq !== selectSeq) {
+    setSeenSelectSeq(selectSeq)
     if (selectedId) setShowTree(false)
-  }, [selectedId])
+  }
   useFontSizeShortcuts()
   useTerminalOpenShortcut()
   const baseDeps = useBaseDeps()

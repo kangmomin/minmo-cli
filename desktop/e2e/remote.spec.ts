@@ -115,6 +115,13 @@ test.describe('휴대폰 크기', () => {
     await expect(page.getByTestId('issue-branch')).toBeHidden()
     // 가로로 넘치지 않는다
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
+
+    // 같은 이슈를 다시 누르면 작업 화면으로 돌아가고, 떠 있는 터미널(고른 패널)에 바로 입력한다(#78)
+    await page.getByTestId('issue-row-42').tap()
+    await expect(page.getByTestId('issue-branch')).toBeVisible()
+    await expect(page.getByTestId('issue-row-42')).toBeHidden()
+    await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('[data-testid="terminal-pane"]:visible').getByLabel('터미널 입력')).toBeFocused()
   })
 })
 

@@ -13,6 +13,7 @@ import { remotePty } from '../../lib/sshHost'
 import type { TauriApi, WindowsPty } from '../../lib/tauri'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
+import type { UiState } from '../../store/ui'
 import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
 import { noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
@@ -251,8 +252,11 @@ type TermState = {
   askResize(): void
   /** 보이는 동안만 있다 — 패널에 크기를 맞추고 PTY 에 알린다 */
   refit?: () => void
-  /** 이 xterm 이 처리한 마지막 포커스 요청 — 인스턴스마다 둬야 StrictMode 재마운트로 새로 만든 xterm 도 포커스를 받는다 */
-  focusToken?: number
+  /**
+   * 이 xterm 이 처리한 마지막 포커스 요청 — 인스턴스마다 둬야 StrictMode 재마운트로 새로 만든 xterm 도 포커스를 받는다.
+   * token 이 아니라 요청 객체로 비교한다: 처리한 요청을 지우면 다음 요청의 token 이 다시 1 부터 시작해, 같은 패널의 새 요청을 놓친다(#78)
+   */
+  handledFocus?: UiState['focusRequest']
 }
 
 function TerminalSession({
@@ -615,17 +619,16 @@ function TerminalSession({
     return attachWebgl(cur.t)
   }, [active, gen])
 
-  // 분할·닫기·[새 터미널] 처럼 사용자가 패널을 바꿨을 때만 대상 패널로 포커스를 옮긴다(AX-02 자동 포커스 금지 유지)
+  // 분할·닫기·[새 터미널] 처럼 사용자가 패널을 바꿨거나 트리에서 이슈를 눌렀을 때(#78)만 대상 패널로 포커스를 옮긴다(AX-02 자동 포커스 금지 유지)
   useEffect(() => {
     const cur = term.current
-    if (!cur || !focusRequest || focusRequest.paneId !== paneId || cur.focusToken === focusRequest.token) return
-    cur.focusToken = focusRequest.token
+    if (!cur || !focusRequest || focusRequest.paneId !== paneId || cur.handledFocus === focusRequest) return
+    cur.handledFocus = focusRequest
     cur.t.focus()
     // 처리한 요청은 지운다 — 같은 패널 번호가 나중에 다시 마운트될 때 묵은 요청으로 포커스를 뺏지 않게(AX-02).
     // StrictMode 는 같은 커밋에서 effect 를 다시 돌리므로 그 뒤(다음 tick)에 지운다
-    const token = focusRequest.token
     setTimeout(() => {
-      if (useUiStore.getState().focusRequest?.token === token) useUiStore.setState({ focusRequest: null })
+      if (useUiStore.getState().focusRequest === focusRequest) useUiStore.setState({ focusRequest: null })
     }, 0)
   }, [focusRequest, paneId, gen])
 

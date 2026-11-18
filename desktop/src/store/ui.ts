@@ -43,6 +43,8 @@ const isTheme = (v: unknown): v is Theme => THEME_VALUES.includes(v as Theme)
 export interface UiState {
   expanded: Record<string, boolean>
   selectedIssueId: string | null
+  /** selectIssue 를 부를 때마다 1 오른다 — 같은 이슈를 다시 골라도 좁은 화면이 작업 화면으로 넘어가게 한다(저장하지 않는다) */
+  selectSeq: number
   tab: WorkTab
   /** EC-24: worktreeId(owner,repo,key) → 생성 당시 {path, branch} (persist) */
   worktreePathMap: Record<string, WorktreeEntry>
@@ -75,7 +77,10 @@ export interface UiState {
    * 사용자가 열 때(Ctrl+T·[터미널 열기]·에이전트 실행)만 만든다. 프로세스 수명과 같아 persist 하지 않는다
    */
   startedTerminals: Record<string, true>
-  /** 사용자가 분할·닫기를 했을 때만 포커스를 옮긴다 — token 이 바뀐 요청만 처리(자동 포커스 금지 AX-02) */
+  /**
+   * 사용자가 분할·닫기·터미널 열기를 하거나 트리에서 이슈를 눌렀을 때(#78)만 포커스를 옮긴다 —
+   * 터미널은 처리하지 않은 새 요청(객체)만 처리한다(자동 포커스 금지 AX-02)
+   */
   focusRequest: { paneId: string; token: number } | null
 
   setExpanded(id: string, v: boolean): void
@@ -114,6 +119,11 @@ export interface UiState {
    * 패널 id 에는 이슈 id 가 들어 있어 옮길 수 없다 — 그 이슈의 터미널 패널은 닫고 다시 열 때 새로 만든다.
    */
   rekey(issues: Record<string, string>, nodes: Record<string, string>): void
+  /**
+   * 트리에서 이슈를 눌렀을 때(#78): 터미널 탭을 보고 있고 그 이슈의 터미널이 이미 떠 있으면 그 이슈에서 마지막으로 쓴 패널로 포커스를 옮긴다.
+   * 터미널이 없으면 만들지 않고, 다른 탭을 보는 중이면 탭을 바꾸지 않는다(아무것도 하지 않는다)
+   */
+  focusIssueTerminal(issueId: string): void
   ensurePanes(issueId: string): void
   splitPane(issueId: string, paneId: string, dir: SplitDir): void
   closePane(issueId: string, paneId: string): void
@@ -127,6 +137,7 @@ export const useUiStore = create<UiState>()(
     (set, get) => ({
       expanded: {},
       selectedIssueId: null,
+      selectSeq: 0,
       tab: 'terminal',
       worktreePathMap: {},
       terminalIds: {},
@@ -145,7 +156,7 @@ export const useUiStore = create<UiState>()(
       startedTerminals: {},
       focusRequest: null,
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
-      selectIssue: (selectedIssueId) => set({ selectedIssueId }),
+      selectIssue: (selectedIssueId) => set((s) => ({ selectedIssueId, selectSeq: s.selectSeq + 1 })),
       setTab: (tab) => set({ tab }),
       setWorktree: (id, e) => set((s) => ({ worktreePathMap: { ...s.worktreePathMap, [id]: e } })),
       removeWorktree: (id) =>
@@ -249,6 +260,17 @@ export const useUiStore = create<UiState>()(
           const focusRequest = Object.keys(issues).some((id) => s.focusRequest?.paneId.startsWith(`${id}::`)) ? null : s.focusRequest
           // 열려 있던 이슈는 선택을 풀어 둔다 — 옛 id 로 잡힌 열기 상태(터미널 등)를 새 id 로 다시 열게
           return { worktreePathMap, terminalIds, panes, startedTerminals, expanded, focusRequest, selectedIssueId: moved ? null : s.selectedIssueId }
+        }),
+      focusIssueTerminal: (issueId) =>
+        set((s) => {
+          if (s.tab !== 'terminal') return s
+          const cur = s.panes[issueId]
+          const leaves = leafIds(cur?.tree ?? null)
+          // 이 화면이 연 터미널, 또는 다른 화면이 열어 이미 떠 있는 터미널(보이면 붙는다)
+          if (!s.startedTerminals[issueId] && !leaves.some((p) => p in s.terminalIds)) return s
+          const paneId = cur && cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[0]
+          if (paneId === undefined) return s
+          return { focusRequest: { paneId, token: (s.focusRequest?.token ?? 0) + 1 } }
         }),
       ensurePanes: (issueId) =>
         set((s) => (s.panes[issueId] ? s : { panes: { ...s.panes, [issueId]: { tree: leaf(paneIdOf(issueId, 1)), focused: null, seq: 1 } } })),
