@@ -2,7 +2,7 @@
 // 자동 재시도 없음(EC-18), 새로고침 버튼으로만 다시 불러온다.
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { isOfflineError } from '../../lib/apiErrors'
 import { useDeps } from '../../app/deps'
@@ -88,6 +88,41 @@ export function useIssues(owner: string, repo: string, enabled: boolean) {
     return [ETC_ISSUE as TreeIssue, ...rows]
   }, [data, local, tasks, map, owner, repo, worktreeId])
   return { ...query, issues }
+}
+
+/** 입력이 멈춘 뒤 GitHub 에 묻기까지의 시간 — GitHub 검색 한도(분당 30회)를 넘지 않게 글자마다 묻지 않는다 */
+export const ISSUE_SEARCH_DEBOUNCE_MS = 400
+
+/**
+ * 검색어로 GitHub 에서 열린 이슈를 찾는다(#83) — 목록은 상한(500개)까지만 불러오므로 그 밖의 이슈는 목록 안 검색으로 못 찾는다.
+ * pending 은 입력이 멈추기를 기다리는 동안에도 true 다("결과 없음"을 조회가 끝나기 전에 보이지 않게)
+ */
+export function useIssueSearch(owner: string, repo: string, query: string, enabled: boolean) {
+  const { github } = useDeps()
+  // 조합형(NFD)으로 붙여 넣은 한글도 GitHub 이 찾도록 완성형으로 보낸다
+  const term = query.normalize('NFC').trim().replace(/\s+/g, ' ')
+  const [debounced, setDebounced] = useState('')
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(term), ISSUE_SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [term])
+  const active = enabled && term !== ''
+  // 이전 검색어의 결과는 보이지 않는다 — 목록 안 검색(바로 바뀜)과 어긋난다
+  const settled = debounced === term
+  const result = useQuery({
+    queryKey: queryKeys.githubIssueSearch(owner, repo, debounced),
+    queryFn: () => github.searchIssues(owner, repo, debounced),
+    enabled: active && settled,
+    ...GITHUB_QUERY,
+  })
+  const data = result.data
+  const issues = useMemo(() => (active && settled ? (data ?? []) : []), [active, settled, data])
+  return {
+    issues,
+    pending: active && (!settled || result.isFetching),
+    error: active && settled && !result.isFetching ? result.error : null,
+    refetch: result.refetch,
+  }
 }
 
 /** AC-04 새로고침: GitHub 목록 재조회 + 로컬 worktree 존재 여부(●) 재확인 */

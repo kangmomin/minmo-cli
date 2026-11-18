@@ -20,6 +20,8 @@ export const queryKeys = {
   githubOwners: ['github', 'owners'] as const,
   githubRepos: (owner: string) => ['github', 'repos', owner] as const,
   githubIssues: (owner: string, repo: string) => ['github', 'issues', owner, repo] as const,
+  /** 검색어로 GitHub 에서 찾은 이슈 — 목록 상한 밖의 이슈를 찾는다 */
+  githubIssueSearch: (owner: string, repo: string, query: string) => ['github', 'issueSearch', owner, repo, query] as const,
   /** 이슈 하나(본문 포함) — 수정 화면을 열 때마다 새로 받는다 */
   githubIssue: (owner: string, repo: string, number: number) => ['github', 'issue', owner, repo, number] as const,
   githubSource: ['github', 'source'] as const,
