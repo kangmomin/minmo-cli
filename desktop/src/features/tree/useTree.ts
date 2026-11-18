@@ -18,9 +18,9 @@ import { useUiStore } from '../../store/ui'
 const GITHUB_QUERY = { staleTime: Infinity, retry: false } as const
 
 /** 저장소 노드의 이슈 행. key 는 이슈 번호 문자열 또는 'etc' */
-export type TreeIssue = { key: string; number: number | null; title: string; state: 'open' | 'closed'; htmlUrl: string | null }
+export type TreeIssue = { key: string; number: number | null; title: string; state: 'open' | 'closed'; htmlUrl: string | null; assignees: string[] }
 
-export const ETC_ISSUE: Omit<TreeIssue, 'key'> & { key: 'etc' } = { key: 'etc', number: null, title: '기타', state: 'open', htmlUrl: null }
+export const ETC_ISSUE: Omit<TreeIssue, 'key'> & { key: 'etc' } = { key: 'etc', number: null, title: '기타', state: 'open', htmlUrl: null, assignees: [] }
 
 export function useGitHubSource() {
   const { github } = useDeps()
@@ -30,6 +30,20 @@ export function useGitHubSource() {
 export function useOwners() {
   const { github } = useDeps()
   return useQuery({ queryKey: queryKeys.githubOwners, queryFn: () => github.listOwners(), ...GITHUB_QUERY })
+}
+
+/** GitHub API 를 부르는 내 계정의 login(#86). 소유자 목록 캐시에서 읽는다 — 아직 못 받았으면 null */
+export function useMyLogin(): string | null {
+  const { github } = useDeps()
+  const { data } = useQuery({
+    queryKey: queryKeys.githubOwners,
+    queryFn: () => github.listOwners(),
+    ...GITHUB_QUERY,
+    // 행마다 이 훅을 쓴다 — 소유자 조회가 실패한 뒤 행이 그려질 때마다 다시 묻지 않게(EC-18: 자동 재시도 없음)
+    retryOnMount: false,
+    select: (owners) => owners.find((o) => o.kind === 'user')?.login ?? null,
+  })
+  return data ?? null
 }
 
 export function useRepos(owner: GitHubOwner, enabled: boolean) {
@@ -84,7 +98,7 @@ export function useIssues(owner: string, repo: string, enabled: boolean) {
       .filter((i) => i.state === 'open' || hasWorktree(String(i.number)))
       // 작업 중인(이 호스트에 worktree 가 있는) 이슈를 위로 — 이슈가 많아도 하던 일을 바로 찾게. 그 안에서는 최신 번호 순
       .sort((a, b) => Number(hasWorktree(String(b.number))) - Number(hasWorktree(String(a.number))) || b.number - a.number)
-      .map((i) => ({ key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: 'htmlUrl' in i ? (i as GitHubIssue).htmlUrl : null }))
+      .map((i) => ({ key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: 'htmlUrl' in i ? (i as GitHubIssue).htmlUrl : null, assignees: 'assignees' in i ? (i as GitHubIssue).assignees : [] }))
     return [ETC_ISSUE as TreeIssue, ...rows]
   }, [data, local, tasks, map, owner, repo, worktreeId])
   return { ...query, issues }

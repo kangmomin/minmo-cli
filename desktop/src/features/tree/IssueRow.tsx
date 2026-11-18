@@ -12,8 +12,11 @@ import { isLocalOwner, useRepoLabel, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { IssueAgentDot } from '../agents/AgentBadge'
+import { ASSIGN_OFF_TEXT, ASSIGN_ON_TEXT, useAssignMe } from '../issue/useIssueManage'
 import { describeOpenError, useIssueActions } from '../issue/useWorktree'
+import { AssigneeBadge } from './AssigneeBadge'
 import { shrinkBadge } from './badgeClasses'
+import { githubErrorMessage } from './useTree'
 import type { TreeIssue } from './useTree'
 
 export interface IssueRowProps {
@@ -55,6 +58,11 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
   const [confirm, setConfirm] = useState<DeleteCheck | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // assign 은 GitHub 이슈에만 있다(★기타·로컬 작업 제외)
+  const canAssign = !isEtc && !isLocalOwner(owner)
+  const assign = useAssignMe(owner, repo, issue.number)
+  const assignedToMe = assign.me !== null && issue.assignees.includes(assign.me)
+  const [assignError, setAssignError] = useState<string | null>(null)
   // worktree 가 생기거나 없어지면 줄이 목록의 다른 묶음(작업 중 ↔ 나머지)으로 옮겨 간다 — 방금 누른(선택된) 줄이
   // 화면 밖으로 밀려나지 않게 따라간다. 처음 그릴 때는 움직이지 않는다(사용자가 보던 위치를 바꾸지 않게)
   const rowRef = useRef<HTMLButtonElement>(null)
@@ -127,6 +135,7 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
                 </span>
               </>
             )}
+            <AssigneeBadge assignees={issue.assignees} me={assign.me} className={cn('max-w-24', shrinkBadge)} />
             {issue.state === 'closed' && (
               <Badge variant="secondary" className={shrinkBadge}>
                 닫힘
@@ -155,6 +164,11 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
           >
             에이전트 실행…
           </ContextMenuItem>
+          {canAssign && (
+            <ContextMenuItem disabled={assign.me === null} onSelect={() => void assign.set(!assignedToMe).catch((e: unknown) => setAssignError(githubErrorMessage(e)))}>
+              {assignedToMe ? ASSIGN_OFF_TEXT : ASSIGN_ON_TEXT}
+            </ContextMenuItem>
+          )}
           {isTask && (
             <ContextMenuItem onSelect={() => useReposStore.getState().setTaskState(repo, issue.number!, issue.state === 'open' ? 'closed' : 'open')}>
               {issue.state === 'open' ? '작업 닫기' : '작업 다시 열기'}
@@ -223,6 +237,25 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
                 삭제
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={assignError !== null} onOpenChange={(o) => !o && setAssignError(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>assign 실패</DialogTitle>
+            <DialogDescription>
+              {repoLabel} #{issue.number} {issue.title}
+            </DialogDescription>
+          </DialogHeader>
+          <pre role="alert" className="whitespace-pre-wrap rounded bg-muted p-2 text-xs text-destructive">
+            {assignError}
+          </pre>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignError(null)}>
+              닫기
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

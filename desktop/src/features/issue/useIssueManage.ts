@@ -6,7 +6,7 @@ import type { IssueCloseReason, IssueTarget, UpdateIssueInput } from '@minmo/cor
 import { useDeps } from '../../app/deps'
 import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
-import { issuesQueryOptions, upsertIssueCache } from '../tree/useTree'
+import { issuesQueryOptions, upsertIssueCache, useMyLogin } from '../tree/useTree'
 
 /** 수정·닫기를 할 수 있는 이슈(★기타 제외) */
 export type ManagedTarget = IssueTarget & { number: number }
@@ -19,6 +19,8 @@ export type IssueManageInfo = {
   title: string
   /** 로컬 저장소를 GitHub 에 올리는 중이면 true — 올리기는 작업 제목·상태가 그대로인지 확인하므로 바꾸지 않게 한다 */
   publishing: boolean
+  /** GitHub 이슈 담당자의 login 목록(로컬 작업은 항상 빈 배열) */
+  assignees: string[]
 }
 
 export function useIssueManageInfo(target: ManagedTarget): IssueManageInfo {
@@ -32,8 +34,28 @@ export function useIssueManageInfo(target: ManagedTarget): IssueManageInfo {
   })
   const task = useReposStore((s) => (local ? s.local[target.repo]?.tasks.find((t) => t.number === target.number) : undefined))
   const publishing = useReposStore((s) => local && s.local[target.repo]?.publish !== undefined)
-  if (local) return { kind: 'task', state: task?.state ?? 'open', title: task?.title ?? target.title, publishing }
-  return { kind: 'github', state: issue?.state ?? 'open', title: issue?.title ?? target.title, publishing: false }
+  if (local) return { kind: 'task', state: task?.state ?? 'open', title: task?.title ?? target.title, publishing, assignees: [] }
+  return { kind: 'github', state: issue?.state ?? 'open', title: issue?.title ?? target.title, publishing: false, assignees: issue?.assignees ?? [] }
+}
+
+export const ASSIGN_ON_TEXT = '나에게 assign'
+export const ASSIGN_OFF_TEXT = '내 assign 해제'
+
+/** 나에게 assign · 해제(#86) — 트리 행의 메뉴와 이슈 머리줄이 함께 쓴다. me 가 null 이면(계정을 아직 모름) 할 수 없다 */
+export function useAssignMe(owner: string, repo: string, number: number | null) {
+  const { github } = useDeps()
+  const queryClient = useQueryClient()
+  const me = useMyLogin()
+  return {
+    me,
+    async set(assign: boolean) {
+      if (me === null || number === null) throw new Error('GitHub 계정을 확인할 수 없습니다 — 트리를 새로고침하세요')
+      const issue = assign ? await github.assignIssue(owner, repo, number, me) : await github.unassignIssue(owner, repo, number, me)
+      upsertIssueCache(queryClient, owner, repo, issue)
+      // GitHub 은 쓰기 권한이 없는 assign·해제를 오류 없이 무시한다 — 결과로 확인해 알린다
+      if (assign !== issue.assignees.includes(me)) throw new Error(`${assign ? 'assign 하지' : 'assign 을 해제하지'} 못했습니다 — 이 저장소에 쓰기 권한이 필요합니다`)
+    },
+  }
 }
 
 export function useIssueMutations(target: ManagedTarget) {
