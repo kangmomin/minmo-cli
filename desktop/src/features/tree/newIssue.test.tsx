@@ -36,8 +36,8 @@ function renderWorkspace(overrides: Partial<GitHubClient> = {}) {
   const github = createFakeGitHub({
     listOwners: async () => [ORG],
     listRepos: async () => [REPO],
-    listIssues: async () => [{ number: 42, title: 'Add login', state: 'open', htmlUrl: 'https://github.com/my-org/widgets/issues/42' }],
-    createIssue: async (_o, _r, title) => ({ number: 43, title, state: 'open', htmlUrl: 'https://github.com/my-org/widgets/issues/43' }),
+    listIssues: async () => [{ number: 42, title: 'Add login', state: 'open', htmlUrl: 'https://github.com/my-org/widgets/issues/42', assignees: [] }],
+    createIssue: async (_o, _r, title) => ({ number: 43, title, state: 'open', htmlUrl: 'https://github.com/my-org/widgets/issues/43', assignees: [] }),
     ...overrides,
   })
   return { github, ...renderWithDeps(wrap(<Workspace />), makeDeps({ github })) }
@@ -81,7 +81,7 @@ describe('이슈 등록', () => {
     const { github } = renderWorkspace({
       createIssue: async (_o, _r, title) => {
         if (calls++ === 0) throw new GitHubError('forbidden', { message: 'Resource not accessible' })
-        return { number: 43, title, state: 'open', htmlUrl: '' }
+        return { number: 43, title, state: 'open', htmlUrl: '', assignees: [] }
       },
     })
     await expandRepo(user)

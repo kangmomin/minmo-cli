@@ -423,7 +423,7 @@ describe('로컬 저장소에서 작업 열기(worktree)', () => {
 
 describe('GitHub 에 올리기', () => {
   const host = hostOf(null)
-  function setup(o: { pushFails?: boolean; issueNumbers?: number[]; existing?: { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string }[]; onCreateIssue?: () => void } = {}) {
+  function setup(o: { pushFails?: boolean; issueNumbers?: number[]; existing?: { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string; assignees: string[] }[]; onCreateIssue?: () => void } = {}) {
     const id = registerLocalRepo('local', '/src/app')
     useReposStore.getState().addTask(id, '첫 작업')
     useReposStore.getState().addTask(id, '닫은 작업')
@@ -452,7 +452,7 @@ describe('GitHub 에 올리기', () => {
       },
     })
     const numbers = [...(o.issueNumbers ?? [1, 2])]
-    const created: { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string }[] = [...(o.existing ?? [])]
+    const created: { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string; assignees: string[] }[] = [...(o.existing ?? [])]
     const github = createFakeGitHub({
       getRepo: async () => {
         throw new GitHubError('not_found', { status: 404 })
@@ -460,7 +460,7 @@ describe('GitHub 에 올리기', () => {
       createRepo: async (input) => ({ owner: input.org ?? 'me', name: input.name, defaultBranch: 'main' }),
       listIssues: async () => [...created],
       createIssue: async (_o, _r, title) => {
-        const issue = { number: numbers.shift()!, title, state: 'open' as const, htmlUrl: '' }
+        const issue = { number: numbers.shift()!, title, state: 'open' as const, htmlUrl: '', assignees: [] }
         created.push(issue)
         o.onCreateIssue?.()
         return issue
@@ -533,14 +533,14 @@ describe('GitHub 에 올리기', () => {
   })
 
   it('이어서 올릴 때 이전에 만든 이슈(번호·제목 같음)는 다시 만들지 않고, 닫은 작업만 닫는다', async () => {
-    const t = setup({ existing: [{ number: 1, title: '첫 작업', state: 'open', htmlUrl: '' }], issueNumbers: [2] })
+    const t = setup({ existing: [{ number: 1, title: '첫 작업', state: 'open', htmlUrl: '', assignees: [] }], issueNumbers: [2] })
     await expect(publishRepo(t, host, t.input)).resolves.toEqual({ owner: 'me', name: 'app' })
     expect(t.github.createIssue.mock.calls.map((c) => c[2])).toEqual(['닫은 작업'])
     expect(t.github.closeIssue).toHaveBeenCalledWith('me', 'app', 2)
   })
 
   it('작업과 맞지 않는 이슈가 이미 있으면 이슈를 더 만들지 않고 멈춘다(다시 눌러도 늘지 않는다)', async () => {
-    const t = setup({ existing: [{ number: 1, title: '남이 만든 이슈', state: 'open', htmlUrl: '' }] })
+    const t = setup({ existing: [{ number: 1, title: '남이 만든 이슈', state: 'open', htmlUrl: '', assignees: [] }] })
     for (let i = 0; i < 2; i++) {
       const err = (await publishRepo(t, host, t.input).catch((e: unknown) => e)) as PublishError
       expect(err.step).toBe('issues')

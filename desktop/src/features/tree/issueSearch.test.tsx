@@ -22,7 +22,7 @@ import { ISSUE_SEARCH_DEBOUNCE_MS } from './useTree'
 
 const ORG = { login: 'my-org', kind: 'org' as const, avatarUrl: null }
 const REPO = { owner: 'my-org', name: 'widgets', defaultBranch: 'main' }
-const issue = (number: number, title: string, state: 'open' | 'closed' = 'open'): GitHubIssue => ({ number, title, state, htmlUrl: `https://github.com/my-org/widgets/issues/${number}` })
+const issue = (number: number, title: string, state: 'open' | 'closed' = 'open'): GitHubIssue => ({ number, title, state, htmlUrl: `https://github.com/my-org/widgets/issues/${number}`, assignees: [] })
 /** #1 … #n — 제목은 "Task <번호>" */
 const many = (n: number) => Array.from({ length: n }, (_, i) => issue(i + 1, `Task ${i + 1}`))
 
