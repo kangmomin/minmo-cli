@@ -36,7 +36,7 @@ const hasNextLink = (link: string | null) => !!link && /rel="next"/.test(link)
 export function createRestTransport(deps: RestDeps): GitHubTransport {
   const base = deps.apiBase.replace(/\/+$/, '')
 
-  async function request(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<TransportResponse> {
+  async function request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<TransportResponse> {
     const token = await deps.getToken()
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
@@ -75,5 +75,6 @@ export function createRestTransport(deps: RestDeps): GitHubTransport {
     get: (path) => request('GET', path),
     post: (path, body) => request('POST', path, body),
     patch: (path, body) => request('PATCH', path, body),
+    delete: (path, body) => request('DELETE', path, body),
   }
 }

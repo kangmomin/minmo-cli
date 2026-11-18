@@ -160,7 +160,7 @@ describe('이슈 목록 — state=all · per_page=100 · ≤5페이지 · PR 제
     const t = setup({ route: () => json([issue(1), issue(2, 'closed'), issue(3, 'open', { pull_request: { url: 'x' } })]) })
     const list = await t.gh.listIssues('o', 'r')
     expect(list.map((i) => i.number)).toEqual([1, 2])
-    expect(list[1]).toEqual({ number: 2, title: 'Issue 2', state: 'closed', htmlUrl: 'https://github.com/o/r/issues/2' })
+    expect(list[1]).toEqual({ number: 2, title: 'Issue 2', state: 'closed', htmlUrl: 'https://github.com/o/r/issues/2', assignees: [] })
     const u = new URL(t.rest.calls[0].url)
     expect(u.pathname).toBe('/repos/o/r/issues')
     expect(u.searchParams.get('state')).toBe('all')
@@ -240,7 +240,7 @@ describe('searchIssues — 목록 상한 밖의 열린 이슈를 GitHub 에서 �
 
   it('제목 검색: repo·is:issue·is:open·in:title 로 묻고, PR·닫힌 이슈는 뺀다', async () => {
     const t = setup({ route: () => json({ items: [issue(901), issue(902, 'closed'), issue(903, 'open', { pull_request: {} })] }) })
-    await expect(t.gh.searchIssues('o', 'r', '  Add   login ')).resolves.toEqual([{ number: 901, title: 'Issue 901', state: 'open', htmlUrl: 'https://github.com/o/r/issues/901' }])
+    await expect(t.gh.searchIssues('o', 'r', '  Add   login ')).resolves.toEqual([{ number: 901, title: 'Issue 901', state: 'open', htmlUrl: 'https://github.com/o/r/issues/901', assignees: [] }])
     expect(t.rest.fn).toHaveBeenCalledTimes(1)
     expect(searchQ(t.rest.calls)?.get('q')).toBe('Add login repo:o/r is:issue is:open in:title')
     expect(searchQ(t.rest.calls)?.get('per_page')).toBe('30')
@@ -302,7 +302,7 @@ describe('getRepo · getIssue', () => {
     })
     await expect(t.gh.getRepo('acme', 'widgets')).resolves.toEqual({ owner: 'Acme', name: 'Widgets', defaultBranch: 'main' })
     // 본문이 없으면(null·필드 없음) 빈 문자열
-    await expect(t.gh.getIssue('acme', 'widgets', 7)).resolves.toEqual({ number: 7, title: 'Seven', state: 'open', htmlUrl: 'u7', body: '' })
+    await expect(t.gh.getIssue('acme', 'widgets', 7)).resolves.toEqual({ number: 7, title: 'Seven', state: 'open', htmlUrl: 'u7', assignees: [], body: '' })
     await expect(t.gh.getIssue('acme', 'widgets', 8)).rejects.toMatchObject({ code: 'not_found' })
   })
 
@@ -327,6 +327,7 @@ describe('updateIssue · closeIssue(이유)', () => {
       title: '새 제목',
       state: 'open',
       htmlUrl: 'https://github.com/o/r/issues/5',
+      assignees: [],
     })
     await t.gh.updateIssue('o', 'r', 5, { body: '' })
     await t.gh.updateIssue('o', 'r', 5, { title: 't', body: 'b' })
@@ -417,5 +418,42 @@ describe('저장소·이슈 만들기(로컬 저장소를 GitHub 에 올릴 때)
   it('빈 저장소처럼 default_branch 가 없으면 main 으로 본다', async () => {
     const t = setup({ route: () => json({ name: 'app', owner: { login: 'me' }, default_branch: null }) })
     await expect(t.gh.getRepo('me', 'app')).resolves.toEqual({ owner: 'me', name: 'app', defaultBranch: 'main' })
+  })
+})
+
+describe('담당자(#86) — assignees 매핑 · assignIssue · unassignIssue', () => {
+  it('이슈의 assignees 를 login 목록으로 돌려준다(없거나 null 이면 빈 배열)', async () => {
+    const t = setup({
+      route: () => json([issue(1, 'open', { assignees: [{ login: 'me' }, { login: 'other' }] }), issue(2, 'open', { assignees: null }), issue(3)]),
+    })
+    expect((await t.gh.listIssues('o', 'r')).map((i) => i.assignees)).toEqual([['me', 'other'], [], []])
+  })
+
+  it('gh: POST·DELETE issues/{n}/assignees 에 한 명만 보낸다 — 다른 담당자를 덮어쓰지 않는다', async () => {
+    const stdin: string[] = []
+    const t = setup({
+      ghAvailable: true,
+      ghRun: async (args, opts) => {
+        stdin.push(opts?.stdin ?? '')
+        return ok(JSON.stringify(issue(5, 'open', { assignees: args.includes('POST') ? [{ login: 'other' }, { login: 'me' }] : [{ login: 'other' }] })))
+      },
+    })
+    await expect(t.gh.assignIssue('o', 'r', 5, 'me')).resolves.toMatchObject({ number: 5, assignees: ['other', 'me'] })
+    await expect(t.gh.unassignIssue('o', 'r', 5, 'me')).resolves.toMatchObject({ number: 5, assignees: ['other'] })
+    expect(t.tauri.ghRun.mock.calls.map((c) => c[0])).toEqual([
+      ['api', '-X', 'POST', 'repos/o/r/issues/5/assignees', '--input', '-'],
+      ['api', '-X', 'DELETE', 'repos/o/r/issues/5/assignees', '--input', '-'],
+    ])
+    expect(stdin.map((s) => JSON.parse(s))).toEqual([{ assignees: ['me'] }, { assignees: ['me'] }])
+  })
+
+  it('REST: POST·DELETE issues/{n}/assignees', async () => {
+    const t = setup({ route: (_u, call) => json(issue(5, 'open', { assignees: call.method === 'POST' ? [{ login: 'me' }] : [] })) })
+    await expect(t.gh.assignIssue('o', 'r', 5, 'me')).resolves.toMatchObject({ assignees: ['me'] })
+    await expect(t.gh.unassignIssue('o', 'r', 5, 'me')).resolves.toMatchObject({ assignees: [] })
+    expect(t.rest.calls.map((c) => [c.method, new URL(c.url).pathname])).toEqual([
+      ['POST', '/repos/o/r/issues/5/assignees'],
+      ['DELETE', '/repos/o/r/issues/5/assignees'],
+    ])
   })
 })

@@ -205,13 +205,15 @@ export function createFakeGitHub(overrides: Partial<GitHubClient> = {}): Mocked<
     searchIssues: async () => [],
     defaultBranch: async () => 'main',
     getRepo: async (owner, name) => ({ owner, name, defaultBranch: 'main' }),
-    getIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'open', htmlUrl: '', body: '' }),
+    getIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'open', htmlUrl: '', assignees: [], body: '' }),
     openPrForBranch: async () => null,
     createPr: async () => ({ number: 1, url: 'https://github.com/o/r/pull/1' }),
     createRepo: async (input) => ({ owner: input.org ?? 'me', name: input.name, defaultBranch: 'main' }),
-    createIssue: async (_o, _r, title) => ({ number: 1, title, state: 'open', htmlUrl: '' }),
-    updateIssue: async (_o, _r, number, input) => ({ number, title: input.title ?? `issue ${number}`, state: 'open', htmlUrl: '' }),
-    closeIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'closed', htmlUrl: '' }),
+    createIssue: async (_o, _r, title) => ({ number: 1, title, state: 'open', htmlUrl: '', assignees: [] }),
+    updateIssue: async (_o, _r, number, input) => ({ number, title: input.title ?? `issue ${number}`, state: 'open', htmlUrl: '', assignees: [] }),
+    closeIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'closed', htmlUrl: '', assignees: [] }),
+    assignIssue: async (_o, _r, number, login) => ({ number, title: `issue ${number}`, state: 'open', htmlUrl: '', assignees: [login] }),
+    unassignIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'open', htmlUrl: '', assignees: [] }),
   }
   return mockAll(base, overrides)
 }

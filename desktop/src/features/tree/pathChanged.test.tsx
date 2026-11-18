@@ -20,7 +20,7 @@ import { WorktreeProvider } from '../issue/useWorktree'
 
 const ORG = { login: 'my-org', kind: 'org' as const, avatarUrl: null }
 const REPO = { owner: 'my-org', name: 'widgets', defaultBranch: 'main' }
-const issue = (number: number): GitHubIssue => ({ number, title: `Task ${number}`, state: 'open', htmlUrl: `https://github.com/my-org/widgets/issues/${number}` })
+const issue = (number: number): GitHubIssue => ({ number, title: `Task ${number}`, state: 'open', htmlUrl: `https://github.com/my-org/widgets/issues/${number}`, assignees: [] })
 
 beforeEach(() => {
   useSessionStore.setState(useSessionStore.getInitialState(), true)

@@ -19,7 +19,7 @@ import { WorktreeProvider } from './useWorktree'
 
 const GH: IssueTarget = { owner: 'my-org', repo: 'widgets', key: '42', number: 42, title: 'Add login' }
 const GH_ID = worktreeId('my-org', 'widgets', '42')
-const ISSUE_42: GitHubIssue = { number: 42, title: 'Add login', state: 'open', htmlUrl: 'https://github.com/my-org/widgets/issues/42' }
+const ISSUE_42: GitHubIssue = { number: 42, title: 'Add login', state: 'open', htmlUrl: 'https://github.com/my-org/widgets/issues/42', assignees: [] }
 
 const TASK_REPO = 'app-1a2b'
 const TASK: IssueTarget = { owner: LOCAL_OWNER, repo: TASK_REPO, key: '1', number: 1, title: '첫 작업' }
@@ -333,5 +333,46 @@ describe('리뷰 반영 — 기준값 고정·다시 조회·공백·캐시 없�
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(within(header()).getByTestId('issue-closed-badge')).toBeInTheDocument()
     expect(within(header()).queryByRole('button', { name: '이슈 닫기' })).toBeNull()
+  })
+})
+
+describe('담당자(#86) — 머리줄', () => {
+  const ME = { login: 'octocat', kind: 'user' as const, avatarUrl: null }
+
+  it('담당자를 모두 보이고, [나에게 assign] ↔ [내 assign 해제] 로 바꾼다', async () => {
+    const user = userEvent.setup()
+    const { github } = renderHeader(GH_ID, {
+      listOwners: async () => [ME],
+      listIssues: async () => [{ ...ISSUE_42, assignees: ['alice'] }],
+      assignIssue: async (_o, _r, _n, login) => ({ ...ISSUE_42, assignees: ['alice', login] }),
+      unassignIssue: async () => ({ ...ISSUE_42, assignees: ['alice'] }),
+    })
+    expect(await within(header()).findByText('@alice')).toBeInTheDocument()
+
+    await user.click(await within(header()).findByRole('button', { name: '나에게 assign' }))
+    expect(github.assignIssue).toHaveBeenCalledWith('my-org', 'widgets', 42, 'octocat')
+    expect(await within(header()).findByText('@octocat, @alice')).toBeInTheDocument()
+
+    await user.click(within(header()).getByRole('button', { name: '내 assign 해제' }))
+    expect(github.unassignIssue).toHaveBeenCalledWith('my-org', 'widgets', 42, 'octocat')
+    expect(await within(header()).findByText('@alice')).toBeInTheDocument()
+    expect(github.listIssues).toHaveBeenCalledTimes(1)
+  })
+
+  it('실패하면 머리줄에 오류를 보인다 · 로컬 작업에는 assign 이 없다', async () => {
+    const user = userEvent.setup()
+    const { unmount } = renderHeader(GH_ID, {
+      listOwners: async () => [ME],
+      assignIssue: async () => {
+        throw new GitHubError('forbidden', { message: 'Must have push access' })
+      },
+    })
+    await user.click(await within(header()).findByRole('button', { name: '나에게 assign' }))
+    expect(await within(header()).findByRole('alert')).toHaveTextContent('GitHub 접근 거부 — Must have push access')
+    unmount()
+
+    renderHeader(TASK_ID, { listOwners: async () => [ME] })
+    expect(within(header()).getByRole('button', { name: '작업 수정' })).toBeInTheDocument()
+    expect(within(header()).queryByRole('button', { name: /assign/ })).toBeNull()
   })
 })

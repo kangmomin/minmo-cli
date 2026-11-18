@@ -168,7 +168,7 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
     return remote.issues
       .filter((i) => !loaded.has(String(i.number)))
       .sort((a, b) => b.number - a.number)
-      .map((i): Row => ({ issue: { key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: i.htmlUrl }, entry: undefined, source: i }))
+      .map((i): Row => ({ issue: { key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: i.htmlUrl, assignees: i.assignees }, entry: undefined, source: i }))
   }, [remote.issues, entries])
   const rows: Row[] = [...shownEntries.map(([issue, entry]) => ({ issue, entry })), ...found]
   const shownCount = rows.length

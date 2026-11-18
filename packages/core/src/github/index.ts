@@ -62,11 +62,26 @@ export interface GitHubClient {
   updateIssue(owner: string, repo: string, number: number, input: UpdateIssueInput): Promise<GitHubIssue>
   /** reason 이 없으면 state_reason 을 보내지 않는다(GitHub 기본값). 닫은 뒤의 이슈를 돌려준다 */
   closeIssue(owner: string, repo: string, number: number, reason?: IssueCloseReason): Promise<GitHubIssue>
+  /**
+   * login 을 담당자에 더한다. 바뀐 뒤의 이슈를 돌려준다.
+   * GitHub 은 권한이 없는 요청을 오류 없이 무시한다 — 호출자가 결과의 assignees 로 확인한다
+   */
+  assignIssue(owner: string, repo: string, number: number, login: string): Promise<GitHubIssue>
+  /** login 을 담당자에서 뺀다. 바뀐 뒤의 이슈를 돌려준다 */
+  unassignIssue(owner: string, repo: string, number: number, login: string): Promise<GitHubIssue>
 }
 
 type RawOwner = { login: string; avatar_url?: string | null }
 type RawRepo = { name: string; owner: { login: string }; default_branch?: string | null }
-type RawIssue = { number: number; title: string; state: string; html_url: string; body?: string | null; pull_request?: unknown }
+type RawIssue = {
+  number: number
+  title: string
+  state: string
+  html_url: string
+  body?: string | null
+  pull_request?: unknown
+  assignees?: { login: string }[] | null
+}
 type RawPr = { number: number; html_url: string }
 
 const enc = encodeURIComponent
@@ -76,6 +91,7 @@ const toIssue = (r: RawIssue): GitHubIssue => ({
   title: r.title,
   state: r.state === 'closed' ? 'closed' : 'open',
   htmlUrl: r.html_url,
+  assignees: (r.assignees ?? []).map((a) => a.login),
 })
 
 const toRepo = (r: RawRepo): GitHubRepo => ({ owner: r.owner.login, name: r.name, defaultBranch: r.default_branch || 'main' })
@@ -254,5 +270,12 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
         const body = reason ? { state: 'closed', state_reason: reason } : { state: 'closed' }
         return toIssue((await t.patch(`repos/${enc(owner)}/${enc(repo)}/issues/${number}`, body)).data as RawIssue)
       }),
+
+    // 목록 전체를 PATCH 로 덮어쓰지 않는다 — 그 사이에 다른 사람이 한 assign 을 지우지 않게 한 명만 더하고 뺀다
+    assignIssue: (owner, repo, number, login) =>
+      withTransport(async (t) => toIssue((await t.post(`repos/${enc(owner)}/${enc(repo)}/issues/${number}/assignees`, { assignees: [login] })).data as RawIssue)),
+
+    unassignIssue: (owner, repo, number, login) =>
+      withTransport(async (t) => toIssue((await t.delete(`repos/${enc(owner)}/${enc(repo)}/issues/${number}/assignees`, { assignees: [login] })).data as RawIssue)),
   }
 }

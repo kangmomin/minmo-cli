@@ -63,7 +63,7 @@ function renderWorkspace() {
   const github = createFakeGitHub({
     listOwners: async () => [ORG],
     listRepos: async () => [REPO],
-    listIssues: async () => [{ number: 42, title: 'Add login', state: 'open', htmlUrl: 'https://github.com/my-org/widgets/issues/42' }],
+    listIssues: async () => [{ number: 42, title: 'Add login', state: 'open', htmlUrl: 'https://github.com/my-org/widgets/issues/42', assignees: [] }],
   })
   return renderWithDeps(wrap(<Workspace />), makeDeps({ api, github }))
 }
@@ -133,8 +133,8 @@ describe('AX-03 disclosure 토글 aria-controls', () => {
   })
 })
 
-const ISSUE: TreeIssue = { key: '42', number: 42, title: 'Add login', state: 'open' } as TreeIssue
-const ETC: TreeIssue = { key: 'etc', number: null, title: '기타', state: 'open' } as TreeIssue
+const ISSUE: TreeIssue = { key: '42', number: 42, title: 'Add login', state: 'open', htmlUrl: null, assignees: [] }
+const ETC: TreeIssue = { key: 'etc', number: null, title: '기타', state: 'open', htmlUrl: null, assignees: [] }
 
 function renderRow(issue: TreeIssue, o: { hasWorktree?: boolean; pathChanged?: boolean; gitRun?: TauriApi['gitRun'] } = {}) {
   const fake = createFakeTauri(o.gitRun ? { gitRun: o.gitRun } : {})

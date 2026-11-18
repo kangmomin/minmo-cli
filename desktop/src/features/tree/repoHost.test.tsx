@@ -28,7 +28,7 @@ const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git versio
 const ORG = { login: 'my-org', kind: 'org' as const, avatarUrl: null }
 const WIDGETS = { owner: 'my-org', name: 'widgets', defaultBranch: 'main' }
 const GADGETS = { owner: 'my-org', name: 'gadgets', defaultBranch: 'main' }
-const issue = (number: number, title: string): GitHubIssue => ({ number, title, state: 'open', htmlUrl: `https://github.com/my-org/x/issues/${number}` })
+const issue = (number: number, title: string): GitHubIssue => ({ number, title, state: 'open', htmlUrl: `https://github.com/my-org/x/issues/${number}`, assignees: [] })
 
 beforeEach(() => {
   localStorage.clear()
