@@ -1,6 +1,6 @@
 {
   "name": "@kangmomin/minmo-cli",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "minmo 원격 CLI — SSH 역터널로 데스크탑의 minmo 서버에 로그인해 메모·설정·보일 저장소를 다루는 명령어",
   "repository": {
     "type": "git",
