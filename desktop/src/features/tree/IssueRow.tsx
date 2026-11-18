@@ -25,6 +25,8 @@ export interface IssueRowProps {
   hasWorktree: boolean
   pathChanged: boolean
   selected: boolean
+  /** 줄을 눌러 열 때 부른다 */
+  onOpen?(): void
 }
 
 const PATH_CHANGED_TEXT = '설정의 worktree 경로가 바뀌었습니다. 기존 worktree 는 이동하지 않습니다.'
@@ -43,7 +45,7 @@ function countText(label: string, n: number | null) {
 }
 
 /** 이슈 행: 클릭 = 열기(터미널이 떠 있으면 그 터미널로 포커스), 왼쪽 점 = 에이전트 상태, 닫힘·경로 변경 배지, 컨텍스트 메뉴 "worktree 삭제" */
-export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged, selected }: IssueRowProps) {
+export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged, selected, onOpen }: IssueRowProps) {
   const actions = useIssueActions()
   const isEtc = issue.key === 'etc'
   const repoLabel = useRepoLabel(owner, repo)
@@ -96,6 +98,7 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
             onClick={() => {
               // 고르기 전에 본다 — 준비 중인 이슈에는 터미널이 없다(#78: 그때는 포커스를 옮기지 않는다)
               const ready = useSetupStore.getState().open[issueId]?.phase === 'ready'
+              onOpen?.()
               void actions.open(target)
               // selectIssue 와 같은 이벤트에서 요청해야 새 이슈의 터미널이 보이는 렌더에서 포커스한다
               if (ready) useUiStore.getState().focusIssueTerminal(issueId)

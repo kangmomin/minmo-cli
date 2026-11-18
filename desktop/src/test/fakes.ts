@@ -202,6 +202,7 @@ export function createFakeGitHub(overrides: Partial<GitHubClient> = {}): Mocked<
     listOwners: async () => [],
     listRepos: async () => [],
     listIssues: async () => [],
+    searchIssues: async () => [],
     defaultBranch: async () => 'main',
     getRepo: async (owner, name) => ({ owner, name, defaultBranch: 'main' }),
     getIssue: async (_o, _r, number) => ({ number, title: `issue ${number}`, state: 'open', htmlUrl: '', body: '' }),

@@ -2,21 +2,23 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Effective } from '@minmo/api-client'
 import { DEFAULT_SETTINGS } from '@minmo/core'
-import type { GitHubIssue } from '@minmo/core'
+import { GitHubError } from '@minmo/core'
+import type { GitHubClient, GitHubIssue } from '@minmo/core'
 
 import { Workspace } from '../../app/Workspace'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import { useSessionStore } from '../../store/session'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
-import { createFakeApi, createFakeGitHub } from '../../test/fakes'
+import { createFakeApi, createFakeGitHub, deferred } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { WorktreeProvider } from '../issue/useWorktree'
 import { ISSUE_SEARCH_MIN, matchesIssue } from './issueSearch'
+import { ISSUE_SEARCH_DEBOUNCE_MS } from './useTree'
 
 const ORG = { login: 'my-org', kind: 'org' as const, avatarUrl: null }
 const REPO = { owner: 'my-org', name: 'widgets', defaultBranch: 'main' }
@@ -37,8 +39,8 @@ const wrap = (ui: ReactNode) => (
   </TooltipProvider>
 )
 
-async function renderTree(issues: GitHubIssue[]) {
-  const github = createFakeGitHub({ listOwners: async () => [ORG], listRepos: async () => [REPO], listIssues: async () => issues })
+async function renderTree(issues: GitHubIssue[], overrides: Partial<GitHubClient> = {}) {
+  const github = createFakeGitHub({ listOwners: async () => [ORG], listRepos: async () => [REPO], listIssues: async () => issues, ...overrides })
   // worktree 가 있으면 "경로 변경됨" 배지 계산에 effective 를 읽는다
   const api = createFakeApi({ getEffective: async () => ({ values: { ...DEFAULT_SETTINGS }, sources: {} }) as unknown as Effective })
   renderWithDeps(wrap(<Workspace />), makeDeps({ github, api }))
@@ -46,7 +48,7 @@ async function renderTree(issues: GitHubIssue[]) {
   await user.click(await screen.findByTestId('org-node-my-org'))
   await user.click(await screen.findByTestId('repo-node-my-org/widgets'))
   await screen.findByTestId(`issue-row-${issues[0].number}`)
-  return user
+  return Object.assign(user, { github })
 }
 
 const rows = () => [...document.querySelectorAll('[data-testid^="issue-row-"]')].map((e) => e.getAttribute('data-testid')!.replace('issue-row-', ''))
@@ -96,7 +98,8 @@ describe('이슈 검색', () => {
     const box = screen.getByRole('searchbox', { name: 'widgets 이슈 검색' })
     await user.type(box, 'LOGIN')
     expect(rows()).toEqual(['42'])
-    expect(screen.getByRole('status')).toHaveTextContent('검색 결과 1개')
+    // 결과 수는 GitHub 조회가 끝난 뒤에 알린다
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('검색 결과 1개'))
     await user.clear(box)
     await user.type(box, '#1')
     // 번호에 1 이 들어간 이슈(#10, #1) — ★기타와 #42 는 빠진다
@@ -111,7 +114,7 @@ describe('이슈 검색', () => {
     const box = screen.getByTestId('issue-search')
     await user.type(box, 'nope')
     expect(rows()).toEqual([])
-    expect(screen.getByText('검색 결과 없음')).toBeInTheDocument()
+    expect(await screen.findByText('검색 결과 없음')).toBeInTheDocument()
     expect(screen.getByTestId('add-issue')).toBeInTheDocument()
     await user.keyboard('{Escape}')
     expect(box).toHaveValue('')
@@ -128,5 +131,72 @@ describe('이슈 검색', () => {
     await waitFor(() => expect(rows()).toEqual([]))
     // 무엇이 가렸는지 알린다(검색어가 아니라 에이전트 필터)
     expect(screen.getByText('에이전트가 도는 이슈 중 검색 결과 없음')).toBeInTheDocument()
+  })
+})
+
+describe('목록에 없는 이슈를 GitHub 에서 찾는다 (#83)', () => {
+  // 불러온 목록(상한 안)에는 #1…#11 만 있고, #900·#901 은 GitHub 에만 있다
+  const loaded = many(ISSUE_SEARCH_MIN + 1)
+  const far = [issue(900, 'Far login'), issue(901, 'Far logout')]
+
+  it('입력이 멈춘 뒤 한 번만 묻고, 목록 결과 아래에 번호 내림차순으로 붙인다 — 목록에 이미 있는 이슈는 한 번만', async () => {
+    const searchIssues = vi.fn(async () => [far[0], far[1], loaded[2]])
+    const user = await renderTree(loaded, { searchIssues })
+    await user.type(screen.getByTestId('issue-search'), '  Far  ')
+    // GitHub 이 찾은 #3 은 제목이 검색어와 맞지 않아도 남긴다(목록 쪽 줄로 한 번만)
+    await waitFor(() => expect(rows()).toEqual(['3', '901', '900']))
+    expect(searchIssues).toHaveBeenCalledTimes(1)
+    expect(searchIssues).toHaveBeenCalledWith('my-org', 'widgets', 'Far')
+    expect(screen.getByRole('status')).toHaveTextContent('검색 결과 3개')
+    expect(screen.queryByText('GitHub 에서 찾는 중…')).not.toBeInTheDocument()
+  })
+
+  it('찾는 동안 알리고, 끝나기 전에는 "검색 결과 없음" 을 보이지 않는다', async () => {
+    const pending = deferred<GitHubIssue[]>()
+    const user = await renderTree(loaded, { searchIssues: () => pending.promise })
+    await user.type(screen.getByTestId('issue-search'), 'far')
+    expect(screen.getByText('GitHub 에서 찾는 중…')).toBeInTheDocument()
+    expect(screen.queryByText('검색 결과 없음')).not.toBeInTheDocument()
+    await waitFor(() => expect(user.github.searchIssues).toHaveBeenCalled())
+    expect(screen.queryByText('검색 결과 없음')).not.toBeInTheDocument()
+    pending.resolve([])
+    expect(await screen.findByText('검색 결과 없음')).toBeInTheDocument()
+  })
+
+  it('누른 줄은 검색어를 지워도 남는다(목록 캐시에 넣는다)', async () => {
+    const user = await renderTree(loaded, { searchIssues: async () => far })
+    const box = screen.getByTestId('issue-search')
+    await user.type(box, 'far')
+    await user.click(await screen.findByTestId('issue-row-900'))
+    // 목록 쪽으로 옮겨 가도 같은 줄이다 — 키보드 포커스를 잃지 않는다
+    expect(screen.getByTestId('issue-row-900')).toHaveFocus()
+    await user.clear(box)
+    expect(rows()).toContain('900')
+    expect(rows()).not.toContain('901')
+  })
+
+  it('실패하면 목록 결과는 그대로 두고 알린다 — [재시도] 로만 다시 묻는다', async () => {
+    let fail = true
+    const searchIssues = vi.fn(async () => {
+      if (fail) throw new GitHubError('rate_limited', { retryAt: null })
+      return far
+    })
+    const user = await renderTree(loaded, { searchIssues })
+    await user.type(screen.getByTestId('issue-search'), 'task 11')
+    expect(await screen.findByText('GitHub 검색 실패 — GitHub 사용량 제한 — 잠시 후 재시도')).toBeInTheDocument()
+    expect(rows()).toEqual(['11'])
+    expect(searchIssues).toHaveBeenCalledTimes(1)
+    fail = false
+    await user.click(screen.getByRole('button', { name: '재시도' }))
+    await waitFor(() => expect(rows()).toEqual(['11', '901', '900']))
+  })
+
+  it('"에이전트가 있는 이슈만" 이 켜져 있으면 GitHub 에 묻지 않는다', async () => {
+    useUiStore.setState({ treeAgentsOnly: true, selectedIssueId: 'my-org/widgets#1' })
+    const user = await renderTree(loaded, { searchIssues: async () => far })
+    await user.type(screen.getByTestId('issue-search'), 'far')
+    expect(await screen.findByText('에이전트가 도는 이슈 중 검색 결과 없음')).toBeInTheDocument()
+    await new Promise((r) => setTimeout(r, ISSUE_SEARCH_DEBOUNCE_MS + 100))
+    expect(user.github.searchIssues).not.toHaveBeenCalled()
   })
 })

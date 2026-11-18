@@ -21,6 +21,8 @@ export * from './types'
 export const GITHUB_API_BASE = 'https://api.github.com'
 export const PER_PAGE = 100
 export const MAX_PAGES = 5
+/** GitHub 검색 한 번의 결과 수 상한 */
+export const SEARCH_PER_PAGE = 30
 
 export interface GitHubClientDeps {
   tauri: Pick<GhHost, 'ghAvailable' | 'ghRun'>
@@ -40,6 +42,11 @@ export interface GitHubClient {
   listRepos(owner: GitHubOwner): Promise<GitHubRepo[]>
   /** state=all, per_page=100, ≤5페이지, PR 제외. ensureNumbers 중 목록에 없는 번호는 개별 조회로 보충 */
   listIssues(owner: string, repo: string, opts?: { ensureNumbers?: number[] }): Promise<GitHubIssue[]>
+  /**
+   * 열린 이슈를 GitHub 에서 찾는다(PR 제외, 최대 30개) — listIssues 의 상한 밖에 있는 이슈를 찾을 때 쓴다.
+   * 제목은 GitHub 검색(단어 단위)으로, 검색어가 번호 하나(`42`·`#42`)면 그 번호의 이슈도 함께 조회한다
+   */
+  searchIssues(owner: string, repo: string, query: string): Promise<GitHubIssue[]>
   defaultBranch(owner: string, repo: string): Promise<string>
   /** 저장소 하나 — 대소문자를 GitHub 표기(canonical)로 맞출 때 쓴다 */
   getRepo(owner: string, repo: string): Promise<GitHubRepo>
@@ -160,6 +167,35 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
           }
         }
         return issues
+      }),
+
+    searchIssues: (owner, repo, query) =>
+      withTransport(async (t) => {
+        // 한정자 문자(: ")를 뺀다 — 검색어로 repo: 같은 한정자를 넣어 다른 저장소를 찾지 못하게
+        const words = query.replace(/[:"]/g, ' ').split(/\s+/).filter(Boolean)
+        if (words.length === 0) return []
+        const q = `${words.join(' ')} repo:${owner}/${repo} is:issue is:open in:title`
+        const byTitle = async () => {
+          const data = (await t.get(`search/issues?q=${enc(q)}&per_page=${SEARCH_PER_PAGE}`)).data as { items?: RawIssue[] } | null
+          return Array.isArray(data?.items) ? data.items : []
+        }
+        // GitHub 검색은 번호로 찾지 못한다 → 번호 하나만 친 경우 그 이슈를 직접 조회한다
+        const byNumber = async (): Promise<RawIssue[]> => {
+          const m = words.length === 1 ? /^#?(\d+)$/.exec(words[0]) : null
+          if (!m) return []
+          try {
+            const r = (await t.get(`repos/${enc(owner)}/${enc(repo)}/issues/${Number(m[1])}`)).data as RawIssue | null
+            return r ? [r] : []
+          } catch (e) {
+            if (e instanceof GitHubError && e.code === 'not_found') return []
+            throw e
+          }
+        }
+        const [numbered, titled] = await Promise.all([byNumber(), byTitle()])
+        const seen = new Set<number>()
+        return [...numbered, ...titled]
+          .filter((r) => r.pull_request === undefined && r.state !== 'closed' && !seen.has(r.number) && !!seen.add(r.number))
+          .map(toIssue)
       }),
 
     defaultBranch: (owner, repo) =>

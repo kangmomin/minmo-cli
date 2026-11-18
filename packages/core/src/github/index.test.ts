@@ -235,6 +235,59 @@ describe('PF-01 개별 보충 중 삭제·이전된 이슈(404/410) → 그 번�
   })
 })
 
+describe('searchIssues — 목록 상한 밖의 열린 이슈를 GitHub 에서 찾는다 (#83)', () => {
+  const searchQ = (calls: FetchCall[]) => calls.map((c) => new URL(c.url)).find((u) => u.pathname === '/search/issues')?.searchParams
+
+  it('제목 검색: repo·is:issue·is:open·in:title 로 묻고, PR·닫힌 이슈는 뺀다', async () => {
+    const t = setup({ route: () => json({ items: [issue(901), issue(902, 'closed'), issue(903, 'open', { pull_request: {} })] }) })
+    await expect(t.gh.searchIssues('o', 'r', '  Add   login ')).resolves.toEqual([{ number: 901, title: 'Issue 901', state: 'open', htmlUrl: 'https://github.com/o/r/issues/901' }])
+    expect(t.rest.fn).toHaveBeenCalledTimes(1)
+    expect(searchQ(t.rest.calls)?.get('q')).toBe('Add login repo:o/r is:issue is:open in:title')
+    expect(searchQ(t.rest.calls)?.get('per_page')).toBe('30')
+  })
+
+  it('검색어의 한정자 문자(: ")는 뺀다 — 다른 저장소를 찾지 못하게 · 빈 검색어는 묻지 않는다', async () => {
+    const t = setup({ route: () => json({ items: [] }) })
+    await t.gh.searchIssues('o', 'r', 'repo:other/x "bug"')
+    expect(searchQ(t.rest.calls)?.get('q')).toBe('repo other/x bug repo:o/r is:issue is:open in:title')
+    await expect(t.gh.searchIssues('o', 'r', ' :" ')).resolves.toEqual([])
+    expect(t.rest.fn).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['777', '#777'])('번호 하나(%s)면 그 이슈를 직접 조회해 앞에 두고, 제목 결과와 겹치면 한 번만', async (q) => {
+    const t = setup({ route: (u) => (u.pathname === '/repos/o/r/issues/777' ? json(issue(777)) : json({ items: [issue(5), issue(777)] })) })
+    expect((await t.gh.searchIssues('o', 'r', q)).map((i) => i.number)).toEqual([777, 5])
+  })
+
+  it.each([
+    ['없는 번호(404)', () => json({ message: 'Not Found' }, { status: 404 })],
+    ['닫힌 이슈', () => json(issue(777, 'closed'))],
+    ['PR', () => json(issue(777, 'open', { pull_request: {} }))],
+  ])('번호 조회가 %s 면 제목 결과만', async (_l, single) => {
+    const t = setup({ route: (u) => (u.pathname === '/repos/o/r/issues/777' ? single() : json({ items: [issue(5)] })) })
+    expect((await t.gh.searchIssues('o', 'r', '777')).map((i) => i.number)).toEqual([5])
+  })
+
+  it('여러 단어면 번호를 직접 조회하지 않는다', async () => {
+    const t = setup({ route: () => json({ items: [] }) })
+    await t.gh.searchIssues('o', 'r', '777 login')
+    expect(t.rest.calls.map((c) => new URL(c.url).pathname)).toEqual(['/search/issues'])
+  })
+
+  it('gh 로 묻는다 — 경로에 검색어를 인코딩해 넣는다', async () => {
+    const ghRun = vi.fn<GhHost['ghRun']>(async () => ok(JSON.stringify({ items: [issue(901)] })))
+    const t = setup({ ghAvailable: true, ghRun })
+    expect((await t.gh.searchIssues('o', 'r', '로그인')).map((i) => i.number)).toEqual([901])
+    expect(ghRun.mock.calls[0][0]).toEqual(['api', `search/issues?q=${encodeURIComponent('로그인 repo:o/r is:issue is:open in:title')}&per_page=30`])
+    expect(t.rest.fn).not.toHaveBeenCalled()
+  })
+
+  it('rate limit 은 그대로 알린다(EC-18)', async () => {
+    const t = setup({ route: () => json({ message: 'API rate limit exceeded' }, { status: 403, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1762700000' } }) })
+    await expect(t.gh.searchIssues('o', 'r', 'login')).rejects.toMatchObject({ code: 'rate_limited' })
+  })
+})
+
 describe('getRepo · getIssue', () => {
   it('getRepo 는 GitHub 표기(대소문자)로, getIssue 는 PR 이면 not_found', async () => {
     const t = setup({

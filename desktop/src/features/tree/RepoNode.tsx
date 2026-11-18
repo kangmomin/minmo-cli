@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderInputIcon, MoreHorizontalIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
 
@@ -14,7 +14,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { Input } from '../../components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../components/ui/dropdown-menu'
-import type { GitHubRepo } from '@minmo/core'
+import type { GitHubIssue, GitHubRepo } from '@minmo/core'
 import { queryKeys } from '../../lib/queryKeys'
 import { cn } from '../../lib/utils'
 import { issueBranchContext, issuePaths, lacksOrigin } from '@minmo/core'
@@ -34,7 +34,8 @@ import { NewIssueDialog } from './NewIssueDialog'
 import { useOpenPublish } from './publishContext'
 import { isPublishing } from './publishRepo'
 import { unregisterLocalRepo } from './localRepos'
-import { githubErrorMessage, useIssues } from './useTree'
+import { githubErrorMessage, upsertIssueCache, useIssueSearch, useIssues } from './useTree'
+import type { TreeIssue } from './useTree'
 
 export interface RepoNodeProps {
   repo: GitHubRepo
@@ -42,6 +43,9 @@ export interface RepoNodeProps {
   hidden?: boolean
   onOpenSettings(scope: SettingsScope, preview: PreviewIssue | null): void
 }
+
+/** 이슈 목록의 한 줄. source 가 있으면 불러온 목록에 없어 GitHub 검색으로 찾은 이슈다 */
+type Row = { issue: TreeIssue; entry: { path: string } | undefined; source?: GitHubIssue }
 
 // 배지가 있는 행의 이름 칸: 글자 폭에서 시작해 배지와 함께 줄되 min(글자 폭, 40px) 아래로는 줄지 않는다 (#70).
 // overflow 가 없는 바깥 칸의 자동 최소 폭이 min(width 2.5rem, 글자 폭) 이라 짧은 이름은 늘지 않는다 — 말줄임은 안쪽 span 이 맡는다
@@ -151,7 +155,23 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
   const [search, setSearch] = useState('')
   const searching = search.trim() !== ''
   const searchable = entries.length - 1 > ISSUE_SEARCH_MIN || searching
-  const shownEntries = searching ? agentEntries.filter(([i]) => matchesIssue(i, search)) : agentEntries
+  // 목록 상한 밖의 이슈는 GitHub 에서 찾는다(#83). 에이전트 필터가 켜져 있으면 묻지 않는다 — 불러오지 않은 이슈에는 에이전트가 없다
+  const queryClient = useQueryClient()
+  const remote = useIssueSearch(repo.owner, repo.name, search, expanded && !local && !agentsOnly)
+  const remoteKeys = useMemo(() => new Set(remote.issues.map((i) => String(i.number))), [remote.issues])
+  // GitHub 이 찾은 이슈는 목록 안 검색(부분 문자열)과 맞지 않아도 남긴다 — 누른 뒤 목록 캐시로 옮겨 가도 줄이 사라지지 않게
+  const shownEntries = searching ? agentEntries.filter(([i]) => matchesIssue(i, search) || remoteKeys.has(i.key)) : agentEntries
+  // 목록 결과 아래에 GitHub 결과(목록에 없는 것만, 최신 번호 순)를 붙인다. 한 배열로 그린다 — 누른 줄이 목록 캐시로
+  // 옮겨 가도 같은 key 의 같은 줄로 남아 키보드 포커스를 잃지 않는다
+  const found = useMemo(() => {
+    const loaded = new Set(entries.map(([i]) => i.key))
+    return remote.issues
+      .filter((i) => !loaded.has(String(i.number)))
+      .sort((a, b) => b.number - a.number)
+      .map((i): Row => ({ issue: { key: String(i.number), number: i.number, title: i.title, state: i.state, htmlUrl: i.htmlUrl }, entry: undefined, source: i }))
+  }, [remote.issues, entries])
+  const rows: Row[] = [...shownEntries.map(([issue, entry]) => ({ issue, entry })), ...found]
+  const shownCount = rows.length
   // 로컬 저장소(GitHub 아님)는 이슈 대신 작업이라고 부른다
   const noun = local ? '작업' : '이슈'
 
@@ -379,14 +399,14 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
             {/* 결과 수는 스크린 리더에만 알린다. live region 은 결과가 바뀌기 전에 있어야 변화가 읽힌다 */}
             {searchable && (
               <p role="status" className="sr-only">
-                {searching ? `검색 결과 ${shownEntries.length}개` : ''}
+                {searching && !remote.pending ? `검색 결과 ${shownCount}개` : ''}
               </p>
             )}
-            {searching && !issues.isLoading && shownEntries.length === 0 && (
+            {searching && !issues.isLoading && !remote.pending && !remote.error && shownCount === 0 && (
               <div className="px-2 py-1 text-xs text-muted-foreground">{agentsOnly ? '에이전트가 도는 이슈 중 검색 결과 없음' : '검색 결과 없음'}</div>
             )}
             {agentsOnly && !searching && !issues.isLoading && shownEntries.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">에이전트가 도는 이슈 없음</div>}
-            {shownEntries.map(([issue, entry]) => (
+            {rows.map(({ issue, entry, source }) => (
               <IssueRow
                 key={issue.key}
                 issueId={worktreeId(repo.owner, repo.name, issue.key)}
@@ -396,8 +416,19 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
                 hasWorktree={entry !== undefined}
                 pathChanged={changed.has(issue.key)}
                 selected={selectedId === worktreeId(repo.owner, repo.name, issue.key)}
+                // GitHub 결과는 누를 때 목록 캐시에 넣는다 — 검색어를 지워도 누른 줄이 남고, 이슈 머리줄이 제목·상태를 읽는다
+                onOpen={source && (() => upsertIssueCache(queryClient, repo.owner, repo.name, source))}
               />
             ))}
+            {remote.pending && <div className="px-2 py-1 text-xs text-muted-foreground">GitHub 에서 찾는 중…</div>}
+            {remote.error && (
+              <div className="flex items-center gap-2 px-2 py-1 text-xs text-destructive">
+                <span className="flex-1">GitHub 검색 실패 — {githubErrorMessage(remote.error)}</span>
+                <Button size="sm" variant="ghost" onClick={() => void remote.refetch()}>
+                  재시도
+                </Button>
+              </div>
+            )}
             <button
               type="button"
               data-testid={local ? 'add-task' : 'add-issue'}
