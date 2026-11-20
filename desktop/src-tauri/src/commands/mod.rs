@@ -6,6 +6,7 @@ pub mod job;
 pub mod keychain;
 pub mod procs;
 pub mod pty;
+pub mod pty_link;
 pub mod script;
 pub mod ssh;
 pub mod usage;

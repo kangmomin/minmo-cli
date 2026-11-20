@@ -332,6 +332,9 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     ptyList: async () => [...ptyCwd].map(([id, cwd]) => ({ id, key: null, cwd, host: null })),
     onPtyExit: async () => () => {},
     onPtyResized: async () => () => {},
+    // TODO(#89 5.2): 재접속 기록·emitPtyLink — 지금은 타입을 맞추는 빈 스텁
+    ptyReconnect: async () => {},
+    onPtyLink: async () => () => {},
     // 공유 상태·원격 접속은 mock 에서 쓰지 않는다(화면 상태는 평소처럼 브라우저 저장소에만 남는다)
     sharedGet: async () => ({ value: null, rev: 0 }),
     sharedSet: async (_key, _value, _origin, base) => base + 1,

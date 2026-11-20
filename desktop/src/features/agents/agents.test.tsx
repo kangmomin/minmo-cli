@@ -20,7 +20,7 @@ import type { AgentRow } from './overview'
 import { PtyStreamParser } from './ptyStream'
 import { REMOTE_SUBAGENTS_SCRIPT, SUBAGENT_STALE_MS, claudeProjectSlug, parseRemoteSubagents, parseSubagentFiles, runningCount } from './subagents'
 import type { Subagent } from './subagents'
-import { DONE_BELL_MS, ECHO_MS, noteTerminalInput, useAgentTracker } from './useAgentTracker'
+import { DONE_BELL_MS, ECHO_MS, muteTerminalActivity, noteTerminalInput, useAgentTracker } from './useAgentTracker'
 
 const osc = (title: string, end = '\x07') => `\x1b]0;${title}${end}`
 
@@ -570,6 +570,48 @@ describe('추적기(useAgentTracker)', () => {
     useUiStore.setState({ terminalIds: {} })
     await t.tick(1000)
     expect(useAgentStore.getState().panes).toEqual({})
+  })
+
+  // #89: 원격 터미널이 다시 접속할 때의 준비 출력·구분 줄·tmux 다시 그리기는 에이전트의 출력이 아니다
+  describe('재접속 출력 무시 — muteTerminalActivity (#89)', () => {
+    const REMOTE = 'ssh:srv|acme/app#1::1'
+    const remotePane = () => useAgentStore.getState().panes[REMOTE]
+
+    it('mute 창 동안 그 패널의 출력은 활동으로 세지 않는다 — 창이 지나면 다시 센다', async () => {
+      const t = setup()
+      useUiStore.setState({ terminalIds: { [REMOTE]: 'pty-1' } })
+      await t.tick(1000)
+      t.out(osc('minmo:codex:work'))
+      await t.tick(1000)
+      expect(remotePane()).toMatchObject({ agent: 'codex', activity: 'idle' })
+      muteTerminalActivity(REMOTE, 3000)
+      t.out('다시 그린 화면')
+      await t.tick(1000)
+      expect(remotePane().activity).toBe('idle')
+      await t.tick(2500)
+      t.out('Thinking…')
+      await t.tick(1000)
+      expect(remotePane().activity).toBe('working')
+    })
+
+    it('원격 tmux 에서 작업 중이던 패널이 끊겼다 다시 접속해도 다시 그린 출력·제목으로 "끝남" 알림을 또 내지 않는다', async () => {
+      const t = setup()
+      useUiStore.setState({ terminalIds: { [REMOTE]: 'pty-1' } })
+      await t.tick(1000)
+      t.out(osc('minmo:codex:work'))
+      t.out('Thinking…')
+      await t.tick(1000)
+      expect(remotePane().activity).toBe('working')
+      // 연결이 끊겨 출력이 멈췄다(ssh 가 끊김을 알아채기까지 약 45초)
+      await t.tick(45_000)
+      const before = t.tauri.notify.mock.calls.length
+      // 다시 접속(pty-link connecting·connected): 준비 출력·tmux 다시 그리기·같은 제목
+      muteTerminalActivity(REMOTE, 3000)
+      t.out('\x1b[?1049h\x1b[H\x1b[2JThinking…')
+      t.out(osc('minmo:codex:work'))
+      await t.tick(QUIET_MS + 5000)
+      expect(t.tauri.notify).toHaveBeenCalledTimes(before)
+    })
   })
 })
 

@@ -11,8 +11,11 @@ export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes'
 /** ghostty = Ghostty 터미널의 기본 색(기본값) */
 export type Theme = 'ghostty' | 'black' | 'light'
 
-/** 이슈별 터미널 패널 배치. tree=null 이면 모든 패널을 닫은 상태 */
-export type IssuePanes = { tree: PaneNode | null; focused: string | null; seq: number }
+/**
+ * 이슈별 터미널 패널 배치. tree=null 이면 모든 패널을 닫은 상태.
+ * first: 패널이 없을 때 처음 만든 패널 — 원격 tmux 의 기본 세션을 쓰는 패널이다(분할·닫기로 바뀌지 않는다, #89 D-26)
+ */
+export type IssuePanes = { tree: PaneNode | null; focused: string | null; seq: number; first?: string }
 
 const THEME_VALUES: readonly Theme[] = ['ghostty', 'black', 'light']
 
@@ -125,6 +128,8 @@ export interface UiState {
    */
   focusIssueTerminal(issueId: string): void
   ensurePanes(issueId: string): void
+  /** 이슈의 첫 패널(first) — 없으면(이전 버전의 상태) 지금 첫 패널로 한 번 채운다. 패널이 없으면 null */
+  firstPane(issueId: string): string | null
   splitPane(issueId: string, paneId: string, dir: SplitDir): void
   closePane(issueId: string, paneId: string): void
   focusPane(issueId: string, paneId: string): void
@@ -274,6 +279,8 @@ export const useUiStore = create<UiState>()(
         }),
       ensurePanes: (issueId) =>
         set((s) => (s.panes[issueId] ? s : { panes: { ...s.panes, [issueId]: { tree: leaf(paneIdOf(issueId, 1)), focused: null, seq: 1 } } })),
+      // TODO(#89 5.2): Red 단계의 빈 스텁
+      firstPane: () => null,
       splitPane: (issueId, paneId, dir) =>
         set((s) => {
           const cur = s.panes[issueId]

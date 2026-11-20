@@ -57,6 +57,47 @@ describe('focusIssueTerminal (#78)', () => {
   })
 })
 
+// D-26(#89): 원격 tmux 의 기본 세션을 쓰는 패널(first)을 정해 두고, 분할·닫기로 바꾸지 않는다 —
+// 첫 패널을 닫아도 남은 분할 패널이 기본 세션으로 옮겨 붙지 않고 자기 -pN 세션에 다시 붙게(AC-05)
+describe('패널 역할 고정 — first (#89 D-26)', () => {
+  const panes = () => useUiStore.getState().panes[ID]
+
+  it.each([
+    ['launchPane(빈 트리)', () => void useUiStore.getState().launchPane(ID), P1],
+    ['launchPane(keepFirst, 빈 트리)', () => void useUiStore.getState().launchPane(ID, true), P1],
+    ['ensurePanes', () => useUiStore.getState().ensurePanes(ID), P1],
+    [
+      'newPane(모두 닫은 뒤)',
+      () => {
+        useUiStore.setState({ panes: { [ID]: { tree: null, focused: null, seq: 2 } } })
+        useUiStore.getState().newPane(ID)
+      },
+      `${ID}::3`,
+    ],
+  ])('패널이 없을 때 만드는 경로 %s: first 는 처음 만든 패널', (_, make, first) => {
+    make()
+    expect(panes().first).toBe(first)
+  })
+
+  it('분할·닫기 뒤에도 first 는 그대로다(첫 패널을 닫아도 남은 패널로 옮기지 않는다)', () => {
+    useUiStore.getState().ensurePanes(ID)
+    useUiStore.getState().splitPane(ID, P1, 'row')
+    expect(panes().first).toBe(P1)
+    useUiStore.getState().closePane(ID, P1)
+    expect(panes().tree).toEqual({ kind: 'leaf', id: P2 })
+    expect(panes().first).toBe(P1)
+  })
+
+  it('first 가 없는 이전 상태는 처음 읽을 때 지금 첫 패널로 한 번 채운다', () => {
+    useUiStore.setState({ panes: { [ID]: { ...SPLIT, focused: null } } })
+    expect(useUiStore.getState().firstPane(ID)).toBe(P1)
+    expect(panes().first).toBe(P1)
+    // 한 번 채운 뒤에는 첫 패널을 닫아도 남은 패널로 바꾸지 않는다
+    useUiStore.getState().closePane(ID, P1)
+    expect(useUiStore.getState().firstPane(ID)).toBe(P1)
+  })
+})
+
 describe('selectIssue', () => {
   it('같은 이슈를 다시 골라도 선택 번호가 오른다(좁은 화면이 작업 화면으로 넘어가는 신호)', () => {
     useUiStore.getState().selectIssue(ID)

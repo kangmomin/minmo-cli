@@ -36,9 +36,23 @@ export type RemotePty = { host: string; session: string | null; ephemeral: boole
 export type PtySpawnRequest = { cwd: string; cols: number; rows: number; remote?: RemotePty; key?: string }
 /** end: 이 조각까지의 전체 출력 길이 — 붙는 화면이 지난 출력(PtyFound.scrollback)과 겹치는 조각을 가려낸다 */
 export type PtyDataEvent = { id: string; data: string; end?: number }
+/** 원격 터미널의 연결 상태(src-tauri/src/commands/pty_link.rs). connected = 연결됨(안내 없음) */
+export type PtyLinkPhase = 'waiting' | 'connecting' | 'connected' | 'failed'
+/** seq: 상태가 바뀔 때마다 오르는 번호 — 늦게 온 옛 상태를 버린다. at: 다시 접속한 시각(HH:MM) */
+export type PtyLink = { phase: PtyLinkPhase; attempt: number; max: number; seq: number; reason: null | 'auth' | 'host_key' | 'spawn'; at: string | null }
+export type PtyLinkEvent = PtyLink & { id: string }
 /** 이미 떠 있는 터미널 — scrollback(지금까지의 출력)을 먼저 그리고 붙는다 */
 /** offset: scrollback 이 담은 마지막 위치(전체 출력 길이) */
-export type PtyFound = { id: string; scrollback: string; offset: number; cols: number; rows: number }
+/** link: 원격 터미널의 지금 연결 상태, tmux: 그 터미널이 붙은 tmux 세션(Rust 가 가진 실제 값, 없으면 null) */
+export type PtyFound = {
+  id: string
+  scrollback: string
+  offset: number
+  cols: number
+  rows: number
+  link?: PtyLink
+  tmux?: { session: string; ephemeral: boolean } | null
+}
 export type PtyInfo = { id: string; key: string | null; cwd: string; host: string | null }
 /** by: 크기를 바꾼 화면이 ptyResize 에 넘긴 표시(없으면 null) — 화면이 자기가 바꾼 것을 알아본다 */
 export type PtyResizedEvent = { id: string; cols: number; rows: number; by?: string | null }
@@ -165,6 +179,10 @@ export interface TauriApi extends WorktreeHost, GhHost {
   onPtyExit(cb: (id: string) => void): Promise<Unlisten>
   /** 터미널 크기가 바뀌었다(같은 터미널을 보는 다른 화면이 바꾼 경우 포함) */
   onPtyResized(cb: (e: PtyResizedEvent) => void): Promise<Unlisten>
+  /** 끊긴 원격 터미널을 기다리지 않고 바로 다시 접속한다(실패한 뒤면 처음부터 다시) */
+  ptyReconnect(id: string): Promise<void>
+  /** 원격 터미널의 연결 상태가 바뀌었다 */
+  onPtyLink(cb: (e: PtyLinkEvent) => void): Promise<Unlisten>
 
   /** 여러 화면(이 PC 의 창·붙은 기기)이 함께 쓰는 상태 — 이 PC 의 파일에 저장된다. origin 은 바꾼 화면 */
   sharedGet(key: string): Promise<SharedValue>
@@ -307,6 +325,7 @@ export const TAURI_COMMANDS = {
   ptyWindows: 'pty_windows',
   ptyKill: 'pty_kill',
   ptyKillByCwd: 'pty_kill_by_cwd',
+  ptyReconnect: 'pty_reconnect',
   ptyProcesses: 'pty_processes',
   claudeSubagents: 'claude_subagents',
   agentUsage: 'agent_usage',
@@ -374,6 +393,7 @@ export const TAURI_EVENTS = {
   ptyData: 'pty-data',
   ptyExit: 'pty-exit',
   ptyResized: 'pty-resized',
+  ptyLink: 'pty-link',
   scriptLog: 'script-log',
   serverStatus: 'server-status',
   closeRequested: 'close-requested',
@@ -405,6 +425,8 @@ export function createTauriApi(): TauriApi {
     ptyList: () => call(C.ptyList),
     onPtyExit: async (cb) => (await event()).listen<string>(TAURI_EVENTS.ptyExit, (e) => cb(e.payload)),
     onPtyResized: async (cb) => (await event()).listen<PtyResizedEvent>(TAURI_EVENTS.ptyResized, (e) => cb(e.payload)),
+    ptyReconnect: (id) => call(C.ptyReconnect, { id }),
+    onPtyLink: async (cb) => (await event()).listen<PtyLinkEvent>(TAURI_EVENTS.ptyLink, (e) => cb(e.payload)),
     sharedGet: (key) => call(C.sharedGet, { key }),
     sharedSet: (key, value, origin, base) => call(C.sharedSet, { key, value, origin, base }),
     onSharedChanged: async (cb) => (await event()).listen<SharedChangedEvent>(TAURI_EVENTS.sharedChanged, (e) => cb(e.payload)),

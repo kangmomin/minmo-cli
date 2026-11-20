@@ -30,6 +30,16 @@ export function noteTerminalInput(paneId: string) {
   inputAt.set(paneId, Date.now())
 }
 
+/**
+ * ms 동안 그 패널의 출력을 활동으로 세지 않는다 — 원격 터미널이 다시 접속할 때의 준비 출력·구분 줄·tmux 다시 그리기가
+ * "작업 중 → 끝남" 알림을 만들지 않게(TerminalTab 이 pty-link connecting·connected 에서 호출, #89)
+ */
+export function muteTerminalActivity(paneId: string, ms: number) {
+  // TODO(#89 5.2): Red 단계의 빈 스텁
+  void paneId
+  void ms
+}
+
 type Tracked = PaneSignals & {
   ptyId: string
   parser: PtyStreamParser
