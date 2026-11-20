@@ -177,7 +177,7 @@ pub struct Probe {
 /// kind: host_key | auth | unreachable | unsupported_os | no_git | unknown_host | failed
 #[derive(Debug, PartialEq, Serialize)]
 pub struct SshError {
-    kind: &'static str,
+    pub(crate) kind: &'static str,
     message: String,
 }
 
