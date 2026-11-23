@@ -24,7 +24,7 @@ test('저장소를 펼치면 ★기타가 첫 행, open 이슈 표시, worktree 
   await expect(page.getByTestId('issue-row-7')).toHaveCount(0)
 })
 
-test('이슈 열기 → 상단 바에 브랜치 표시(effective branchTemplate feat/{number}) + ● 표시', async ({ page }) => {
+test('이슈 열기 → 상단 바에 브랜치 표시(effective branchTemplate feat/{number}) + worktree 표시(초록 번호)', async ({ page }) => {
   await expandWidgets(page)
   await page.getByTestId('issue-row-42').click()
   await expect(page.getByTestId('issue-branch')).toHaveText('feat/42')

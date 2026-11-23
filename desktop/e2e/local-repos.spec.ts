@@ -126,7 +126,7 @@ test('GitHub 에 올리기 → 저장소·이슈를 만들고 GitHub 저장소�
   expect(git).toContainEqual(['-C', '/home/minmo/src/my-app', 'remote', 'add', 'origin', 'https://github.com/octocat/my-app.git'])
   expect(git).toContainEqual(['-C', '/home/minmo/src/my-app', 'push', '-u', 'origin', '--all'])
 
-  // 로컬 항목은 사라지고 내 계정 아래의 GitHub 저장소로 — 작업 폴더(●)와 기준 저장소 표시가 이어진다
+  // 로컬 항목은 사라지고 내 계정 아래의 GitHub 저장소로 — 작업 폴더(초록 번호)와 기준 저장소 표시가 이어진다
   await expect(localRepo(page)).toHaveCount(0)
   const repo = page.getByTestId('repo-node-octocat/my-app')
   await expect(repo).toBeVisible()
