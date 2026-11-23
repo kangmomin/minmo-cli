@@ -152,6 +152,7 @@ export type UpdateProgress = { downloaded: number; total: number | null }
 export const KEYCHAIN_KEYS = {
   session: 'minmo.session',
   githubToken: 'minmo.github-token',
+  pairToken: 'minmo.pair-token',
 } as const
 
 /** 데스크탑 전용 기능(PTY·키체인 등)을 더한 Tauri 호스트 — worktree·GitHub 공용 인터페이스를 모두 만족한다 */

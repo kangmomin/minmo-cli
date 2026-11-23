@@ -139,7 +139,7 @@ export function useIssueSearch(owner: string, repo: string, query: string, enabl
   }
 }
 
-/** AC-04 새로고침: GitHub 목록 재조회 + 로컬 worktree 존재 여부(●) 재확인 */
+/** AC-04 새로고침: GitHub 목록 재조회 + 로컬 worktree 존재 여부(초록 번호) 재확인 */
 export function useRefreshTree() {
   const queryClient = useQueryClient()
   const depsOf = useHostDeps()

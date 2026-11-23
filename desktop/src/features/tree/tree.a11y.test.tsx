@@ -155,12 +155,38 @@ function renderRow(issue: TreeIssue, o: { hasWorktree?: boolean; pathChanged?: b
 }
 
 describe('AX-05 worktree 표시 · 경로 변경 배지 설명', () => {
-  it('worktree 유무는 화면에 표시하지 않는다(data-worktree 속성만)', () => {
+  it('#95 worktree 가 있으면 번호 글자색만 바뀌고(title 로 뜻을 보임), 스크린 리더는 이름 끝에서 "worktree 있음" 을 읽는다', () => {
     renderRow(ISSUE, { hasWorktree: true })
     const row = screen.getByTestId('issue-row-42')
     expect(row).toHaveAttribute('data-worktree', 'true')
+    const number = within(row).getByText('#42', { exact: true })
+    expect(number).toHaveClass('text-emerald-700')
+    expect(number).not.toHaveClass('text-muted-foreground')
+    expect(number).toHaveAttribute('title', 'worktree 있음')
+    // 제목은 그대로, 왼쪽 칸은 에이전트 점만(예전 ● 는 없다)
+    expect(within(row).getByText('Add login', { exact: true })).not.toHaveClass('text-emerald-700')
     expect(within(row).queryByRole('img')).not.toBeInTheDocument()
-    expect(row).not.toHaveTextContent('●')
+    expect(row).toHaveAccessibleName('#42 Add login worktree 있음')
+  })
+
+  it('#95 worktree 가 없으면 번호는 기본색이고 표시가 없다', () => {
+    renderRow(ISSUE)
+    const row = screen.getByTestId('issue-row-42')
+    expect(row).not.toHaveAttribute('data-worktree')
+    const number = within(row).getByText('#42', { exact: true })
+    expect(number).toHaveClass('text-muted-foreground')
+    expect(number).not.toHaveClass('text-emerald-700')
+    expect(number).not.toHaveAttribute('title')
+    expect(row).toHaveAccessibleName('#42 Add login')
+  })
+
+  it('#95 ★기타는 번호가 없어 "기타" 글자에 같은 표시를 한다', () => {
+    renderRow(ETC, { hasWorktree: true })
+    const row = screen.getByTestId('issue-row-etc')
+    const label = within(row).getByText('기타', { exact: true })
+    expect(label).toHaveClass('text-emerald-700')
+    expect(label).toHaveAttribute('title', 'worktree 있음')
+    expect(row).toHaveAccessibleName('기타 worktree 있음')
   })
 
   it('"경로 변경됨" 설명을 스크린 리더도 받는다(aria-describedby)', () => {

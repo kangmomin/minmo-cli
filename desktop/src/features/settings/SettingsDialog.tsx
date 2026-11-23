@@ -17,6 +17,7 @@ import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF, ignoredCopyNames, issue
 import { LOCAL_HOST_ID, aliasOfHostId, baseDirOf, baseRepoOf, hostIdOf, repoAliasOf, repoHostOf, useHostsStore, useOriginFolder } from '../../store/hosts'
 import { clampNickname, isLocalOwner, normalizeNickname, repoKey, repoLabelOf, repoNicknameOf, repoShortNameOf, shortNameTaken, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
+import { PairSyncSection } from '../pairSync/PairSyncSection'
 import { BaseRepoDialog } from '../tree/BaseRepoDialog'
 import { useSettings } from './useSettings'
 
@@ -78,6 +79,7 @@ export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: Sett
               : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'}
           </DialogDescription>
         </DialogHeader>
+        {open && scope.kind === 'global' && <PairSyncSection />}
         {open && scope.kind === 'project' && <RepoNicknameSection key={repoKey(scope.owner, scope.repo)} owner={scope.owner} repo={scope.repo} />}
         {open && project && <RepoHostSection owner={project.owner} repo={project.repo} />}
         {open &&
