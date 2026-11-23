@@ -115,20 +115,27 @@ impl Supervisor {
     fn wake_at(&self) -> Option<Instant> {
         let sessions = lock(&self.hub)?;
         let link = &sessions.get(&self.id)?.link;
-        let t = &self.hub.timing;
         let at = match link.phase {
-            Phase::Waiting => self.waiting_since + t.delays[delay_index(link.attempt)],
+            Phase::Waiting => self.retry_at(link.attempt),
             // 시도 중에도 주기적으로 깨어나 끝난 ssh 를 본다 — ConPTY 는 자식이 끝나도 출력을 닫지 않아 Eof 가 오지 않는다
-            Phase::Connecting if !self.deadline_done => {
-                (self.started + t.deadline).min(self.next_poll)
-            }
+            Phase::Connecting if !self.deadline_done => self.deadline_at().min(self.next_poll),
             _ => self.next_poll,
         };
         let grace = self
             .stale
             .filter(|st| st.gen == link.gen)
-            .map(|st| st.since + t.grace);
+            .map(|st| st.since + self.hub.timing.grace);
         Some(grace.map_or(at, |g| g.min(at)))
+    }
+
+    /// Waiting(attempt) 의 다음 시도 시각
+    fn retry_at(&self, attempt: u32) -> Instant {
+        self.waiting_since + self.hub.timing.delays[delay_index(attempt)]
+    }
+
+    /// 지금 시도의 마감 시각
+    fn deadline_at(&self) -> Instant {
+        self.started + self.hub.timing.deadline
     }
 
     fn on_kick(&mut self) -> Flow {
@@ -163,7 +170,7 @@ impl Supervisor {
         match s.link.phase {
             Phase::Failed => return Flow::Go,
             Phase::Waiting => {
-                if now >= self.waiting_since + t.delays[delay_index(s.link.attempt)] {
+                if now >= self.retry_at(s.link.attempt) {
                     drop(sessions);
                     return self.attempt();
                 }
@@ -171,10 +178,7 @@ impl Supervisor {
             }
             Phase::Live | Phase::Connecting => {}
         }
-        if s.link.phase == Phase::Connecting
-            && !self.deadline_done
-            && now >= self.started + t.deadline
-        {
+        if s.link.phase == Phase::Connecting && !self.deadline_done && now >= self.deadline_at() {
             self.deadline_done = true;
             let alive = s.proc.alive();
             let seen = pty_link::visible(&s.proc.shared.tail());
@@ -313,24 +317,15 @@ impl Supervisor {
             None => Err("원격 세션이 아닙니다".to_string()),
         };
         let Some(mut sessions) = lock(&hub) else {
-            if let Ok(o) = opened {
-                pty::discard(o);
-            }
-            return Flow::Stop(None);
+            return abandon(opened, Flow::Stop(None));
         };
         let Some(s) = sessions.get_mut(&self.id) else {
             drop(sessions);
-            if let Ok(o) = opened {
-                pty::discard(o);
-            }
-            return Flow::Stop(None);
+            return abandon(opened, Flow::Stop(None));
         };
         if s.link.phase != Phase::Waiting || s.link.attempt != attempt {
             drop(sessions);
-            if let Ok(o) = opened {
-                pty::discard(o);
-            }
-            return Flow::Go;
+            return abandon(opened, Flow::Go);
         }
         let opened = match opened {
             Ok(o) => o,
@@ -356,6 +351,14 @@ impl Supervisor {
 
 fn lock(hub: &Hub) -> Option<Sessions<'_>> {
     hub.sessions.lock().ok()
+}
+
+/// 넣지 않을 새 ssh 를 버리고 flow 로 끝낸다 — 세션 잠금을 놓은 뒤 부른다
+fn abandon(opened: Result<pty::Opened, String>, flow: Flow) -> Flow {
+    if let Ok(o) = opened {
+        pty::discard(o);
+    }
+    flow
 }
 
 /// n 번째 시도 전 기다림의 자리(1..=MAX_ATTEMPTS)

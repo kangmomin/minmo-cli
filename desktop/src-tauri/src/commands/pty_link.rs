@@ -95,9 +95,14 @@ impl Link {
         self.gen
     }
 
+    /// 지금 세대의 ssh 가 돈다(연결됨·시도 중) — Waiting·Failed 의 PTY 는 끝난 ssh 의 것이다
+    pub(crate) fn running(&self) -> bool {
+        matches!(self.phase, Phase::Live | Phase::Connecting)
+    }
+
     /// 세대 이벤트(표시·마감·Eof)를 받을 때인가 — 연결됨·시도 중인 지금 세대만
     pub(crate) fn current(&self, ev_gen: u64) -> bool {
-        matches!(self.phase, Phase::Live | Phase::Connecting) && ev_gen == self.gen
+        self.running() && ev_gen == self.gen
     }
 
     fn wait_for(&mut self, attempt: u32) {
@@ -452,6 +457,10 @@ impl MarkerFilter {
                     break;
                 }
             }
+        }
+        // 뺀 제목이 없으면 head 는 비어 있다 — 조각마다 한 번 더 복사하지 않게 그대로 돌려준다
+        if copied == 0 {
+            return (buf, None);
         }
         head.push_str(&buf[copied..]);
         (head, None)

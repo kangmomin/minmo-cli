@@ -50,9 +50,20 @@ pub struct PtySession {
 impl PtySession {
     /// 지금 세대를 올린다(link.gen 과 거울을 함께)
     pub(crate) fn advance_gen(&mut self) -> u64 {
-        let gen = self.link.advance_gen();
-        self.gen.store(gen, Ordering::SeqCst);
-        gen
+        self.link.advance_gen();
+        self.sync_gen()
+    }
+
+    /// 기다리던 시도를 시작한다 — 새 세대로(link.gen 과 거울을 함께)
+    fn begin_attempt(&mut self) {
+        pty_link::begin_attempt(&mut self.link);
+        self.sync_gen();
+    }
+
+    /// 거울을 link.gen 에 맞춘다 — 세대를 바꾸는 곳은 이것으로만 거울을 쓴다
+    fn sync_gen(&self) -> u64 {
+        self.gen.store(self.link.gen, Ordering::SeqCst);
+        self.link.gen
     }
 }
 
@@ -70,6 +81,10 @@ pub(crate) struct GenShared {
 impl GenShared {
     pub(crate) fn set_connecting(&self, on: bool) {
         self.connecting.store(on, Ordering::SeqCst);
+    }
+
+    fn set_collecting(&self, on: bool) {
+        self.collecting.store(on, Ordering::SeqCst);
     }
 
     pub(crate) fn tail(&self) -> String {
@@ -164,6 +179,17 @@ impl Proc {
             #[cfg(windows)]
             job: self.job.clone(),
         }
+    }
+
+    fn set_size(&self, cols: u16, rows: u16) -> Result<(), String> {
+        self.master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(err)
     }
 
     #[cfg(test)]
@@ -896,15 +922,9 @@ pub(crate) fn find(hub: &Hub, key: &str) -> Result<Option<PtyFound>, String> {
             // 크기를 한 줄 줄였다 되돌리면 ConPTY 와 전체 화면 프로그램이 화면 전체를 다시 보낸다. 그 출력은 offset 뒤의
             // pty-data 로 가므로 붙는 화면이 이어서 그린다. 크기는 그대로이므로 pty-resized 는 알리지 않는다.
             // 재접속을 기다리는 동안(Waiting·Failed)의 PTY 는 끝난 ssh 의 것이라 건드리지 않는다
-            let running = matches!(s.link.phase, Phase::Live | Phase::Connecting);
-            if repaint && running && s.rows > 1 {
+            if repaint && s.link.running() && s.rows > 1 {
                 for rows in [s.rows - 1, s.rows] {
-                    let _ = s.proc.master.resize(PtySize {
-                        rows,
-                        cols: s.cols,
-                        pixel_width: 0,
-                        pixel_height: 0,
-                    });
+                    let _ = s.proc.set_size(s.cols, rows);
                 }
             }
             return Ok(Some(PtyFound {
@@ -970,19 +990,9 @@ pub(crate) fn spawn_session(hub: &Arc<Hub>, req: SpawnReq) -> Result<String, Str
         .remote
         .as_ref()
         .and_then(|_| hub.supervisor.get().copied());
-    let (tx, rx) = match supervisor {
-        Some(_) => {
-            let (tx, rx) = mpsc::channel();
-            (Some(tx), Some(rx))
-        }
-        None => (None, None),
-    };
+    let (tx, rx) = supervisor.map(|_| mpsc::channel()).unzip();
     // 첫 세대도 연결 신호 전까지 출력을 모은다 — 처음 열 때의 인증 실패도 가린다(AC-11·EC-01)
-    opened
-        .proc
-        .shared
-        .collecting
-        .store(req.remote.is_some(), Ordering::SeqCst);
+    opened.proc.shared.set_collecting(req.remote.is_some());
     let session = PtySession {
         proc: opened.proc,
         cwd: req.cwd,
@@ -1020,13 +1030,12 @@ pub(crate) fn swap_in(
     spawned: (u16, u16),
 ) -> (Proc, Reader) {
     // 거울을 먼저 올린다 — 옛 리더가 Scrollback 잠금 안에서 세대를 보고 준비 시퀀스 뒤에는 끼지 않는다
-    let gen = pty_link::begin_attempt(&mut s.link);
-    s.gen.store(gen, Ordering::SeqCst);
+    s.begin_attempt();
     let Opened { mut proc, reader } = opened;
     let rows = s.rows;
     proc.cpr_reply = pty_link::cpr_reply(rows).into_bytes();
-    proc.shared.connecting.store(true, Ordering::SeqCst);
-    proc.shared.collecting.store(true, Ordering::SeqCst);
+    proc.shared.set_connecting(true);
+    proc.shared.set_collecting(true);
     // tmux 는 다시 붙으면 제목을 다시 보내므로 지우지 않는다(에이전트 감지가 제목을 잃지 않게)
     let clear_title = s.remote.as_ref().is_some_and(|r| r.session.is_none());
     let prelude = s
@@ -1037,12 +1046,7 @@ pub(crate) fn swap_in(
     announce(hub, id, s, Some(prelude));
     let old = std::mem::replace(&mut s.proc, proc);
     if spawned != (s.cols, s.rows) {
-        let _ = s.proc.master.resize(PtySize {
-            rows: s.rows,
-            cols: s.cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        });
+        let _ = s.proc.set_size(s.cols, s.rows);
     }
     let reader = Reader::new(hub, id, s, reader);
     (old, reader)
@@ -1117,12 +1121,14 @@ impl Reader {
 
     /// 시작 질의에 세션의 지금 Proc(이 세대)로 답한다. 세션이 빠졌거나 세대가 바뀌었으면 그 Proc 를 정리하는 terminate() 가 답한다
     fn answer_query(&self) {
-        if let Ok(mut sessions) = self.hub.sessions.lock() {
-            if let Some(s) = sessions.get_mut(&self.id) {
-                if s.link.gen == self.gen {
-                    s.proc.answer_startup_query();
-                }
-            }
+        let Ok(mut sessions) = self.hub.sessions.lock() else {
+            return;
+        };
+        if let Some(s) = sessions
+            .get_mut(&self.id)
+            .filter(|s| s.link.gen == self.gen)
+        {
+            s.proc.answer_startup_query();
         }
     }
 
@@ -1179,10 +1185,10 @@ impl Reader {
         let seq = s.link.seq;
         let separate = pty_link::on_marker(&mut s.link, self.gen, &now_hhmm());
         if s.link.connected {
-            self.shared.collecting.store(false, Ordering::SeqCst);
+            self.shared.set_collecting(false);
         }
         if s.link.phase == Phase::Live {
-            self.shared.connecting.store(false, Ordering::SeqCst);
+            self.shared.set_connecting(false);
         }
         if s.link.seq == seq {
             return;
@@ -1199,25 +1205,19 @@ impl Reader {
     /// 그 밖에는 화면에 알리고 세션을 치운다
     fn ended(self) {
         if self.supervised {
-            if let Ok(sessions) = self.hub.sessions.lock() {
-                if let Some(s) = sessions.get(&self.id).filter(|s| s.link.gen == self.gen) {
-                    if let Some(tx) = &s.tx {
-                        let _ = tx.send(Ev::Eof { gen: self.gen });
-                    }
-                }
+            let Ok(sessions) = self.hub.sessions.lock() else {
+                return;
+            };
+            let own = sessions.get(&self.id).filter(|s| s.link.gen == self.gen);
+            if let Some(tx) = own.and_then(|s| s.tx.as_ref()) {
+                let _ = tx.send(Ev::Eof { gen: self.gen });
             }
             return;
         }
         if let Some(sink) = self.hub.sink() {
             sink.exit(&self.id);
         }
-        let ended = self
-            .hub
-            .sessions
-            .lock()
-            .ok()
-            .and_then(|mut s| take(&mut s, &self.id));
-        if let Some(s) = ended {
+        if let Ok(Some(s)) = take_by_id(&self.hub, &self.id) {
             kill_and_close(vec![s.proc]);
         }
     }
@@ -1279,17 +1279,11 @@ pub(crate) fn resize(
         .get_mut(id)
         .ok_or_else(|| format!("pty {id} 없음"))?;
     // 재접속을 기다리는 동안(Waiting·Failed)은 크기만 기록한다 — 다음 시도가 이 크기로 연다
-    if (s.cols != cols || s.rows != rows) && matches!(s.link.phase, Phase::Live | Phase::Connecting)
-    {
-        let resized = s.proc.master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        });
+    if (s.cols != cols || s.rows != rows) && s.link.running() {
+        let resized = s.proc.set_size(cols, rows);
         // 원격은 끊긴 직후의 죽은 ConPTY 일 수 있다 — 크기는 기록해 다음 시도에 쓴다
         if s.remote.is_none() {
-            resized.map_err(err)?;
+            resized?;
         }
     }
     s.cols = cols;
