@@ -118,7 +118,10 @@ impl Supervisor {
         let t = &self.hub.timing;
         let at = match link.phase {
             Phase::Waiting => self.waiting_since + t.delays[delay_index(link.attempt)],
-            Phase::Connecting if !self.deadline_done => self.started + t.deadline,
+            // 시도 중에도 주기적으로 깨어나 끝난 ssh 를 본다 — ConPTY 는 자식이 끝나도 출력을 닫지 않아 Eof 가 오지 않는다
+            Phase::Connecting if !self.deadline_done => {
+                (self.started + t.deadline).min(self.next_poll)
+            }
             _ => self.next_poll,
         };
         let grace = self
@@ -344,6 +347,7 @@ impl Supervisor {
         // 옛 Proc 는 이미 끝난 ssh — 닫기가 멈춰도 감독이 막히지 않게 백그라운드에서
         std::thread::spawn(move || pty::kill_and_close(vec![old]));
         self.started = Instant::now();
+        self.next_poll = self.started + hub.timing.poll;
         self.deadline_done = false;
         self.stale = None;
         Flow::Go

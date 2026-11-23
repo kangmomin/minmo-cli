@@ -430,7 +430,7 @@ impl Drop for Env {
 // ── 시도 순서·기다림 ──────────────────────────────────────────
 
 // AC-01·AC-02·AC-07·AC-11: 처음 열 때 255(인증 아님)로 끝나면 pty-exit 없이 1/5 부터, 기다림 뒤 시도하고, 5번 모두 실패하면 실패.
-// (Windows ConPTY 는 자식이 끝나도 닫기 전까지 출력을 닫지 않는다 — 시도 중의 종료는 마감에 깨어나 안전장치가 판정한다)
+// (Windows ConPTY 는 자식이 끝나도 닫기 전까지 출력을 닫지 않는다 — 끝난 ssh 는 감독의 주기 확인이 유예 뒤 판정한다)
 #[test]
 fn waiting_retries_in_order_after_each_delay_and_gives_up_after_five() {
     let delays = [MS(150), MS(250), MS(350), MS(150), MS(150)];
@@ -755,7 +755,7 @@ fn a_live_exit_without_eof_is_classified_after_the_grace_without_busy_waiting() 
     drop(tx);
 }
 
-// AC-02: 시도 중 ssh 가 끝났는데 EOF 가 오지 않아도 마감에 깨어나 유예 뒤 판정한다(갇히지 않는다)
+// AC-02: 시도 중 ssh 가 끝났는데 EOF 가 오지 않아도(통로를 빼 Eof 도 막음) 주기 확인으로 유예 뒤 판정한다(갇히지 않는다)
 #[test]
 fn a_connecting_exit_without_eof_is_classified_after_the_grace() {
     let env = Env::new(
@@ -776,6 +776,29 @@ fn a_connecting_exit_without_eof_is_classified_after_the_grace() {
     let wakes = env.hub.wakes.load(Ordering::SeqCst);
     assert!(wakes < 60, "{wakes}번 깨어났다");
     drop(tx);
+}
+
+// AC-02: 빨리 끝난 시도(연결 거부 등)는 출력이 닫히지 않아도 마감까지 기다리지 않고 주기 확인 + 유예 안에 다음 기다림으로 넘어간다
+#[test]
+fn a_quickly_failing_attempt_moves_on_long_before_the_deadline() {
+    let deadline = Duration::from_secs(60);
+    let env = Env::new(
+        timing([MS(100), LONG, LONG, LONG, LONG], deadline),
+        vec![Step::Run(exit_cmd(255)), Step::Run(exit_cmd(255))],
+    );
+    let id = env.open();
+    env.rec.wait_link(&id, "waiting", 2, 20);
+    let notes = env.notes();
+    assert_eq!(
+        phases(&notes, &id),
+        vec![("waiting", 1), ("connecting", 1), ("waiting", 2)],
+        "{}",
+        dump(&notes)
+    );
+    // 주기 0.2초 + 유예 0.6초 — 여유를 두어도 마감(60초)보다 훨씬 이르다
+    let took = at(&notes, &id, "waiting", 2) - at(&notes, &id, "connecting", 1);
+    assert!(took < Duration::from_secs(5), "{took:?} 걸렸다");
+    assert_eq!(exits(&notes, &id), 0);
 }
 
 // AC-02: 무시한 이벤트(옛 세대·기다림 중의 Eof)로 깨어나도 기다림이 늘어나지 않는다
