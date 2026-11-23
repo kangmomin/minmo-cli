@@ -467,6 +467,28 @@ describe('store 의 함께 쓰는 부분', () => {
   })
 })
 
+// D-26(#89): 패널 역할(first)은 기기마다 다르면 안 된다 — 같은 패널이 기기마다 다른 tmux 세션에 붙지 않게 함께 맞춘다
+describe('store 의 함께 쓰는 부분 — 패널 역할 first (#89 D-26)', () => {
+  beforeEach(() => {
+    useUiStore.setState({ panes: {} })
+  })
+
+  it('pickSharedUi 는 first 를 보내고, applySharedUi 는 받은 first(글자)를 그대로 쓴다', () => {
+    useUiStore.setState({ panes: { 'a/b#1': { tree: leaf('a/b#1::2'), focused: null, seq: 2, first: 'a/b#1::1' } } })
+    expect(pickSharedUi(useUiStore.getState()).panes['a/b#1']).toEqual({ tree: leaf('a/b#1::2'), seq: 2, first: 'a/b#1::1' })
+    // 지금 잎이 아닌 패널이어도(첫 패널을 닫은 뒤) 거르지 않는다
+    useUiStore.setState({ panes: {} })
+    applySharedUi({ panes: { 'a/b#1': { tree: leaf('a/b#1::2'), seq: 2, first: 'a/b#1::1' } } })
+    expect(useUiStore.getState().panes['a/b#1'].first).toBe('a/b#1::1')
+  })
+
+  it('받은 값에 first 가 없으면(이전 버전 화면) 이 기기의 값을 둔다', () => {
+    useUiStore.setState({ panes: { 'a/b#1': { tree: leaf('a/b#1::2'), focused: null, seq: 2, first: 'a/b#1::1' } } })
+    applySharedUi({ panes: { 'a/b#1': { tree: leaf('a/b#1::2'), seq: 3 } } })
+    expect(useUiStore.getState().panes['a/b#1']).toMatchObject({ seq: 3, first: 'a/b#1::1' })
+  })
+})
+
 describe('RemoteAccessDialog (호스트의 원격 접속 설정)', () => {
   it('다른 기기에서 열 주소는 Tailscale 을 먼저, 없으면 LAN — 이 PC 전용 주소는 쓰지 않는다', () => {
     const local = { kind: 'local' as const, url: 'http://127.0.0.1:8790' }

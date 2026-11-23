@@ -24,10 +24,20 @@ const PROCESS_POLL_MS = 3000
 const SUBAGENT_POLL_MS = 5000
 
 const inputAt = new Map<string, number>()
+/** 패널별로 출력을 활동으로 세지 않는 끝 시각(muteTerminalActivity) */
+const mutedUntil = new Map<string, number>()
 
 /** 터미널에 사용자가 직접 입력(키·붙여넣기)했음을 알린다(TerminalTab 이 호출) */
 export function noteTerminalInput(paneId: string) {
   inputAt.set(paneId, Date.now())
+}
+
+/**
+ * ms 동안 그 패널의 출력을 활동으로 세지 않는다 — 원격 터미널이 다시 접속할 때의 준비 출력·구분 줄·tmux 다시 그리기가
+ * "작업 중 → 끝남" 알림을 만들지 않게(TerminalTab 이 pty-link connecting·connected 에서 호출, #89)
+ */
+export function muteTerminalActivity(paneId: string, ms: number) {
+  mutedUntil.set(paneId, Math.max(mutedUntil.get(paneId) ?? 0, Date.now() + ms))
 }
 
 type Tracked = PaneSignals & {
@@ -104,7 +114,7 @@ export function useAgentTracker() {
           const justFinished = cur !== undefined && cur.activity === 'idle' && cur.unseen && now - cur.since < DONE_BELL_MS
           if (cur?.activity !== 'working' && !justFinished) t.bell = true
         }
-        if (sig.visible && now - (inputAt.get(paneId) ?? 0) > ECHO_MS) t.lastOutputAt = now
+        if (sig.visible && now - (inputAt.get(paneId) ?? 0) > ECHO_MS && now >= (mutedUntil.get(paneId) ?? 0)) t.lastOutputAt = now
         if (sig.titles.length > 0 || sig.bells > 0) update(paneId, t, now)
       })
       .then((un) => {
@@ -120,6 +130,7 @@ export function useAgentTracker() {
         if (!(paneId in live)) {
           tracked.delete(paneId)
           inputAt.delete(paneId)
+          mutedUntil.delete(paneId)
           useAgentStore.getState().set(paneId, null)
         }
       }
@@ -190,6 +201,7 @@ export function useAgentTracker() {
       unlisten?.()
       releaseLock?.()
       inputAt.clear()
+      mutedUntil.clear()
       useAgentStore.getState().clear()
     }
   }, [tauri, hostDeps])

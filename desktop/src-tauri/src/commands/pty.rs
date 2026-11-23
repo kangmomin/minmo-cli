@@ -1,51 +1,148 @@
 // 터미널 PTY (F-04, AC-08). 세션별 cwd 를 기록해 worktree 삭제 전 pty_kill_by_cwd 로 선종료한다.
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 
+use super::pty_link::{
+    self, Ev, Link, MarkerFilter, Phase, Signal, Timing, ALT_SCREEN_MODES, MAX_ATTEMPTS, TAIL_LIMIT,
+};
 use super::ssh;
 
 /// 원격 터미널 요청. session 이 있으면 전용 tmux(-L minmo) 세션에 붙고, 없으면 로그인 셸을 연다
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePty {
-    host: String,
-    session: Option<String>,
-    /// 분할로 만든 추가 패널 — 붙은 클라이언트가 없어지면 세션도 사라진다
+    pub(crate) host: String,
+    pub(crate) session: Option<String>,
+    /// 분할로 만든 추가 패널(-pN 세션) — 끊겨도 남아 다시 붙고, 패널을 닫을 때 화면이 끝낸다
     #[serde(default)]
-    ephemeral: bool,
+    pub(crate) ephemeral: bool,
 }
 
 pub struct PtySession {
-    master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
-    child: Box<dyn Child + Send + Sync>,
-    cwd: String,
-    /// 원격(ssh) 세션이면 호스트 별칭 — 이때 cwd 는 원격 경로다
-    host: Option<String>,
+    pub(crate) proc: Proc,
+    pub(crate) cwd: String,
     /// 화면의 패널 id — 같은 패널을 여는 다른 기기(원격 접속)가 이 터미널에 함께 붙는다
     key: Option<String>,
     /// 최근 출력 — 나중에 붙은 화면이 지금까지의 내용을 그릴 수 있게 보관한다
-    scrollback: Arc<Mutex<Scrollback>>,
-    cols: u16,
-    rows: u16,
+    pub(crate) scrollback: Arc<Mutex<Scrollback>>,
+    pub(crate) cols: u16,
+    pub(crate) rows: u16,
+    /// 원격 세션을 연 요청 — 재접속은 처음 연 값으로 다시 연다(EC-06)
+    pub(crate) remote: Option<RemotePty>,
+    /// 지금 세대(link.gen 의 거울) — 리더가 세션 잠금 없이 자기 세대인지 본다. link.gen 과 함께만 바꾼다
+    pub(crate) gen: Arc<AtomicU64>,
+    /// 연결 상태(원격). 로컬은 늘 연결됨
+    pub(crate) link: Link,
+    /// 재접속 감독에게 보내는 통로(감독이 있는 원격 세션만). 감독·리더는 복사해 두지 않는다 —
+    /// 세션을 빼는 쪽이 이것을 먼저 버려 감독이 끝을 알게 한다
+    pub(crate) tx: Option<mpsc::Sender<Ev>>,
+}
+
+impl PtySession {
+    /// 원격(ssh) 세션이면 호스트 별칭 — 이때 cwd 는 원격 경로다
+    fn host(&self) -> Option<&str> {
+        self.remote.as_ref().map(|r| r.host.as_str())
+    }
+
+    /// 지금 세대를 올린다(link.gen 과 거울을 함께)
+    pub(crate) fn advance_gen(&mut self) -> u64 {
+        self.link.advance_gen();
+        self.sync_gen()
+    }
+
+    /// 기다리던 시도를 시작한다 — 새 세대로(link.gen 과 거울을 함께)
+    fn begin_attempt(&mut self) {
+        pty_link::begin_attempt(&mut self.link);
+        self.sync_gen();
+    }
+
+    /// 거울을 link.gen 에 맞춘다 — 세대를 바꾸는 곳은 이것으로만 거울을 쓴다
+    fn sync_gen(&self) -> u64 {
+        self.gen.store(self.link.gen, Ordering::SeqCst);
+        self.link.gen
+    }
+}
+
+/// 한 세대(ssh 하나)의 리더와 감독이 함께 보는 값 — 리더가 출력 조각마다 세션을 잠그지 않게 따로 둔다
+#[derive(Default)]
+pub(crate) struct GenShared {
+    /// 재접속 시도 중(Connecting) — 리더가 창 제목을 뺀다(ConPTY 가 내는 ssh.exe 경로 제목에 에이전트 제목을 잃지 않게)
+    connecting: AtomicBool,
+    /// 연결 신호 전 — 리더가 출력을 꼬리에 모으고 신호를 감독 상태에 알린다
+    collecting: AtomicBool,
+    /// 연결 신호 전까지의 출력 끝부분(gen_tail) — 끝났을 때 인증·호스트 키 실패를 가린다
+    tail: Mutex<String>,
+}
+
+impl GenShared {
+    pub(crate) fn set_connecting(&self, on: bool) {
+        self.connecting.store(on, Ordering::SeqCst);
+    }
+
+    fn set_collecting(&self, on: bool) {
+        self.collecting.store(on, Ordering::SeqCst);
+    }
+
+    pub(crate) fn tail(&self) -> String {
+        self.tail.lock().map(|t| t.clone()).unwrap_or_default()
+    }
+
+    fn push_tail(&self, text: &str) {
+        if let Ok(mut tail) = self.tail.lock() {
+            tail.push_str(text);
+            // visible() 이 끝 TAIL_LIMIT 를 자르며 잘린 앞 조각을 버린다 — 그보다 넉넉히 남겨 이 자름이 보이지 않게
+            if tail.len() > 2 * TAIL_LIMIT {
+                let cut = pty_link::char_boundary_from(&tail, tail.len() - TAIL_LIMIT * 3 / 2);
+                tail.drain(..cut);
+            }
+        }
+    }
+}
+
+/// 셸(원격이면 ssh) 프로세스 하나와 그 PTY — 원격 터미널이 다시 접속하면 이것만 통째로 바뀐다
+pub(crate) struct Proc {
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    child: Box<dyn Child + Send + Sync>,
     /// ConPTY 시작 커서 위치 질의(ESC[6n)의 응답(CPR)이 입력으로 지나갔는지
     cpr_answered: bool,
-    /// 셸과 그 자손이 속한 Job Object — 만들지 못하면 None(트리 종료만으로 정리)
+    /// 시작 질의에 줄 답 — 첫 세대는 1행 1열, 재접속 세대는 준비 시퀀스가 커서를 둔 맨 아래 행
+    cpr_reply: Vec<u8>,
+    /// 이 세대의 리더와 함께 보는 값
+    pub(crate) shared: Arc<GenShared>,
+    /// 셸과 그 자손이 속한 Job Object — 만들지 못하면 None(트리 종료만으로 정리). 세션 잠금 밖에서도 끝낼 수 있게 Arc
     #[cfg(windows)]
-    job: Option<job::Job>,
+    job: Option<Arc<job::Job>>,
 }
 
 #[cfg(windows)]
 use super::job;
 
-impl PtySession {
+/// 세션 잠금 밖에서 한 세대의 ssh 와 그 자손(ProxyCommand·ProxyJump 등)을 끝낸다
+pub(crate) struct Stopper {
+    killer: Box<dyn ChildKiller + Send + Sync>,
+    #[cfg(windows)]
+    job: Option<Arc<job::Job>>,
+}
+
+impl Stopper {
+    pub(crate) fn stop(mut self) {
+        let _ = self.killer.kill();
+        #[cfg(windows)]
+        if let Some(job) = &self.job {
+            job.terminate();
+        }
+    }
+}
+
+impl Proc {
     fn write_input(&mut self, data: &[u8]) -> std::io::Result<()> {
         if !self.cpr_answered && contains_cpr(data) {
             self.cpr_answered = true;
@@ -55,11 +152,55 @@ impl PtySession {
     }
 
     /// ConPTY 의 시작 질의(ESC[6n)에 아직 답하지 않았으면 답한다. 질의는 PTY 의 맨 처음에 오고 그 앞의 출력은 모드 설정뿐이라
-    /// 화면의 커서는 항상 1행 1열이다. 이미 답한 세션에 또 보내면 살아 있는 프로그램에 F3 키로 들어가므로 한 번만 보낸다
+    /// 커서는 첫 세대면 1행 1열, 재접속 세대면 준비 시퀀스가 둔 맨 아래 행이다(cpr_reply). 이미 답한 세션에 또 보내면
+    /// 살아 있는 프로그램에 F3 키로 들어가므로 한 번만 보낸다
     fn answer_startup_query(&mut self) {
         if !self.cpr_answered {
-            let _ = self.write_input(CURSOR_HOME_REPORT);
+            self.cpr_answered = true;
+            let _ = self
+                .writer
+                .write_all(&self.cpr_reply)
+                .and_then(|()| self.writer.flush());
         }
+    }
+
+    /// 프로세스가 끝났으면 종료 코드(Some), 아직 돌면 None
+    pub(crate) fn exit_code(&mut self) -> std::io::Result<Option<u32>> {
+        Ok(self.child.try_wait()?.map(|s| s.exit_code()))
+    }
+
+    pub(crate) fn alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    pub(crate) fn stopper(&self) -> Stopper {
+        Stopper {
+            killer: self.child.clone_killer(),
+            #[cfg(windows)]
+            job: self.job.clone(),
+        }
+    }
+
+    fn set_size(&self, cols: u16, rows: u16) -> Result<(), String> {
+        self.master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(err)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pid(&self) -> Option<u32> {
+        self.child.process_id()
+    }
+
+    /// PTY 크기(cols, rows)
+    #[cfg(test)]
+    pub(crate) fn size(&self) -> Option<(u16, u16)> {
+        self.master.get_size().ok().map(|s| (s.cols, s.rows))
     }
 
     /// 셸과 그 자손 프로세스를 끝낸다.
@@ -71,7 +212,10 @@ impl PtySession {
         // 자손(에이전트가 띄운 프로세스 등)을 끝낸다.
         #[cfg(windows)]
         {
-            if let Some(pid) = self.child.process_id() {
+            // 이미 끝난 셸은 pid 로 트리를 찾을 수 없어 taskkill 을 띄우지 않는다(끊긴 ssh 를 정리할 때마다 생긴다).
+            // 남은 자손은 Job 이 끝낸다 — Job 은 핸들이라 셸이 먼저 끝나도 항상 끝낸다(EC-09)
+            let exited = matches!(self.child.try_wait(), Ok(Some(_)));
+            if let (false, Some(pid)) = (exited, self.child.process_id()) {
                 super::taskkill_tree(pid);
             }
             if let Some(job) = &self.job {
@@ -97,8 +241,6 @@ impl PtySession {
 /// 보관하는 최근 출력의 상한(바이트)
 const SCROLLBACK_LIMIT: usize = 256 * 1024;
 
-/// 대체 화면을 켜는 DEC private mode — 전체 화면 프로그램(Claude Code 등)이 쓴다
-const ALT_SCREEN_MODES: [u16; 3] = [47, 1047, 1049];
 /// 조각 끝에서 잘린 모드 시퀀스(`ESC[?…`)로 보고 다음 조각까지 넘기는 길이의 상한
 const MODE_CARRY_LIMIT: usize = 32;
 
@@ -123,10 +265,7 @@ impl Scrollback {
         self.text.push_str(text);
         if self.text.len() > SCROLLBACK_LIMIT {
             // 넘친 만큼 앞을 버리되 줄 경계에서 자른다 — 제어 문자열 중간부터 다시 그리면 화면이 깨진다
-            let mut cut = self.text.len() - SCROLLBACK_LIMIT;
-            while !self.text.is_char_boundary(cut) {
-                cut += 1;
-            }
+            let cut = pty_link::char_boundary_from(&self.text, self.text.len() - SCROLLBACK_LIMIT);
             let cut = self.text[cut..].find('\n').map_or(cut, |i| cut + i + 1);
             self.text.drain(..cut);
             self.truncated = true;
@@ -177,9 +316,13 @@ impl Scrollback {
     }
 
     fn alt_screen(&self) -> bool {
-        ALT_SCREEN_MODES
-            .iter()
-            .any(|m| self.modes.get(m) == Some(&true))
+        pty_link::alt_screen_on(&self.modes)
+    }
+
+    /// 새 세대의 출력 앞에 넣을 준비 시퀀스. 옛 세대가 조각 끝에 남긴 잘린 모드 시퀀스는 버린다(새 출력과 이어 읽지 않게)
+    fn reattach(&mut self, rows: u16, clear_title: bool) -> String {
+        self.carry.clear();
+        pty_link::reattach_prelude(&self.modes, rows, clear_title)
     }
 
     /// 나중에 붙는 화면이 먼저 그릴 글과, 프로그램에 화면 전체를 다시 그리게 해야 하는지를 돌려준다.
@@ -307,12 +450,109 @@ fn contains_cpr(data: &[u8]) -> bool {
     })
 }
 
-#[derive(Default)]
-pub struct PtyState {
-    sessions: Mutex<HashMap<String, PtySession>>,
+/// PTY 가 화면에 알리는 통로 — 앱에서는 이벤트(AppSink), 테스트에서는 기록용
+pub(crate) trait Sink: Send + Sync {
+    fn data(&self, id: &str, data: String, end: u64);
+    fn exit(&self, id: &str);
+    fn resized(&self, id: &str, cols: u16, rows: u16, by: Option<String>);
+    /// 원격 터미널의 연결 상태가 바뀌었다(pty-link)
+    fn link(&self, ev: PtyLinkEvent);
+}
+
+struct AppSink(AppHandle);
+
+impl Sink for AppSink {
+    fn data(&self, id: &str, data: String, end: u64) {
+        let id = id.to_string();
+        let _ = self.0.emit("pty-data", PtyData { id, data, end });
+    }
+
+    fn exit(&self, id: &str) {
+        let _ = self.0.emit("pty-exit", id.to_string());
+    }
+
+    fn resized(&self, id: &str, cols: u16, rows: u16, by: Option<String>) {
+        let id = id.to_string();
+        let _ = self
+            .0
+            .emit("pty-resized", PtyResized { id, cols, rows, by });
+    }
+
+    fn link(&self, ev: PtyLinkEvent) {
+        let _ = self.0.emit("pty-link", ev);
+    }
+}
+
+/// 원격 세션의 재접속 감독(스레드 본문) — setup 에서 pty_reconnect 가 넣는다(pty 는 pty_reconnect 를 직접 부르지 않는다)
+pub(crate) type SupervisorFn = fn(Arc<Hub>, String, mpsc::Receiver<Ev>);
+
+/// 원격 세션의 ssh 를 PTY 로 연다(요청, 원격 cwd, cols, rows) — 재접속도 시도마다 이것으로 연다. 테스트는 다른 명령을 넣는다
+pub(crate) type Spawner =
+    Box<dyn Fn(&RemotePty, &str, u16, u16) -> Result<Opened, String> + Send + Sync>;
+
+/// 터미널 세션과 알림 통로. 리더 스레드는 AppHandle 대신 이것을 받는다 — 테스트가 기록용 Sink 로 그대로 돌릴 수 있게.
+/// 잠금 순서: sessions → Scrollback → 세대 꼬리(GenShared.tail). 반대 방향으로 잡지 않는다(Scrollback 을 쥔 채 sessions 를 잡지 않는다)
+pub(crate) struct Hub {
+    pub(crate) sessions: Mutex<HashMap<String, PtySession>>,
     /// key 로 여는 동안 잡는다 — 두 화면이 같은 패널을 동시에 열어도 셸은 하나만 뜬다
     opening: Mutex<()>,
     seq: AtomicU64,
+    /// setup 에서 한 번 넣는다 — PtyState 를 등록하는 순서(on_page_load·remote.rs 가 쓴다)를 바꾸지 않게
+    pub(crate) sink: OnceLock<Arc<dyn Sink>>,
+    /// 없으면(넣기 전) 원격 세션도 로컬처럼 끝나면 바로 pty-exit 를 낸다
+    pub(crate) supervisor: OnceLock<SupervisorFn>,
+    pub(crate) spawner: Spawner,
+    pub(crate) timing: Timing,
+    /// 감독이 깨어난 횟수 — 테스트가 바쁜 대기가 없는지 본다
+    #[cfg(test)]
+    pub(crate) wakes: AtomicU64,
+}
+
+impl Default for Hub {
+    fn default() -> Self {
+        Self::new(Box::new(open_remote), Timing::default())
+    }
+}
+
+impl Hub {
+    pub(crate) fn new(spawner: Spawner, timing: Timing) -> Self {
+        Self {
+            sessions: Mutex::default(),
+            opening: Mutex::default(),
+            seq: AtomicU64::default(),
+            sink: OnceLock::new(),
+            supervisor: OnceLock::new(),
+            spawner,
+            timing,
+            #[cfg(test)]
+            wakes: AtomicU64::default(),
+        }
+    }
+
+    pub(crate) fn sink(&self) -> Option<&dyn Sink> {
+        self.sink.get().map(|s| s.as_ref())
+    }
+}
+
+#[derive(Default)]
+pub struct PtyState {
+    hub: Arc<Hub>,
+}
+
+impl PtyState {
+    /// 이벤트를 낼 앱을 넣는다(setup 에서 한 번)
+    pub fn attach(&self, app: &AppHandle) {
+        let _ = self.hub.sink.set(Arc::new(AppSink(app.clone())));
+    }
+
+    /// 원격 세션의 재접속 감독을 넣는다(setup 에서 한 번)
+    pub fn set_supervisor(&self, f: SupervisorFn) {
+        let _ = self.hub.supervisor.set(f);
+    }
+
+    pub(crate) fn hub(&self) -> &Hub {
+        &self.hub
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -321,6 +561,77 @@ struct PtyData {
     data: String,
     /// 이 조각까지의 전체 출력 길이 — 붙는 화면이 지난 출력(scrollback)과 겹치는 조각을 가려낸다
     end: u64,
+}
+
+/// 연결 상태 — pty-link 이벤트와 pty_find 응답에 싣는다
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct LinkView {
+    /// "connected" | "waiting" | "connecting" | "failed"
+    pub(crate) phase: &'static str,
+    pub(crate) attempt: u32,
+    pub(crate) max: u32,
+    pub(crate) seq: u64,
+    /// 실패 원인: "auth" | "host_key" | "spawn"
+    pub(crate) reason: Option<&'static str>,
+    /// 다시 접속한 시각(HH:MM)
+    pub(crate) at: Option<String>,
+}
+
+impl From<&Link> for LinkView {
+    fn from(l: &Link) -> Self {
+        Self {
+            phase: match l.phase {
+                Phase::Live => "connected",
+                Phase::Waiting => "waiting",
+                Phase::Connecting => "connecting",
+                Phase::Failed => "failed",
+            },
+            attempt: l.attempt,
+            max: MAX_ATTEMPTS,
+            seq: l.seq,
+            reason: l.reason,
+            at: l.at.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct PtyLinkEvent {
+    pub(crate) id: String,
+    #[serde(flatten)]
+    pub(crate) link: LinkView,
+}
+
+/// 지금 시각(이 PC 의 현지 시각 HH:MM) — 구분 줄·다시 접속한 시각
+pub(crate) fn now_hhmm() -> String {
+    chrono::Local::now().format("%H:%M").to_string()
+}
+
+fn push_and_emit(hub: &Hub, id: &str, sb: Option<&mut Scrollback>, text: String) {
+    let end = sb.map_or(0, |sb| sb.push(&text));
+    if let Some(sink) = hub.sink() {
+        sink.data(id, text, end);
+    }
+}
+
+/// 출력 한 조각을 보관(모드 추적)하고 화면에 보낸다. 보관과 알림을 같은 잠금 안에서 해 알림 순서가 end 순서와 같다
+fn emit_output(hub: &Hub, id: &str, scrollback: &Mutex<Scrollback>, text: String) {
+    let mut sb = scrollback.lock().ok();
+    push_and_emit(hub, id, sb.as_deref_mut(), text);
+}
+
+/// 연결 상태 알림(pty-link)과 그 뒤에 넣을 출력(준비 시퀀스·구분 줄)을 세션 잠금 안에서 차례로 낸다 —
+/// 화면이 상태를 먼저 받아 주입된 출력을 그 상태로 읽는다. 호출자는 sessions 를 잠근 채 부른다
+pub(crate) fn announce(hub: &Hub, id: &str, s: &PtySession, inject: Option<String>) {
+    if let Some(sink) = hub.sink() {
+        sink.link(PtyLinkEvent {
+            id: id.to_string(),
+            link: LinkView::from(&s.link),
+        });
+    }
+    if let Some(text) = inject {
+        emit_output(hub, id, &s.scrollback, text);
+    }
 }
 
 fn default_shell() -> String {
@@ -361,23 +672,45 @@ const TMUX_TITLE_FORMAT: &str = "minmo:#{pane_current_command}:#{pane_title}";
 const BASH_LOGIN_RC: &str = r#"exec 3<&-; [ -r /etc/profile ] && . /etc/profile; for f in ~/.bash_profile ~/.bash_login ~/.profile; do if [ -r "$f" ]; then . "$f"; break; fi; done; unset f; cd -- "$MINMO_WORKTREE""#;
 
 /// worktree(dir = 인용된 경로)에서 사용자 셸을 여는 한 줄(POSIX sh). bash 는 시작 파일 뒤에 worktree 로 돌아오고,
-/// 그 밖의 셸은 로그인 셸 그대로다(시작 파일이 cd 를 하면 그 폴더에서 시작한다)
-fn worktree_shell(dir: &str) -> String {
+/// 그 밖의 셸은 로그인 셸 그대로다(시작 파일이 cd 를 하면 그 폴더에서 시작한다). exec 는 셸 앞에 붙일 말("exec " 또는 "")
+fn shell_line(dir: &str, exec: &str) -> String {
     let rc = ssh::quote(BASH_LOGIN_RC);
     format!(
-        "cd -- {dir} && export MINMO_WORKTREE={dir} && case \"${{SHELL##*/}}\" in bash) exec \"$SHELL\" -c 'exec \"$0\" --rcfile /dev/fd/3 -i 3<<<\"$1\"' \"$SHELL\" {rc} ;; *) exec \"${{SHELL:-sh}}\" -l ;; esac"
+        "cd -- {dir} && export MINMO_WORKTREE={dir} && case \"${{SHELL##*/}}\" in bash) {exec}\"$SHELL\" -c 'exec \"$0\" --rcfile /dev/fd/3 -i 3<<<\"$1\"' \"$SHELL\" {rc} ;; *) {exec}\"${{SHELL:-sh}}\" -l ;; esac"
     )
 }
+
+/// tmux 첫 창의 셸 — 셸로 바뀐다(exec)
+fn worktree_shell(dir: &str) -> String {
+    shell_line(dir, "exec ")
+}
+
+/// 로그인 셸(tmux 없음) — 셸이 끝나기를 기다려 종료 코드 255 만 254 로 바꿔 넘긴다. ssh 는 자기가 실패할 때 255 로
+/// 끝나므로, 셸의 255 를 그대로 넘기면 끊김으로 읽혀 자동 재접속이 돈다(D-27)
+fn login_shell(dir: &str) -> String {
+    format!(
+        "{}; s=$?; [ $s -eq 255 ] && s=254; exit $s",
+        shell_line(dir, "")
+    )
+}
+
+/// 원격 명령 맨 앞의 연결 표시(창 제목 minmo-link) — 이 PC 가 새 ssh 의 연결을 안다(#89). 뒤의 짧은 대기는 ConPTY 가
+/// 한 번의 화면 갱신에 마지막 제목만 보내 표시가 바로 다음 제목(tmux·프롬프트)에 덮이지 않게 한다(소수 초를 못 받는 sleep 은 1초)
+const LINK_MARKER: &str = "printf '\\033]2;minmo-link\\007'; sleep 0.2 2>/dev/null || sleep 1; ";
 
 /// 원격 셸에서 실행할 한 줄. tmux 서버는 처음 실행한 cwd 를 가진 채 남으므로(그 worktree 를 지울 때 걸린다)
 /// 홈에서 시작하고 세션의 시작 폴더만 worktree 로 준다
 pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, String> {
+    remote_body(r, path).map(|body| format!("{LINK_MARKER}{body}"))
+}
+
+fn remote_body(r: &RemotePty, path: &str) -> Result<String, String> {
     if !path.starts_with('/') {
         return Err(format!("원격 경로는 절대 경로여야 합니다: {path}"));
     }
     let dir = ssh::quote(path);
     match &r.session {
-        None => Ok(worktree_shell(&dir)),
+        None => Ok(login_shell(&dir)),
         Some(name) => {
             if name.is_empty()
                 || !name
@@ -387,9 +720,10 @@ pub(crate) fn remote_shell_command(r: &RemotePty, path: &str) -> Result<String, 
                 return Err(format!("tmux 세션 이름이 올바르지 않습니다: {name}"));
             }
             let tag = ssh::quote(path.trim_end_matches('/'));
-            // -u: 원격 로케일이 UTF-8 이 아니어도 UTF-8 로 그린다(xterm 은 항상 UTF-8) — 없으면 한글이 '_' 로 나온다
+            // -u: 원격 로케일이 UTF-8 이 아니어도 UTF-8 로 그린다(xterm 은 항상 UTF-8) — 없으면 한글이 '_' 로 나온다.
+            // 분할 패널의 세션은 끊겨도 남아 다시 붙는다(패널을 닫을 때 화면이 끝낸다) — 이전 버전이 켠 destroy-unattached 를 끈다(EC-11)
             let ephemeral = if r.ephemeral {
-                " \\; set-option destroy-unattached on"
+                " \\; set-option destroy-unattached off"
             } else {
                 ""
             };
@@ -419,15 +753,83 @@ fn remote_shell(r: &RemotePty, path: &str) -> Result<CommandBuilder, String> {
     Ok(cmd)
 }
 
+/// 기본 Spawner — 지금 호스트 정보로 ssh 인자를 만들어(시도마다 새로 읽는다, EC-07) PTY 로 연다
+fn open_remote(r: &RemotePty, cwd: &str, cols: u16, rows: u16) -> Result<Opened, String> {
+    open_proc(remote_shell(r, cwd)?, cols, rows)
+}
+
 fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// 새로 연 프로세스와 그 출력
+pub(crate) struct Opened {
+    pub(crate) proc: Proc,
+    pub(crate) reader: Box<dyn Read + Send>,
+}
+
+/// 명령을 PTY 로 띄운다
+pub(crate) fn open_proc(mut cmd: CommandBuilder, cols: u16, rows: u16) -> Result<Opened, String> {
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(err)?;
+    cmd.env("TERM", "xterm-256color");
+    let child = pair.slave.spawn_command(cmd).map_err(err)?;
+    drop(pair.slave);
+    #[cfg(windows)]
+    let job = child
+        .process_id()
+        .and_then(job::Job::for_process)
+        .map(Arc::new);
+    let reader = pair.master.try_clone_reader().map_err(err)?;
+    let writer = pair.master.take_writer().map_err(err)?;
+    Ok(Opened {
+        proc: Proc {
+            master: pair.master,
+            writer,
+            child,
+            cpr_answered: false,
+            cpr_reply: CURSOR_HOME_REPORT.to_vec(),
+            shared: Arc::default(),
+            #[cfg(windows)]
+            job,
+        },
+        reader,
+    })
+}
+
+/// 쓰지 않을 새 Proc(재접속 시도 중 세션이 없어짐)를 백그라운드에서 정리한다. 출력을 비우는 리더를 붙여 둔다 —
+/// ConPTY 닫기가 남은 출력을 내보내지 못해 멈추지 않게(시작 질의에는 terminate 가 답한다)
+pub(crate) fn discard(o: Opened) {
+    let mut reader = o.reader;
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        while let Ok(1..) = reader.read(&mut buf) {}
+    });
+    let proc = o.proc;
+    std::thread::spawn(move || kill_and_close(vec![proc]));
+}
+
+/// 터미널 하나를 여는 요청
+pub(crate) struct SpawnReq {
+    pub(crate) key: Option<String>,
+    pub(crate) cwd: String,
+    pub(crate) cols: u16,
+    pub(crate) rows: u16,
+    pub(crate) remote: Option<RemotePty>,
+}
+
 /// key(화면의 패널 id)가 있고 그 패널의 터미널이 이미 떠 있으면 새로 만들지 않고 그 id 를 돌려준다 —
 /// 이 PC 의 창과 원격 접속한 기기가 같은 터미널을 함께 쓴다.
+/// (app 은 원격 호출(remote.rs)과 같은 인자를 두려고 남긴다 — 알림은 setup 에서 넣은 Sink 로 간다)
 #[tauri::command]
 pub fn pty_spawn(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, PtyState>,
     cwd: String,
     cols: u16,
@@ -435,33 +837,69 @@ pub fn pty_spawn(
     remote: Option<RemotePty>,
     key: Option<String>,
 ) -> Result<String, String> {
-    let Some(k) = &key else {
-        return spawn(&app, &state, None, cwd, cols, rows, remote);
+    let hub = &state.hub;
+    let req = SpawnReq {
+        key,
+        cwd,
+        cols,
+        rows,
+        remote,
+    };
+    let Some(k) = &req.key else {
+        return spawn_session(hub, req);
     };
     // 찾기와 만들기를 한 묶음으로 — 그 사이에 다른 화면이 같은 패널을 열면 셸이 두 개 뜬다
-    let _opening = state.opening.lock().map_err(err)?;
-    if let Some(found) = find_alive(&state, k)? {
+    let _opening = hub.opening.lock().map_err(err)?;
+    if let Some(found) = find(hub, k)? {
         return Ok(found.id);
     }
-    spawn(&app, &state, key, cwd, cols, rows, remote)
+    spawn_session(hub, req)
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyFound {
-    id: String,
+    pub(crate) id: String,
     /// 지금까지의 출력 — 붙는 화면이 먼저 그린다
-    scrollback: String,
+    pub(crate) scrollback: String,
     /// scrollback 이 담은 마지막 위치(전체 출력 길이) — 이보다 뒤의 pty-data 만 이어서 그린다
-    offset: u64,
+    pub(crate) offset: u64,
     cols: u16,
     rows: u16,
+    /// 지금 연결 상태 — 늦게 붙은 화면이 재접속 중·실패 안내로 바로 시작한다(AC-09)
+    pub(crate) link: LinkView,
+    /// 원격 tmux 세션 — 화면이 분할 패널을 닫을 때 그 세션을 끝낸다(원격이 아니거나 tmux 를 안 쓰면 null)
+    pub(crate) tmux: Option<PtyTmux>,
 }
 
-/// key 의 터미널이 살아 있으면 돌려준다. 셸이 끝난 터미널은 치운다(그 패널은 새 터미널을 만들 수 있다)
-fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyTmux {
+    pub(crate) session: String,
+    pub(crate) ephemeral: bool,
+}
+
+impl PtyTmux {
+    fn of(r: &RemotePty) -> Option<Self> {
+        r.session.clone().map(|session| Self {
+            session,
+            ephemeral: r.ephemeral,
+        })
+    }
+}
+
+/// 세션을 목록에서 뺀다 — 감독 통로를 먼저 닫아 감독이 세션이 없어진 것을 알게 한다(그 감독이 pty-exit 를 낸다)
+pub(crate) fn take(sessions: &mut HashMap<String, PtySession>, id: &str) -> Option<PtySession> {
+    let mut s = sessions.remove(id)?;
+    drop(s.tx.take());
+    Some(s)
+}
+
+/// key 의 터미널이 살아 있으면 돌려준다. 셸이 끝난 로컬 터미널은 치운다(그 패널은 새 터미널을 만들 수 있다).
+/// 원격 터미널은 끊겨도 치우지 않는다 — 재접속 감독이 끝을 정한다
+pub(crate) fn find(hub: &Hub, key: &str) -> Result<Option<PtyFound>, String> {
     let ended = {
-        let mut sessions = state.sessions.lock().map_err(err)?;
+        let mut sessions = hub.sessions.lock().map_err(err)?;
         let Some(id) = sessions
             .iter()
             .find(|(_, s)| s.key.as_deref() == Some(key))
@@ -470,22 +908,18 @@ fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
             return Ok(None);
         };
         let s = sessions.get_mut(&id).ok_or("pty 없음")?;
-        if matches!(s.child.try_wait(), Ok(None)) {
+        if s.remote.is_some() || s.proc.alive() {
             let (scrollback, offset, repaint) = {
                 let sb = s.scrollback.lock().map_err(err)?;
                 let (text, repaint) = sb.restore();
                 (text, sb.total, repaint)
             };
             // 크기를 한 줄 줄였다 되돌리면 ConPTY 와 전체 화면 프로그램이 화면 전체를 다시 보낸다. 그 출력은 offset 뒤의
-            // pty-data 로 가므로 붙는 화면이 이어서 그린다. 크기는 그대로이므로 pty-resized 는 알리지 않는다
-            if repaint && s.rows > 1 {
+            // pty-data 로 가므로 붙는 화면이 이어서 그린다. 크기는 그대로이므로 pty-resized 는 알리지 않는다.
+            // 재접속을 기다리는 동안(Waiting·Failed)의 PTY 는 끝난 ssh 의 것이라 건드리지 않는다
+            if repaint && s.link.running() && s.rows > 1 {
                 for rows in [s.rows - 1, s.rows] {
-                    let _ = s.master.resize(PtySize {
-                        rows,
-                        cols: s.cols,
-                        pixel_width: 0,
-                        pixel_height: 0,
-                    });
+                    let _ = s.proc.set_size(s.cols, rows);
                 }
             }
             return Ok(Some(PtyFound {
@@ -494,12 +928,14 @@ fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
                 offset,
                 cols: s.cols,
                 rows: s.rows,
+                link: LinkView::from(&s.link),
+                tmux: s.remote.as_ref().and_then(PtyTmux::of),
             }));
         }
-        sessions.remove(&id)
+        take(&mut sessions, &id)
     };
     if let Some(s) = ended {
-        std::thread::spawn(move || kill_and_close(vec![s]));
+        std::thread::spawn(move || kill_and_close(vec![s.proc]));
     }
     Ok(None)
 }
@@ -507,7 +943,7 @@ fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
 /// 패널(key)의 터미널이 이미 떠 있으면 그 id 와 지금까지의 출력을 돌려준다(없으면 null)
 #[tauri::command]
 pub fn pty_find(state: State<'_, PtyState>, key: String) -> Result<Option<PtyFound>, String> {
-    find_alive(&state, &key)
+    find(&state.hub, &key)
 }
 
 #[derive(Serialize)]
@@ -522,130 +958,287 @@ pub struct PtyInfo {
 /// 떠 있는 터미널 목록 — 원격 화면이 열어 보지 않은 이슈의 에이전트 상태도 알 수 있게 한다
 #[tauri::command]
 pub fn pty_list(state: State<'_, PtyState>) -> Result<Vec<PtyInfo>, String> {
-    let sessions = state.sessions.lock().map_err(err)?;
+    let sessions = state.hub.sessions.lock().map_err(err)?;
     Ok(sessions
         .iter()
         .map(|(id, s)| PtyInfo {
             id: id.clone(),
             key: s.key.clone(),
             cwd: s.cwd.clone(),
-            host: s.host.clone(),
+            host: s.host().map(str::to_string),
         })
         .collect())
 }
 
-fn spawn(
-    app: &AppHandle,
-    state: &PtyState,
-    key: Option<String>,
-    cwd: String,
-    cols: u16,
-    rows: u16,
-    remote: Option<RemotePty>,
-) -> Result<String, String> {
-    let cmd = match &remote {
-        Some(r) => remote_shell(r, &cwd)?,
+/// 터미널을 연다. 원격 세션에는 재접속 감독을 붙인다 — 그 뒤로 끝(pty-exit)은 감독이 정한다
+pub(crate) fn spawn_session(hub: &Arc<Hub>, req: SpawnReq) -> Result<String, String> {
+    let opened = match &req.remote {
+        Some(r) => (hub.spawner)(r, &req.cwd, req.cols, req.rows)?,
         None => {
             let mut cmd = CommandBuilder::new(default_shell());
-            cmd.cwd(&cwd);
-            cmd
+            cmd.cwd(&req.cwd);
+            open_proc(cmd, req.cols, req.rows)?
         }
     };
-    let pair = native_pty_system()
-        .openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(err)?;
-    let mut cmd = cmd;
-    cmd.env("TERM", "xterm-256color");
-    let child = pair.slave.spawn_command(cmd).map_err(err)?;
-    drop(pair.slave);
-    #[cfg(windows)]
-    let job = child.process_id().and_then(job::Job::for_process);
-
-    let mut reader = pair.master.try_clone_reader().map_err(err)?;
-    let writer = pair.master.take_writer().map_err(err)?;
-    let id = format!("pty-{}", state.seq.fetch_add(1, Ordering::SeqCst) + 1);
-
-    let emit_id = id.clone();
-    let scrollback = Arc::new(Mutex::new(Scrollback::default()));
-    let kept = scrollback.clone();
+    let id = format!("pty-{}", hub.seq.fetch_add(1, Ordering::SeqCst) + 1);
+    let supervisor = req
+        .remote
+        .as_ref()
+        .and_then(|_| hub.supervisor.get().copied());
+    let (tx, rx) = supervisor.map(|_| mpsc::channel()).unzip();
+    // 첫 세대도 연결 신호 전까지 출력을 모은다 — 처음 열 때의 인증 실패도 가린다(AC-11·EC-01)
+    opened.proc.shared.set_collecting(req.remote.is_some());
+    let session = PtySession {
+        proc: opened.proc,
+        cwd: req.cwd,
+        key: req.key,
+        scrollback: Arc::default(),
+        cols: req.cols,
+        rows: req.rows,
+        remote: req.remote,
+        gen: Arc::default(),
+        link: Link::default(),
+        tx,
+    };
+    let reader = Reader::new(hub, &id, &session, opened.reader);
     // 리더 스레드보다 먼저 넣는다 — 리더가 시작 질의를 읽자마자 이 세션으로 답할 수 있게
-    state.sessions.lock().map_err(err)?.insert(
-        id.clone(),
-        PtySession {
-            master: pair.master,
-            writer,
-            child,
-            cwd,
-            host: remote.map(|r| r.host),
-            key,
-            scrollback,
-            cols,
-            rows,
-            cpr_answered: false,
-            #[cfg(windows)]
-            job,
-        },
-    );
-    let app = app.clone();
-    std::thread::spawn(move || {
+    hub.sessions
+        .lock()
+        .map_err(err)?
+        .insert(id.clone(), session);
+    reader.start();
+    if let (Some(start), Some(rx)) = (supervisor, rx) {
+        let (hub, id) = (hub.clone(), id.clone());
+        std::thread::spawn(move || start(hub, id, rx));
+    }
+    Ok(id)
+}
+
+/// 재접속 시도: 새 Proc 를 다음 세대로 넣는다(세션 잠금 안). 시도 알림 → 준비 시퀀스 순서로 내고 옛 Proc 와 새 리더를
+/// 돌려준다 — 둘 다 잠금을 놓은 뒤 처리한다. spawned 는 새 PTY 를 연 크기(그 사이 바뀌었으면 맞춘다)
+pub(crate) fn swap_in(
+    hub: &Arc<Hub>,
+    id: &str,
+    s: &mut PtySession,
+    opened: Opened,
+    spawned: (u16, u16),
+) -> (Proc, Reader) {
+    // 거울을 먼저 올린다 — 옛 리더가 Scrollback 잠금 안에서 세대를 보고 준비 시퀀스 뒤에는 끼지 않는다
+    s.begin_attempt();
+    let Opened { mut proc, reader } = opened;
+    let rows = s.rows;
+    proc.cpr_reply = pty_link::cpr_reply(rows).into_bytes();
+    proc.shared.set_connecting(true);
+    proc.shared.set_collecting(true);
+    // tmux 는 다시 붙으면 제목을 다시 보내므로 지우지 않는다(에이전트 감지가 제목을 잃지 않게)
+    let clear_title = s.remote.as_ref().is_some_and(|r| r.session.is_none());
+    let prelude = s
+        .scrollback
+        .lock()
+        .map(|mut sb| sb.reattach(rows, clear_title))
+        .unwrap_or_default();
+    announce(hub, id, s, Some(prelude));
+    let old = std::mem::replace(&mut s.proc, proc);
+    if spawned != (s.cols, s.rows) {
+        let _ = s.proc.set_size(s.cols, s.rows);
+    }
+    let reader = Reader::new(hub, id, s, reader);
+    (old, reader)
+}
+
+/// 리더 스레드(세대마다 하나): 출력을 보관하고 화면에 보낸다
+pub(crate) struct Reader {
+    hub: Arc<Hub>,
+    id: String,
+    /// 이 리더의 세대
+    gen: u64,
+    /// 세션의 지금 세대(거울)
+    current: Arc<AtomicU64>,
+    scrollback: Arc<Mutex<Scrollback>>,
+    shared: Arc<GenShared>,
+    /// 원격 세션 — 연결 신호(표시·tmux 제목)를 찾는다
+    filter: Option<MarkerFilter>,
+    /// 감독이 있다 — 끝(EOF)을 감독에게 넘기고 pty-exit 는 내지 않는다
+    supervised: bool,
+    source: Box<dyn Read + Send>,
+}
+
+impl Reader {
+    /// 세션의 지금 Proc 를 읽는 리더. 세션을 잠근 채(또는 넣기 전에) 만든다
+    pub(crate) fn new(
+        hub: &Arc<Hub>,
+        id: &str,
+        s: &PtySession,
+        source: Box<dyn Read + Send>,
+    ) -> Self {
+        Self {
+            hub: hub.clone(),
+            id: id.to_string(),
+            gen: s.link.gen,
+            current: s.gen.clone(),
+            scrollback: s.scrollback.clone(),
+            shared: s.proc.shared.clone(),
+            filter: s
+                .remote
+                .as_ref()
+                .map(|r| MarkerFilter::new(r.session.is_some())),
+            supervised: s.tx.is_some(),
+            source,
+        }
+    }
+
+    pub(crate) fn start(self) {
+        std::thread::spawn(move || self.run());
+    }
+
+    fn run(mut self) {
         let mut buf = [0u8; 8192];
         let mut pending: Vec<u8> = Vec::new();
         let mut startup = StartupQuery::new();
         loop {
-            match reader.read(&mut buf) {
+            match self.source.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     pending.extend_from_slice(&buf[..n]);
                     let (text, query) = startup.filter(take_utf8(&mut pending));
                     if query {
-                        // 세션이 이미 빠졌으면(종료 중) terminate() 가 대신 답한다
-                        if let Ok(mut sessions) = app.state::<PtyState>().sessions.lock() {
-                            if let Some(s) = sessions.get_mut(&emit_id) {
-                                s.answer_startup_query();
-                            }
-                        }
+                        self.answer_query();
                     }
                     if !text.is_empty() {
-                        let end = kept.lock().map(|mut k| k.push(&text)).unwrap_or(0);
-                        let _ = app.emit(
-                            "pty-data",
-                            PtyData {
-                                id: emit_id.clone(),
-                                data: text,
-                                end,
-                            },
-                        );
+                        self.output(text);
                     }
                 }
             }
         }
-        // 출력이 끝났다(셸 종료) — 붙어 있는 화면에 알리고 목록에서 뺀다
-        let _ = app.emit("pty-exit", emit_id.clone());
-        let ended = app
-            .state::<PtyState>()
-            .sessions
-            .lock()
-            .ok()
-            .and_then(|mut s| s.remove(&emit_id));
-        if let Some(s) = ended {
-            kill_and_close(vec![s]);
+        self.ended();
+    }
+
+    /// 시작 질의에 세션의 지금 Proc(이 세대)로 답한다. 세션이 빠졌거나 세대가 바뀌었으면 그 Proc 를 정리하는 terminate() 가 답한다
+    fn answer_query(&self) {
+        let Ok(mut sessions) = self.hub.sessions.lock() else {
+            return;
+        };
+        if let Some(s) = sessions
+            .get_mut(&self.id)
+            .filter(|s| s.link.gen == self.gen)
+        {
+            s.proc.answer_startup_query();
         }
-    });
-    Ok(id)
+    }
+
+    fn output(&mut self, mut text: String) {
+        let Some(mut filter) = self.filter.take() else {
+            self.emit(text);
+            return;
+        };
+        // 신호를 만나면 앞 텍스트 → 상태 알림(과 구분 줄) → 나머지 순서로 낸다
+        loop {
+            let strip = self.shared.connecting.load(Ordering::SeqCst);
+            let (head, signal) = filter.filter(&text, strip);
+            if !head.is_empty() && !self.emit(head) {
+                break;
+            }
+            let Some((signal, rest)) = signal else { break };
+            self.signal(signal);
+            if rest.is_empty() {
+                break;
+            }
+            text = rest;
+        }
+        self.filter = Some(filter);
+    }
+
+    /// 출력 한 조각을 보관하고 화면에 보낸다. Scrollback 잠금 안에서 세대를 확인해 옛 세대의 조각은 버린다 —
+    /// 감독이 세대를 올린 뒤 넣는 준비 시퀀스 뒤에 끼지 않게. 버렸으면 false
+    fn emit(&self, text: String) -> bool {
+        let mut sb = self.scrollback.lock().ok();
+        if self.current.load(Ordering::SeqCst) != self.gen {
+            return false;
+        }
+        if self.shared.collecting.load(Ordering::SeqCst) {
+            self.shared.push_tail(&text);
+        }
+        push_and_emit(&self.hub, &self.id, sb.as_deref_mut(), text);
+        true
+    }
+
+    /// 연결 신호 — 세션 잠금 안에서 세대를 다시 확인하고 상태를 바꾼다. 이미 연결 신호를 본 세대는 바뀔 것이 없다
+    fn signal(&self, signal: Signal) {
+        if !self.shared.collecting.load(Ordering::SeqCst) {
+            return;
+        }
+        let Ok(mut sessions) = self.hub.sessions.lock() else {
+            return;
+        };
+        let Some(s) = sessions.get_mut(&self.id) else {
+            return;
+        };
+        if s.link.gen != self.gen {
+            return;
+        }
+        let seq = s.link.seq;
+        let separate = pty_link::on_marker(&mut s.link, self.gen, &now_hhmm());
+        if s.link.connected {
+            self.shared.set_collecting(false);
+        }
+        if s.link.phase == Phase::Live {
+            self.shared.set_connecting(false);
+        }
+        if s.link.seq == seq {
+            return;
+        }
+        // 구분 줄은 연결 표시(minmo-link)로 알았을 때만 넣는다 — tmux 제목으로 먼저 알았으면 커서가 어디인지 모른다
+        // (화면의 "다시 접속했습니다" 안내가 알린다, D-25). 준비 시퀀스가 대체 화면을 먼저 꺼 두므로 !alt 는 사실상
+        // 늘 참인 방어 검사다. tmux 재접속도 표시가 tmux 제목보다 먼저 와서 구분 줄은 tmux 화면 앞 일반 화면에
+        // 들어간다(화면에서는 tmux 가 덮는다)
+        let alt = s.scrollback.lock().map_or(true, |sb| sb.alt_screen());
+        let inject = (separate && signal == Signal::Marker && !alt)
+            .then(|| pty_link::separator(s.link.at.as_deref().unwrap_or_default()));
+        announce(&self.hub, &self.id, s, inject);
+    }
+
+    /// 출력이 끝났다(셸·ssh 종료). 감독이 있는 원격 세션은 지금 세대일 때만 감독에게 넘긴다(옛 세대는 아무것도 하지 않는다).
+    /// 그 밖에는 화면에 알리고 세션을 치운다
+    fn ended(self) {
+        if self.supervised {
+            let Ok(sessions) = self.hub.sessions.lock() else {
+                return;
+            };
+            let own = sessions.get(&self.id).filter(|s| s.link.gen == self.gen);
+            if let Some(tx) = own.and_then(|s| s.tx.as_ref()) {
+                let _ = tx.send(Ev::Eof { gen: self.gen });
+            }
+            return;
+        }
+        if let Some(sink) = self.hub.sink() {
+            sink.exit(&self.id);
+        }
+        if let Ok(Some(s)) = take_by_id(&self.hub, &self.id) {
+            kill_and_close(vec![s.proc]);
+        }
+    }
 }
 
 #[tauri::command]
 pub fn pty_write(state: State<'_, PtyState>, id: String, data: String) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().map_err(err)?;
+    write(&state.hub, &id, &data)
+}
+
+pub(crate) fn write(hub: &Hub, id: &str, data: &str) -> Result<(), String> {
+    let mut sessions = hub.sessions.lock().map_err(err)?;
     let s = sessions
-        .get_mut(&id)
+        .get_mut(id)
         .ok_or_else(|| format!("pty {id} 없음"))?;
-    s.write_input(data.as_bytes()).map_err(err)
+    // 끊긴 동안(재접속 중·실패)의 입력은 버린다 — 오류로 돌려주면 화면이 "종료"로 읽는다(EC-02)
+    if s.link.phase != Phase::Live {
+        return Ok(());
+    }
+    let written = s.proc.write_input(data.as_bytes());
+    // 원격은 끊긴 직후(감독이 알기 전) 죽은 입력 파이프에 쓰는 구간이 있다 — 원격의 끝은 pty-exit 로만 알린다
+    if s.remote.is_some() {
+        return Ok(());
+    }
+    written.map_err(err)
 }
 
 #[derive(Clone, Serialize)]
@@ -657,43 +1250,46 @@ struct PtyResized {
     by: Option<String>,
 }
 
+/// (app 은 pty_spawn 과 같은 이유로 남긴다)
 #[tauri::command]
 pub fn pty_resize(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, PtyState>,
     id: String,
     cols: u16,
     rows: u16,
     by: Option<String>,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().map_err(err)?;
+    resize(&state.hub, &id, cols, rows, by)
+}
+
+pub(crate) fn resize(
+    hub: &Hub,
+    id: &str,
+    cols: u16,
+    rows: u16,
+    by: Option<String>,
+) -> Result<(), String> {
+    let mut sessions = hub.sessions.lock().map_err(err)?;
     let s = sessions
-        .get_mut(&id)
+        .get_mut(id)
         .ok_or_else(|| format!("pty {id} 없음"))?;
-    if s.cols != cols || s.rows != rows {
-        s.master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(err)?;
-        s.cols = cols;
-        s.rows = rows;
+    // 재접속을 기다리는 동안(Waiting·Failed)은 크기만 기록한다 — 다음 시도가 이 크기로 연다
+    if (s.cols != cols || s.rows != rows) && s.link.running() {
+        let resized = s.proc.set_size(cols, rows);
+        // 원격은 끊긴 직후의 죽은 ConPTY 일 수 있다 — 크기는 기록해 다음 시도에 쓴다
+        if s.remote.is_none() {
+            resized?;
+        }
     }
+    s.cols = cols;
+    s.rows = rows;
     // 같은 터미널을 보는 다른 화면이 같은 크기로 그리게 알린다. 크기가 그대로여도 알린다 — 요청한 화면이 요청마다 답을
     // 하나씩 받아야 "마지막 요청이 적용됐다"를 알 수 있다. 잠근 채로 알린다 — 원격 호출은 따로 돌아 동시에 올 수 있는데,
     // 알림 순서가 적용 순서와 같아야 화면들이 받은 마지막 알림이 곧 PTY 의 크기다
-    let _ = app.emit(
-        "pty-resized",
-        PtyResized {
-            id,
-            cols,
-            rows,
-            by,
-        },
-    );
+    if let Some(sink) = hub.sink() {
+        sink.resized(id, cols, rows, by);
+    }
     drop(sessions);
     Ok(())
 }
@@ -742,16 +1338,16 @@ const CLOSE_DEADLINE: Duration = Duration::from_secs(3);
 /// 모든 셸(과 자손)을 끝낸 뒤 ConPTY 를 닫고, 마감 안에 닫힌 세션 수를 돌려준다(블로킹).
 /// 정리 순서를 지키도록 닫힐 때까지 기다리되, 한 세션의 닫기가 멈춰도 다른 세션과 호출자(worktree 삭제)가
 /// 막히지 않도록 세션마다 스레드를 두고 공통 마감까지만 기다린다.
-fn kill_and_close(mut sessions: Vec<PtySession>) -> usize {
-    for s in &mut sessions {
-        s.terminate();
+pub(crate) fn kill_and_close(mut procs: Vec<Proc>) -> usize {
+    for p in &mut procs {
+        p.terminate();
     }
-    let total = sessions.len();
+    let total = procs.len();
     let (tx, rx) = mpsc::channel();
-    for s in sessions {
+    for p in procs {
         let tx = tx.clone();
         std::thread::spawn(move || {
-            s.close();
+            p.close();
             let _ = tx.send(());
         });
     }
@@ -769,7 +1365,8 @@ async fn kill_sessions(sessions: Vec<PtySession>) -> Result<(), String> {
     if sessions.is_empty() {
         return Ok(());
     }
-    tauri::async_runtime::spawn_blocking(move || kill_and_close(sessions))
+    let procs = sessions.into_iter().map(|s| s.proc).collect();
+    tauri::async_runtime::spawn_blocking(move || kill_and_close(procs))
         .await
         .map(|_| ())
         .map_err(err)
@@ -780,9 +1377,9 @@ async fn kill_sessions(sessions: Vec<PtySession>) -> Result<(), String> {
 #[tauri::command]
 pub async fn pty_processes(state: State<'_, PtyState>, id: String) -> Result<Vec<String>, String> {
     let pid = {
-        let sessions = state.sessions.lock().map_err(err)?;
+        let sessions = state.hub.sessions.lock().map_err(err)?;
         match sessions.get(&id) {
-            Some(s) if s.host.is_none() => s.child.process_id(),
+            Some(s) if s.remote.is_none() => s.proc.child.process_id(),
             _ => None,
         }
     };
@@ -799,24 +1396,34 @@ pub async fn pty_processes(state: State<'_, PtyState>, id: String) -> Result<Vec
 
 #[tauri::command]
 pub async fn pty_kill(state: State<'_, PtyState>, id: String) -> Result<(), String> {
-    let removed = state.sessions.lock().map_err(err)?.remove(&id);
+    let removed = take_by_id(&state.hub, &id)?;
     kill_sessions(removed.into_iter().collect()).await
+}
+
+/// id 의 터미널을 목록에서 뺀다 — 끝내기(kill_and_close)는 호출자가 잠금 밖에서
+pub(crate) fn take_by_id(hub: &Hub, id: &str) -> Result<Option<PtySession>, String> {
+    Ok(take(&mut *hub.sessions.lock().map_err(err)?, id))
 }
 
 /// 모든 PTY 를 백그라운드에서 끝낸다 — 웹뷰가 새로 고쳐지면(React 정리가 돌지 않음) 남은 셸·에이전트를 정리한다
 pub fn kill_all(state: &PtyState) {
-    let sessions: Vec<PtySession> = match state.sessions.lock() {
-        Ok(mut s) => s.drain().map(|(_, v)| v).collect(),
+    kill_all_in(&state.hub);
+}
+
+pub(crate) fn kill_all_in(hub: &Hub) {
+    // 감독 통로는 세션과 함께 바로 버려진다 — 감독마다 pty-exit 를 한 번 낸다. 원격 tmux 세션은 남는다(EC-08)
+    let procs: Vec<Proc> = match hub.sessions.lock() {
+        Ok(mut s) => s.drain().map(|(_, v)| v.proc).collect(),
         Err(_) => return,
     };
-    if !sessions.is_empty() {
-        std::thread::spawn(move || kill_and_close(sessions));
+    if !procs.is_empty() {
+        std::thread::spawn(move || kill_and_close(procs));
     }
 }
 
 /// 같은 호스트(None = 이 PC)의 세션이고 cwd 가 path 와 같거나 그 하위인가
 fn in_target(s: &PtySession, path: &str, host: Option<&str>) -> bool {
-    if s.host.as_deref() != host {
+    if s.host() != host {
         return false;
     }
     match host {
@@ -832,18 +1439,28 @@ pub async fn pty_kill_by_cwd(
     path: String,
     host: Option<String>,
 ) -> Result<u32, String> {
-    let targets: Vec<PtySession> = {
-        let mut sessions = state.sessions.lock().map_err(err)?;
-        let ids: Vec<String> = sessions
-            .iter()
-            .filter(|(_, s)| in_target(s, &path, host.as_deref()))
-            .map(|(id, _)| id.clone())
-            .collect();
-        ids.iter().filter_map(|id| sessions.remove(id)).collect()
-    };
+    let targets = take_by_cwd(&state.hub, &path, host.as_deref())?;
     let n = targets.len() as u32;
     kill_sessions(targets).await?;
     Ok(n)
+}
+
+/// cwd 가 path(또는 하위)인 터미널을 목록에서 빼서 돌려준다
+pub(crate) fn take_by_cwd(
+    hub: &Hub,
+    path: &str,
+    host: Option<&str>,
+) -> Result<Vec<PtySession>, String> {
+    let mut sessions = hub.sessions.lock().map_err(err)?;
+    let ids: Vec<String> = sessions
+        .iter()
+        .filter(|(_, s)| in_target(s, path, host))
+        .map(|(id, _)| id.clone())
+        .collect();
+    Ok(ids
+        .iter()
+        .filter_map(|id| take(&mut sessions, id))
+        .collect())
 }
 
 #[cfg(test)]
@@ -871,27 +1488,82 @@ mod tests {
         }
     }
 
+    /// 원격 명령 맨 앞의 연결 표시와 짧은 대기(#89)
+    const MARKER: &str = "printf '\\033]2;minmo-link\\007'; sleep 0.2 2>/dev/null || sleep 1; ";
+
     #[test]
     fn remote_shell_command_attaches_tmux_or_opens_a_login_shell() {
-        // bash 는 시작 파일을 읽은 뒤 worktree 로 돌아오고, 그 밖의 셸은 로그인 셸 그대로다
+        // 맨 앞에 연결 표시를 낸다. bash 는 시작 파일을 읽은 뒤 worktree 로 돌아오고, 그 밖의 셸은 로그인 셸 그대로다.
+        // 로그인 셸은 exec 하지 않고 기다려 종료 코드 255 만 254 로 바꿔 넘긴다(D-27 — ssh 의 255 와 가린다)
         let plain = remote_shell_command(&remote(None, false), "/w/it's").unwrap();
-        assert!(plain.starts_with(
-            "cd -- '/w/it'\\''s' && export MINMO_WORKTREE='/w/it'\\''s' && case \"${SHELL##*/}\" in bash) exec \"$SHELL\" -c 'exec \"$0\" --rcfile /dev/fd/3 -i 3<<<\"$1\"' \"$SHELL\" 'exec 3<&-; [ -r /etc/profile ] && . /etc/profile; "
-        ));
+        let body = plain
+            .strip_prefix(MARKER)
+            .unwrap_or_else(|| panic!("표시가 맨 앞에 없다: {plain}"));
+        assert!(body.starts_with(
+            "cd -- '/w/it'\\''s' && export MINMO_WORKTREE='/w/it'\\''s' && case \"${SHELL##*/}\" in bash) \"$SHELL\" -c 'exec \"$0\" --rcfile /dev/fd/3 -i 3<<<\"$1\"' \"$SHELL\" 'exec 3<&-; [ -r /etc/profile ] && . /etc/profile; "
+        ), "{body}");
         assert!(
-            plain.ends_with("cd -- \"$MINMO_WORKTREE\"' ;; *) exec \"${SHELL:-sh}\" -l ;; esac")
+            body.ends_with("cd -- \"$MINMO_WORKTREE\"' ;; *) \"${SHELL:-sh}\" -l ;; esac; s=$?; [ $s -eq 255 ] && s=254; exit $s"),
+            "{body}"
         );
-        // tmux 의 첫 창도 같은 명령으로 연다(sh 에 넘기고 한 번 더 인용한다)
+        // tmux 의 첫 창도 같은 셸을 연다(sh 에 넘기고 한 번 더 인용한다). 셸로 바뀌므로(exec) 255 를 바꾸지 않는다
         let shell = ssh::quote(&ssh::sh_wrap(&worktree_shell("'/w/t/'")));
+        assert!(shell.contains("bash) exec \"$SHELL\""), "{shell}");
+        assert!(!shell.contains("254"), "{shell}");
         assert_eq!(
             remote_shell_command(&remote(Some("minmo-0a1b2c3d4e"), false), "/w/t/").unwrap(),
-            format!("cd && exec tmux -u -L minmo new-session -A -s minmo-0a1b2c3d4e -c '/w/t/' {shell} \\; set-option @minmo_worktree '/w/t' \\; set-option set-titles on \\; set-option set-titles-string 'minmo:#{{pane_current_command}}:#{{pane_title}}'")
+            format!("{MARKER}cd && exec tmux -u -L minmo new-session -A -s minmo-0a1b2c3d4e -c '/w/t/' {shell} \\; set-option @minmo_worktree '/w/t' \\; set-option set-titles on \\; set-option set-titles-string 'minmo:#{{pane_current_command}}:#{{pane_title}}'")
         );
+        // 분할 패널의 세션은 끊겨도 남는다 — 이전 버전이 켠 destroy-unattached 도 끈다(EC-11)
+        let split =
+            remote_shell_command(&remote(Some("minmo-0a1b2c3d4e-p2"), true), "/w/t").unwrap();
         assert!(
-            remote_shell_command(&remote(Some("minmo-0a1b2c3d4e-p2"), true), "/w/t")
-                .unwrap()
-                .contains("\\; set-option destroy-unattached on \\; set-option set-titles on")
+            split.contains("\\; set-option destroy-unattached off \\; set-option set-titles on"),
+            "{split}"
         );
+        assert!(!split.contains("destroy-unattached on"), "{split}");
+    }
+
+    /// 화면 계약(#89 Plan §7): pty-link `{ id, phase, attempt, max, seq, reason, at }`, PtyFound.tmux `{ session, ephemeral }`
+    #[test]
+    fn pty_link_event_and_tmux_serialize_to_the_screen_contract() {
+        let waiting = Link {
+            phase: Phase::Waiting,
+            attempt: 2,
+            seq: 7,
+            ..Link::default()
+        };
+        let ev = PtyLinkEvent {
+            id: "pty-1".into(),
+            link: LinkView::from(&waiting),
+        };
+        assert_eq!(
+            serde_json::to_value(&ev).unwrap(),
+            serde_json::json!({ "id": "pty-1", "phase": "waiting", "attempt": 2, "max": 5, "seq": 7, "reason": null, "at": null })
+        );
+        let failed = Link {
+            phase: Phase::Failed,
+            reason: Some("auth"),
+            ..Link::default()
+        };
+        assert_eq!(
+            serde_json::to_value(LinkView::from(&failed)).unwrap()["reason"],
+            "auth"
+        );
+        let live = Link {
+            at: Some("14:02".into()),
+            ..Link::default()
+        };
+        let live = serde_json::to_value(LinkView::from(&live)).unwrap();
+        assert_eq!(
+            (live["phase"].as_str(), live["at"].as_str()),
+            (Some("connected"), Some("14:02"))
+        );
+        assert_eq!(
+            serde_json::to_value(PtyTmux::of(&remote(Some("minmo-a-p2"), true))).unwrap(),
+            serde_json::json!({ "session": "minmo-a-p2", "ephemeral": true })
+        );
+        assert_eq!(PtyTmux::of(&remote(None, false)), None);
     }
 
     #[test]
@@ -1047,6 +1719,7 @@ mod tests {
     #[cfg(windows)]
     mod conpty {
         use super::super::*;
+        use crate::commands::pty_link::{cpr_reply, MarkerFilter, Signal};
         use std::mem::ManuallyDrop;
         use std::path::Path;
         use std::sync::Arc;
@@ -1070,28 +1743,37 @@ mod tests {
 
         struct Pty {
             // 실패로 unwinding 중 drop 되면 바로 그 ClosePseudoConsole 대기로 테스트가 멈출 수 있어 직접 drop 하지 않는다
-            session: ManuallyDrop<PtySession>,
+            proc: ManuallyDrop<Proc>,
             output: mpsc::Receiver<Vec<u8>>,
             input_log: Arc<Mutex<Vec<u8>>>,
         }
 
-        /// cmd.exe PTY 를 띄우고, 앱의 리더 스레드처럼 출력을 계속 비우면서 누적 출력을 채널로 보낸다
-        fn spawn_cmd_pty(cwd: Option<&Path>) -> Pty {
+        const ROWS: u16 = 24;
+
+        fn cmd_exe(cwd: Option<&Path>) -> CommandBuilder {
+            let mut cmd = CommandBuilder::new("cmd.exe");
+            if let Some(dir) = cwd {
+                cmd.cwd(dir);
+            }
+            cmd
+        }
+
+        /// cmd 를 PTY 로 띄우고, 앱의 리더 스레드처럼 출력을 계속 비우면서 누적 출력을 채널로 보낸다
+        fn spawn_cmd_pty(cmd: CommandBuilder) -> Pty {
             let pair = native_pty_system()
                 .openpty(PtySize {
-                    rows: 24,
+                    rows: ROWS,
                     cols: 80,
                     pixel_width: 0,
                     pixel_height: 0,
                 })
                 .unwrap();
-            let mut cmd = CommandBuilder::new("cmd.exe");
-            if let Some(dir) = cwd {
-                cmd.cwd(dir);
-            }
             let child = pair.slave.spawn_command(cmd).unwrap();
             drop(pair.slave);
-            let job = child.process_id().and_then(job::Job::for_process);
+            let job = child
+                .process_id()
+                .and_then(job::Job::for_process)
+                .map(Arc::new);
             assert!(job.is_some(), "셸을 Job Object 에 넣지 못했다");
             let input_log = Arc::new(Mutex::new(Vec::new()));
             let writer = Box::new(Tee {
@@ -1108,21 +1790,17 @@ mod tests {
                     let _ = tx.send(out.clone());
                 }
             });
-            let session = PtySession {
+            let proc = Proc {
                 master: pair.master,
                 writer,
                 child,
-                cwd: String::new(),
-                host: None,
-                key: None,
-                scrollback: Arc::default(),
-                cols: 80,
-                rows: 24,
                 cpr_answered: false,
+                cpr_reply: CURSOR_HOME_REPORT.to_vec(),
+                shared: Arc::default(),
                 job,
             };
             Pty {
-                session: ManuallyDrop::new(session),
+                proc: ManuallyDrop::new(proc),
                 output,
                 input_log,
             }
@@ -1146,19 +1824,19 @@ mod tests {
         /// xterm 처럼 커서 질의에 응답하고 셸이 명령을 처리하는지 확인한다
         fn answer_cursor_query_and_wait_shell(pty: &mut Pty) {
             wait_output(&pty.output, b"\x1b[6n", "커서 위치 질의(ESC[6n)");
-            pty.session.write_input(b"\x1b[1;1R").unwrap();
+            pty.proc.write_input(b"\x1b[1;1R").unwrap();
             // 입력 에코(minmo-%OS%)와 구분되도록 셸이 확장한 값을 기다린다
-            pty.session.write_input(b"echo minmo-%OS%\r").unwrap();
+            pty.proc.write_input(b"echo minmo-%OS%\r").unwrap();
             wait_output(&pty.output, b"minmo-Windows_NT", "셸 응답");
         }
 
         /// kill_and_close 를 별도 스레드에서 실행해 멈춰도 테스트가 무한 대기하지 않게 한다.
         /// 마감 안에 닫힌 세션 수와 입력 기록을 돌려준다
         fn kill_with_timeout(pty: Pty) -> (usize, Vec<u8>) {
-            let session = ManuallyDrop::into_inner(pty.session);
+            let proc = ManuallyDrop::into_inner(pty.proc);
             let (done_tx, done_rx) = mpsc::channel();
             std::thread::spawn(move || {
-                let _ = done_tx.send(kill_and_close(vec![session]));
+                let _ = done_tx.send(kill_and_close(vec![proc]));
             });
             let closed = done_rx
                 .recv_timeout(Duration::from_secs(10))
@@ -1170,7 +1848,7 @@ mod tests {
         /// 실제 앱: spawn 응답 전에 터미널이 언마운트되면 xterm 이 커서 질의에 응답할 기회 없이 ptyKill 이 호출된다
         #[test]
         fn kill_before_cursor_query_answered_closes_conpty() {
-            let pty = spawn_cmd_pty(None);
+            let pty = spawn_cmd_pty(cmd_exe(None));
             wait_output(&pty.output, b"\x1b[6n", "커서 위치 질의(ESC[6n)");
             let (closed, input) = kill_with_timeout(pty);
             assert_eq!(
@@ -1187,7 +1865,7 @@ mod tests {
         /// 정상 흐름: xterm 이 응답해 셸이 떠 있는 상태에서 종료
         #[test]
         fn kill_running_shell_after_cursor_query_answered() {
-            let mut pty = spawn_cmd_pty(None);
+            let mut pty = spawn_cmd_pty(cmd_exe(None));
             answer_cursor_query_and_wait_shell(&mut pty);
             let (closed, input) = kill_with_timeout(pty);
             assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
@@ -1201,7 +1879,7 @@ mod tests {
         /// #56: 화면 없이도 시작 질의에 답해 셸이 뜨고, 화면으로 가는 출력에는 질의가 없다(화면이 또 답하지 않는다)
         #[test]
         fn startup_query_is_answered_without_a_screen() {
-            let mut pty = spawn_cmd_pty(None);
+            let mut pty = spawn_cmd_pty(cmd_exe(None));
             let mut startup = StartupQuery::waiting(true);
             let mut shown = String::new();
             let mut seen = 0;
@@ -1218,11 +1896,11 @@ mod tests {
                 seen = out.len();
                 shown.push_str(&text);
                 if query {
-                    pty.session.answer_startup_query();
+                    pty.proc.answer_startup_query();
                 }
-                if pty.session.cpr_answered && !typed {
+                if pty.proc.cpr_answered && !typed {
                     typed = true;
-                    pty.session.write_input(b"echo minmo-%OS%\r").unwrap();
+                    pty.proc.write_input(b"echo minmo-%OS%\r").unwrap();
                 }
             }
             assert!(!shown.contains(CURSOR_QUERY), "시작 질의가 화면으로 갔다");
@@ -1240,9 +1918,9 @@ mod tests {
         fn kill_releases_cwd_held_by_grandchild() {
             let dir = std::env::temp_dir().join(format!("minmo-pty-test-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
-            let mut pty = spawn_cmd_pty(Some(&dir));
+            let mut pty = spawn_cmd_pty(cmd_exe(Some(&dir)));
             answer_cursor_query_and_wait_shell(&mut pty);
-            pty.session
+            pty.proc
                 .write_input(b"powershell -NoProfile -Command \"Write-Output ('gc-' + 'ready'); Start-Sleep 60\"\r")
                 .unwrap();
             wait_output(&pty.output, b"gc-ready", "손자 프로세스 시작");
@@ -1269,14 +1947,9 @@ mod tests {
             String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
         }
 
-        /// 패널 닫기(Ctrl+W) 시나리오: 에이전트처럼 중간 부모가 먼저 끝나 부모 체인이 끊긴 자손도 함께 끝나야 한다.
-        /// taskkill /T 는 이런 고아를 찾지 못하므로 Job Object 가 없으면 실패한다
-        #[test]
-        fn kill_terminates_orphaned_descendant() {
-            let mut pty = spawn_cmd_pty(None);
-            answer_cursor_query_and_wait_shell(&mut pty);
-            // 바깥 powershell 은 손자를 띄우고 pid 를 출력한 뒤 바로 끝난다 → 손자는 부모 없는 고아가 된다
-            pty.session
+        /// 셸에서 손자를 띄우고 중간 부모(powershell)는 바로 끝내 부모 체인이 끊긴 고아를 만든다. 그 pid 를 돌려준다
+        fn start_orphan(pty: &mut Pty) -> u32 {
+            pty.proc
                 .write_input(
                     concat!(
                         "powershell -NoProfile -Command \"$p = Start-Process powershell ",
@@ -1304,8 +1977,11 @@ mod tests {
                 }
             };
             assert!(pid_alive(pid), "고아 프로세스가 시작되지 않았다");
-            let (closed, _) = kill_with_timeout(pty);
-            // TerminateJobObject 도 종료를 시작만 하므로 잠시 기다린다
+            pid
+        }
+
+        /// 프로세스가 곧 끝나는지 본다 — TerminateJobObject 도 종료를 시작만 하므로 잠시 기다린다. 남으면 정리한다
+        fn gone_soon(pid: u32) -> bool {
             let gone = (0..50).any(|_| {
                 let alive = pid_alive(pid);
                 if alive {
@@ -1317,8 +1993,193 @@ mod tests {
                 // 실패해도 테스트 프로세스가 남지 않게 정리한다
                 super::super::super::taskkill_tree(pid);
             }
-            assert!(gone, "PTY 종료 후에도 고아 자손(pid {pid})이 살아 있다");
+            gone
+        }
+
+        /// 패널 닫기(Ctrl+W) 시나리오: 에이전트처럼 중간 부모가 먼저 끝나 부모 체인이 끊긴 자손도 함께 끝나야 한다.
+        /// taskkill /T 는 이런 고아를 찾지 못하므로 Job Object 가 없으면 실패한다
+        #[test]
+        fn kill_terminates_orphaned_descendant() {
+            let mut pty = spawn_cmd_pty(cmd_exe(None));
+            answer_cursor_query_and_wait_shell(&mut pty);
+            let pid = start_orphan(&mut pty);
+            let (closed, _) = kill_with_timeout(pty);
+            assert!(
+                gone_soon(pid),
+                "PTY 종료 후에도 고아 자손(pid {pid})이 살아 있다"
+            );
             assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
+        }
+
+        /// EC-09: 셸이 먼저 끝난 뒤(트리 종료는 건너뜀)에도 남은 자손은 Job 이 끝낸다
+        #[test]
+        fn kill_after_the_shell_exited_still_ends_descendants_through_the_job() {
+            let mut pty = spawn_cmd_pty(cmd_exe(None));
+            answer_cursor_query_and_wait_shell(&mut pty);
+            let pid = start_orphan(&mut pty);
+            pty.proc.write_input(b"exit\r").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !matches!(pty.proc.child.try_wait(), Ok(Some(_))) {
+                assert!(Instant::now() < deadline, "셸이 10초 안에 끝나지 않았다");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(pid_alive(pid), "셸이 끝났을 때 자손이 이미 없다(검사 전제)");
+            // Job 을 하나 더 쥐어 닫기(KILL_ON_JOB_CLOSE)로 끝나는 것과 가린다 — 끝내기(TerminateJobObject)만 본다
+            let held = pty.proc.job.clone();
+            let (closed, _) = kill_with_timeout(pty);
+            let gone = gone_soon(pid);
+            drop(held);
+            assert!(
+                gone,
+                "셸이 먼저 끝난 뒤 남은 자손(pid {pid})을 끝내지 못했다"
+            );
+            assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
+        }
+
+        // ── #89 재접속의 ConPTY 전제(U3 관문) ─────────────────────────────
+
+        /// 관측 출력을 읽을 수 있게 — 제어 문자를 이스케이프로
+        fn show(text: &str) -> String {
+            text.chars()
+                .map(|c| match c {
+                    '\x1b' => "\\e".to_string(),
+                    '\x07' => "\\a".to_string(),
+                    '\r' => "\\r".to_string(),
+                    '\n' => "\\n".to_string(),
+                    c if c.is_control() => format!("\\x{:02x}", c as u32),
+                    c => c.to_string(),
+                })
+                .collect()
+        }
+
+        /// 명령을 PTY 로 돌려 시작 질의에 reply 로 답하고, done 이 나온 뒤 잠시 더 받은 출력(질의 뒤)을 돌려준다.
+        /// 제목은 다음 화면 갱신에 실려 올 수 있어 끝 표시 뒤에도 조금 기다린다
+        fn probe(cmd: CommandBuilder, reply: &[u8], done: &str) -> String {
+            let mut pty = spawn_cmd_pty(cmd);
+            wait_output(&pty.output, b"\x1b[6n", "커서 위치 질의(ESC[6n)");
+            pty.proc.write_input(reply).unwrap();
+            // powershell 이 느린 PC(시작만 3초 넘음)에서도 끝 표시를 기다리도록 넉넉히 둔다 — 정말 멈추면 여기서 드러난다
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let mut out = Vec::new();
+            while !String::from_utf8_lossy(&out).contains(done) {
+                match pty
+                    .output
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                {
+                    Ok(o) => out = o,
+                    Err(_) => {
+                        let seen = show(&String::from_utf8_lossy(&out));
+                        let _ = kill_with_timeout(pty);
+                        panic!("{done} 을(를) 60초 안에 받지 못했다. 출력: {seen}");
+                    }
+                }
+            }
+            let settle = Instant::now() + Duration::from_millis(500);
+            while let Ok(o) = pty
+                .output
+                .recv_timeout(settle.saturating_duration_since(Instant::now()))
+            {
+                out = o;
+            }
+            let _ = kill_with_timeout(pty);
+            let text = String::from_utf8_lossy(&out).into_owned();
+            let at = text
+                .find(CURSOR_QUERY)
+                .map_or(0, |i| i + CURSOR_QUERY.len());
+            text[at..].to_string()
+        }
+
+        fn powershell(script: &str) -> CommandBuilder {
+            let mut cmd = CommandBuilder::new("powershell.exe");
+            cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+            cmd
+        }
+
+        /// 원격의 표시처럼 창 제목(OSC 2)을 VT 로 쓰는 함수 T — ssh.exe 가 원격 출력을 콘솔에 쓰는 것과 같다.
+        /// 표시 글자는 실행 중에 이어 붙여 명령줄·창 제목에 그대로 나오지 않게 한다
+        const TITLE_FN: &str =
+            "$e=[char]27; $b=[char]7; function T($t) { [Console]::Write($e+']2;'+$t+$b) };";
+        const DONE: &str = "Write-Output ('probe-'+'done')";
+
+        /// 앱의 MarkerFilter 로 표시를 찾는다 — 찾으면 표시 뒤의 출력
+        fn after_marker(out: &str) -> Option<String> {
+            match MarkerFilter::new(false).filter(out, false) {
+                (_, Some((Signal::Marker, rest))) => Some(rest),
+                _ => None,
+            }
+        }
+
+        /// 관문 ①: 원격이 쓴 창 제목 표시(OSC 2 minmo-link)가 ConPTY 를 지나 출력에 나온다
+        #[test]
+        fn conpty_passes_the_link_marker_title_to_the_output() {
+            let script = format!("{TITLE_FN} T('minmo-'+'link'); {DONE}");
+            let out = probe(powershell(&script), CURSOR_HOME_REPORT, "probe-done");
+            eprintln!("관문 ① 관측: {}", show(&out));
+            assert!(
+                after_marker(&out).is_some(),
+                "표시 제목이 출력에 없다: {}",
+                show(&out)
+            );
+        }
+
+        /// 관문 ②: 표시 뒤 0.2초 기다렸다 다른 제목(tmux·프롬프트)을 써도 표시가 남는다 —
+        /// ConPTY 는 한 번의 화면 갱신에 마지막 제목만 보내므로 원격 명령이 표시 뒤에 잠깐 기다린다
+        #[test]
+        fn conpty_keeps_the_marker_when_the_next_title_comes_after_the_wait() {
+            let script = format!(
+                "{TITLE_FN} T('minmo-'+'link'); Start-Sleep -Milliseconds 200; T('other-'+'title'); {DONE}"
+            );
+            let out = probe(powershell(&script), CURSOR_HOME_REPORT, "probe-done");
+            eprintln!("관문 ② 관측(0.2초 대기): {}", show(&out));
+            let rest = after_marker(&out)
+                .unwrap_or_else(|| panic!("표시가 다음 제목에 덮였다: {}", show(&out)));
+            // 다음 제목도 실제로 왔어야 이 검사가 뜻이 있다
+            assert!(
+                rest.contains("other-title"),
+                "다음 제목이 오지 않았다: {}",
+                show(&out)
+            );
+        }
+
+        /// 관찰용(단언 없음): 기다리지 않고 바로 다른 제목을 쓰면 표시가 남는가 — 원격 명령에 대기를 둔 이유
+        #[test]
+        #[ignore = "관찰용 — cargo test conpty_marker_without -- --ignored --nocapture"]
+        fn conpty_marker_without_the_wait_is_only_observed() {
+            let script = format!("{TITLE_FN} T('minmo-'+'link'); T('other-'+'title'); {DONE}");
+            let out = probe(powershell(&script), CURSOR_HOME_REPORT, "probe-done");
+            let kept = if after_marker(&out).is_some() {
+                "남음"
+            } else {
+                "덮임"
+            };
+            eprintln!("관찰(대기 없음): 표시 {kept} — {}", show(&out));
+        }
+
+        /// 관문 ③: 시작 질의에 맨 아래 행(CPR {rows};1)으로 답한 뒤 화면보다 많은 줄을 내도 화면을 지우거나 처음부터 다시
+        /// 그리지 않고 줄바꿈으로만 스크롤한다 — 재접속 준비 시퀀스가 커서를 둔 맨 아래 행과 ConPTY 의 커서가 맞는다
+        #[test]
+        fn conpty_scrolls_from_the_bottom_row_without_repainting() {
+            let lines = ROWS * 2;
+            let script =
+                format!("1..{lines} | ForEach-Object {{ 'minmo-row-' + $_ + '-end' }}; {DONE}");
+            let out = probe(
+                powershell(&script),
+                cpr_reply(ROWS).as_bytes(),
+                "probe-done",
+            );
+            eprintln!("관문 ③ 관측: {}", show(&out));
+            for bad in ["\x1b[H", "\x1b[1;1H", "\x1b[2J"] {
+                assert!(!out.contains(bad), "{} 가 있다: {}", show(bad), show(&out));
+            }
+            for i in 1..=lines {
+                let line = format!("minmo-row-{i}-end");
+                assert_eq!(
+                    out.matches(&line).count(),
+                    1,
+                    "{line} 을(를) 다시 그렸다: {}",
+                    show(&out)
+                );
+            }
         }
     }
 }

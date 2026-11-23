@@ -161,6 +161,7 @@ const EVENTS: Partial<Record<keyof TauriApi, string>> = {
   onPtyData: TAURI_EVENTS.ptyData,
   onPtyExit: TAURI_EVENTS.ptyExit,
   onPtyResized: TAURI_EVENTS.ptyResized,
+  onPtyLink: TAURI_EVENTS.ptyLink,
   onScriptLog: TAURI_EVENTS.scriptLog,
   onSharedChanged: TAURI_EVENTS.sharedChanged,
   onSyncApplied: TAURI_EVENTS.syncApplied,

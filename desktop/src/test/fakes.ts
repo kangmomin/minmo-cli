@@ -6,7 +6,7 @@ import { ApiError } from '@minmo/api-client'
 import type { ApiClient, ApiErrorCode, Notes } from '@minmo/api-client'
 
 import type { GitHubClient } from '@minmo/core'
-import type { ServerSettings, ServerStatus, TailscaleStatus, TauriApi, UpdateProgress } from '../lib/tauri'
+import type { PtyLinkEvent, ServerSettings, ServerStatus, TailscaleStatus, TauriApi, UpdateProgress } from '../lib/tauri'
 import { ok } from '../lib/tauri.mock'
 
 export type Mocked<T> = { [K in keyof T]: T[K] extends (...args: infer A) => infer R ? Mock<(...args: A) => R> : T[K] }
@@ -24,6 +24,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
   const serverListeners = new Set<(s: ServerStatus) => void>()
   const closeListeners = new Set<() => void>()
   const progressListeners = new Set<(p: UpdateProgress) => void>()
+  const linkListeners = new Set<(e: PtyLinkEvent) => void>()
   const base: TauriApi = {
     runtime: 'mock',
     gitRun: async () => ok(),
@@ -39,6 +40,13 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     ptyList: async () => [],
     onPtyExit: async () => () => {},
     onPtyResized: async () => () => {},
+    ptyReconnect: async () => {},
+    onPtyLink: async (cb) => {
+      linkListeners.add(cb)
+      return () => {
+        linkListeners.delete(cb)
+      }
+    },
     sharedGet: async () => ({ value: null, rev: 0 }),
     sharedSet: async (_key, _value, _origin, base) => base + 1,
     onSharedChanged: async () => () => {},
@@ -145,6 +153,10 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     },
     emitUpdateProgress(p: UpdateProgress) {
       for (const l of [...progressListeners]) l(p)
+    },
+    /** 원격 터미널의 연결 상태 이벤트(pty-link)를 Rust 가 낸 것처럼 넣는다 — onPtyLink 를 덮어쓰지 않았을 때만 닿는다 */
+    emitPtyLink(e: PtyLinkEvent) {
+      for (const l of [...linkListeners]) l(e)
     },
   }
 }

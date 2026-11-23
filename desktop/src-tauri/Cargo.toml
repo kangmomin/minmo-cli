@@ -30,6 +30,8 @@ if-addrs = "0.13"
 # 내장 서버 토큰 암호화 키 생성(32바이트 → base64)
 getrandom = "0.3"
 base64 = "0.21"
+# 원격 터미널 재접속 구분 줄의 현지 시각(HH:MM) — pty·pty_reconnect 에서만
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # 앱을 한 번 더 실행하면 새 창 대신 이미 떠 있는 창(트레이로 숨긴 창 포함)을 띄운다
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]

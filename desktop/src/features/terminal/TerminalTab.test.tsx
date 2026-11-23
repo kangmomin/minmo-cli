@@ -4,8 +4,9 @@ import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 
-import type { PtyDataEvent, PtyResizedEvent, TauriApi } from '../../lib/tauri'
+import type { PtyDataEvent, PtyFound, PtyLink, PtyLinkEvent, PtyResizedEvent, RemotePty, TauriApi } from '../../lib/tauri'
 import { createFakeTauri, deferred, flush } from '../../test/fakes'
+import { LAUNCH_DELAY_MS, queueLaunch, takeLaunch } from '../agents/launchQueue'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { makeDeps, renderWithDeps } from '../../test/render'
@@ -773,7 +774,7 @@ describe('패널 분할 (Ctrl+D / Ctrl+Shift+D / Ctrl+W)', () => {
 })
 
 describe('원격 호스트 터미널', () => {
-  it('첫 패널은 worktree 의 기본 tmux 세션, 분할 패널은 떼면 사라지는 세션으로 연다', async () => {
+  it('첫 패널은 worktree 의 기본 tmux 세션, 분할 패널은 그 패널의 세션(-pN — 패널을 닫을 때 끝낸다)으로 연다', async () => {
     const fake = createFakeTauri()
     renderWithDeps(<TerminalTab sessions={[R]} activeId={R.issueId} visible />, makeDeps({ tauri: fake.tauri }))
     await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(1))
@@ -1488,5 +1489,162 @@ describe('#78 트리에서 이슈를 누르면 그 이슈의 터미널로 포커
     act(() => useUiStore.getState().focusIssueTerminal(A.issueId))
     expect(useUiStore.getState().focusRequest).toEqual({ paneId: `${A.issueId}::1`, token: 1 })
     expect(a.focus).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('원격 터미널 재접속 (#89)', () => {
+  const P1 = `${R.issueId}::1`
+  const P2 = `${R.issueId}::2`
+  const ENDED = '터미널 세션이 종료되었습니다'
+  const link = (o: Partial<PtyLink> = {}): PtyLink => ({ phase: 'waiting', attempt: 1, max: 5, seq: 1, reason: null, at: null, ...o })
+  const LIVE = link({ phase: 'connected', attempt: 0, seq: 0 })
+
+  /** 이벤트를 테스트에서 직접 넣을 수 있는 구독 */
+  function emitter<T>() {
+    const cbs = new Set<(e: T) => void>()
+    return {
+      on: async (cb: (e: T) => void) => {
+        cbs.add(cb)
+        return () => void cbs.delete(cb)
+      },
+      emit: (e: T) => cbs.forEach((cb) => cb(e)),
+    }
+  }
+
+  /** 원격 터미널을 연다. ptyFind 는 Rust 처럼 이 화면이 만든 터미널이면 그 연결 상태와 실제 tmux 세션을 돌려준다 */
+  function setupRemote(overrides: Partial<TauriApi> = {}) {
+    let n = 0
+    const spawned = new Map<string, { id: string; remote?: RemotePty }>()
+    const fake = createFakeTauri({
+      ptySpawn: async (req) => {
+        const id = `pty-${++n}`
+        if (req.key) spawned.set(req.key, { id, remote: req.remote })
+        return id
+      },
+      ptyFind: async (key): Promise<PtyFound | null> => {
+        const s = spawned.get(key)
+        if (!s) return null
+        const tmux = s.remote?.session ? { session: s.remote.session, ephemeral: s.remote.ephemeral } : null
+        return { id: s.id, scrollback: '', offset: 0, cols: 80, rows: 24, link: LIVE, tmux }
+      },
+      ...overrides,
+    })
+    const r = renderWithDeps(<TerminalTab sessions={[R]} activeId={R.issueId} visible />, makeDeps({ tauri: fake.tauri }))
+    return { ...r, tauri: fake.tauri, emitLink: (e: PtyLinkEvent) => act(() => fake.emitPtyLink(e)) }
+  }
+
+  const opened = () => vi.waitFor(() => expect(useUiStore.getState().terminalIds[P1]).toBe('pty-1'))
+
+  // AC-01 · AC-08
+  it('pty-link 가 waiting 이면 ① 안내를 보이고, [지금 재접속] 을 누르면 그 터미널에 재접속을 요청한다', async () => {
+    const t = setupRemote()
+    await opened()
+    t.emitLink({ id: 'pty-1', ...link({ phase: 'waiting', attempt: 1, seq: 1 }) })
+    expect(screen.getByTestId('terminal-pane')).toHaveTextContent('연결이 끊겼습니다. 다시 접속하는 중… (1/5)')
+    expect(screen.queryByText(ENDED)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '지금 재접속' }))
+    expect(t.tauri.ptyReconnect).toHaveBeenCalledWith('pty-1')
+  })
+
+  // AC-09 — 재접속 중에 새로 붙은 화면도 지금 상태를 본다
+  it('붙을 때 ptyFind 가 알려 준 지금 상태(waiting)로 바로 ① 안내를 보인다', async () => {
+    const found: PtyFound = { id: 'pty-9', scrollback: 'old', offset: 3, cols: 80, rows: 24, link: link({ phase: 'waiting', attempt: 2, seq: 4 }), tmux: null }
+    const t = setupRemote({ ptyFind: async () => found })
+    await vi.waitFor(() => expect(screen.getByTestId('terminal-pane')).toHaveTextContent('연결이 끊겼습니다. 다시 접속하는 중… (2/5)'))
+    expect(t.tauri.ptySpawn).not.toHaveBeenCalled()
+  })
+
+  // AC-06 · EC-05 — 분할 패널의 tmux 세션은 패널과 함께 끝낸다. 세션 이름은 Rust 가 가진 실제 값(ptyFind().tmux)
+  it('tmux 분할 패널을 닫으면 ptyKill 다음에 그 -pN 세션을 1번 끝낸다 — 첫 패널을 닫을 때는 끝내지 않는다', async () => {
+    const t = setupRemote()
+    await opened()
+    act(() => useUiStore.getState().splitPane(R.issueId, P1, 'row'))
+    await vi.waitFor(() => expect(useUiStore.getState().terminalIds[P2]).toBe('pty-2'))
+    const session = t.tauri.ptySpawn.mock.calls[1][0].remote?.session
+    expect(session).toMatch(/-p2$/)
+
+    act(() => useUiStore.getState().closePane(R.issueId, P2))
+    await vi.waitFor(() => expect(t.tauri.sshExec).toHaveBeenCalledTimes(1))
+    expect(t.tauri.sshExec.mock.calls[0].slice(0, 2)).toEqual(['my-server', ['tmux', '-L', 'minmo', 'kill-session', '-t', `=${session}`]])
+    const killed = t.tauri.ptyKill.mock.calls.findIndex(([id]) => id === 'pty-2')
+    expect(killed).toBeGreaterThanOrEqual(0)
+    expect(t.tauri.ptyKill.mock.invocationCallOrder[killed]).toBeLessThan(t.tauri.sshExec.mock.invocationCallOrder[0])
+
+    act(() => useUiStore.getState().closePane(R.issueId, P1))
+    await vi.waitFor(() => expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1'))
+    await flush()
+    expect(t.tauri.sshExec).toHaveBeenCalledTimes(1)
+  })
+
+  // AC-07 — 실패 안내로 바뀔 때 사용자가 터미널을 쓰던 중이면 [재접속] 으로 포커스(AX-34 와 같은 규칙)
+  it('failed 로 바뀔 때 포커스가 터미널 안에 있었으면 [재접속] 으로 옮긴다 — waiting 에서는 옮기지 않는다', async () => {
+    const t = setupRemote()
+    await opened()
+    const input = xterm.instances[0].textarea as HTMLTextAreaElement
+    input.focus()
+    t.emitLink({ id: 'pty-1', ...link({ phase: 'waiting', attempt: 1, seq: 1 }) })
+    expect(input).toHaveFocus()
+    t.emitLink({ id: 'pty-1', ...link({ phase: 'failed', attempt: 5, seq: 2 }) })
+    expect(screen.getByRole('button', { name: '재접속' })).toHaveFocus()
+  })
+
+  // AX-39 — 실패(②)한 뒤에도 입력은 원격으로 가지 않는다 → 그 이유(② 문구)를 입력의 설명으로 둔다
+  it('failed 상태에서도 입력 textarea 의 aria-describedby 에 안내 문구의 id 가 들어간다 — 다시 연결되면 빠진다', async () => {
+    const t = setupRemote()
+    await opened()
+    const input = xterm.instances[0].textarea as HTMLTextAreaElement
+    const hintId = input.getAttribute('aria-describedby')
+    t.emitLink({ id: 'pty-1', ...link({ phase: 'failed', attempt: 5, seq: 1 }) })
+    const alert = screen.getByRole('alert')
+    expect(alert.id).not.toBe('')
+    expect(input.getAttribute('aria-describedby')?.split(' ')).toEqual([hintId, alert.id])
+    t.emitLink({ id: 'pty-1', ...link({ phase: 'connected', attempt: 0, seq: 2, at: '14:02' }) })
+    expect(input.getAttribute('aria-describedby')).toBe(hintId)
+  })
+
+  // EC-02 — 재접속 중의 입력은 원격으로 가지 않는다 → 맡긴 명령은 연결된 뒤에 넣어야 사라지지 않는다
+  it('연결이 끊긴 동안에는 [에이전트 실행] 으로 맡긴 명령을 넣지 않고, 다시 연결되면 넣는다', async () => {
+    const data = emitter<PtyDataEvent>()
+    queueLaunch(P1, 'claude')
+    try {
+      const t = setupRemote({ onPtyData: data.on })
+      await opened()
+      t.emitLink({ id: 'pty-1', ...link({ phase: 'waiting', attempt: 1, seq: 1 }) })
+      act(() => data.emit({ id: 'pty-1', data: 'output while reconnecting\r\n' }))
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, LAUNCH_DELAY_MS + 100))
+      })
+      expect(t.tauri.ptyWrite).not.toHaveBeenCalledWith('pty-1', 'claude\r')
+
+      t.emitLink({ id: 'pty-1', ...link({ phase: 'connected', attempt: 0, seq: 2, at: '14:02' }) })
+      act(() => data.emit({ id: 'pty-1', data: '$ ' }))
+      await vi.waitFor(() => expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-1', 'claude\r'))
+    } finally {
+      takeLaunch(P1)
+    }
+  })
+
+  // AC-09 — 끝난 직후 붙은 화면도 종료를 놓치지 않는다(종료 알림 구독을 ptyFind 전으로)
+  it('붙는 중(ptyFind 를 기다리는 동안)에 온 종료 알림도 id 가 정해지면 반영한다', async () => {
+    const exits = emitter<string>()
+    const find = deferred<PtyFound | null>()
+    setupRemote({ onPtyExit: exits.on, ptyFind: () => find.promise })
+    await flush()
+    act(() => exits.emit('pty-9'))
+    await act(async () => {
+      find.resolve({ id: 'pty-9', scrollback: '', offset: 0, cols: 80, rows: 24, link: LIVE, tmux: null })
+      await flush()
+    })
+    expect(await screen.findByText(ENDED)).toBeInTheDocument()
+  })
+
+  // D-26 · AC-05 — 첫 패널을 닫은 뒤 남은 분할 패널(::2)은 기본 세션으로 옮겨 붙지 않고 자기 -p2 세션에 붙는다
+  it('패널 역할은 first 를 따른다 — 첫 패널을 닫은 뒤 남은 ::2 패널을 다시 열면 -p2 세션을 쓴다', async () => {
+    useUiStore.setState({ panes: { [R.issueId]: { tree: { kind: 'leaf', id: P2 }, focused: null, seq: 2, first: P1 } } })
+    const t = setupRemote()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    const remote = t.tauri.ptySpawn.mock.calls[0][0].remote
+    expect(remote).toMatchObject({ host: 'my-server', ephemeral: true })
+    expect(remote?.session).toMatch(/^minmo-[0-9a-f]{10}-p2$/)
   })
 })
