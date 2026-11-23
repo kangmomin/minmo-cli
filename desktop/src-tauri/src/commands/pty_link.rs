@@ -1,5 +1,4 @@
 // 원격 터미널 재접속(#89)의 순수 로직 — 스레드·시계 없이 상태 전이와 출력 거르기만 한다(시각은 인자로 받는다).
-#![allow(dead_code)] // TODO(#89 U3): pty.rs·pty_reconnect.rs 가 쓰기 시작하면 지운다
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -18,6 +17,8 @@ pub(crate) const ALT_SCREEN_MODES: [u16; 3] = [47, 1047, 1049];
 const INPUT_MODES: [u16; 11] = [
     9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004,
 ];
+/// 동기화 출력(DEC 2026) — 프레임 도중에 끊긴 프로그램이 켠 채로 두면 화면이 새 셸의 출력을 그리지 않고 기다린다
+const SYNC_OUTPUT: u16 = 2026;
 /// 원격 명령이 맨 앞에 창 제목으로 내는 연결 표시
 const MARKER: &str = "minmo-link";
 /// tmux 제목 접두어 — pty.rs 의 TMUX_TITLE_FORMAT 과 짝이다
@@ -32,6 +33,10 @@ pub(crate) struct Timing {
     pub delays: [Duration; MAX_ATTEMPTS as usize],
     /// 시도(Connecting)가 연결 표시 없이 이만큼 지나면 마감
     pub deadline: Duration,
+    /// 연결됨·실패 중에 세션이 남아 있는지(와 EOF 없이 끝난 ssh)를 보는 주기
+    pub poll: Duration,
+    /// 끝난(끝낸) ssh 의 Eof 를 기다리는 유예 — 지나면 감독이 대신 처리한다
+    pub grace: Duration,
 }
 
 impl Default for Timing {
@@ -40,6 +45,8 @@ impl Default for Timing {
         Self {
             delays: [s(2), s(4), s(8), s(16), s(30)],
             deadline: s(30),
+            poll: s(2),
+            grace: s(3),
         }
     }
 }
@@ -89,7 +96,7 @@ impl Link {
     }
 
     /// 세대 이벤트(표시·마감·Eof)를 받을 때인가 — 연결됨·시도 중인 지금 세대만
-    fn current(&self, ev_gen: u64) -> bool {
+    pub(crate) fn current(&self, ev_gen: u64) -> bool {
         matches!(self.phase, Phase::Live | Phase::Connecting) && ev_gen == self.gen
     }
 
@@ -206,6 +213,20 @@ pub(crate) fn on_exit(link: &mut Link, ev_gen: u64, code: Option<u32>, gen_tail:
     }
     link.wait_for(next);
     Exit::Retry
+}
+
+/// 기다리던 시도를 시작한다(새 ssh 를 넣기 직전) — 새 세대 번호를 돌려준다
+pub(crate) fn begin_attempt(link: &mut Link) -> u64 {
+    link.phase = Phase::Connecting;
+    link.reason = None;
+    link.at = None;
+    link.seq += 1;
+    link.advance_gen()
+}
+
+/// 새 ssh 를 띄우지 못했다(호스트를 목록에서 뺌·ssh 없음·PTY 오류) — 다시 해도 같으므로 그만둔다(EC-07)
+pub(crate) fn on_spawn_error(link: &mut Link) {
+    link.fail(Some("spawn"));
 }
 
 /// [지금 재접속]·[재접속] — 바로 시도해야 하면 true
@@ -462,7 +483,7 @@ pub(crate) fn reattach_prelude(
     if ALT_SCREEN_MODES.iter().any(on) {
         out.push_str("\x1b[?1049l");
     }
-    for m in INPUT_MODES.iter().filter(|m| on(m)) {
+    for m in INPUT_MODES.iter().chain([&SYNC_OUTPUT]).filter(|m| on(m)) {
         out.push_str(&format!("\x1b[?{m}l"));
     }
     // DECSTR(소프트 리셋) 뒤 커서 보임·커서 키·자동 줄바꿈을 명시한다 — Scrollback 은 시퀀스로만 모드를 기록하므로

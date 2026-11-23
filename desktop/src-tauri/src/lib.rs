@@ -1,5 +1,5 @@
 // Tauri 진입점. invoke 이름은 desktop/src/lib/tauri.ts 의 TAURI_COMMANDS 와 1:1,
-// 이벤트 이름은 TAURI_EVENTS("pty-data", "script-log", "server-status", "close-requested", "update-progress", "tailscale-log") 와 일치해야 한다.
+// 이벤트 이름은 TAURI_EVENTS("pty-data", "pty-link", "script-log", "server-status", "close-requested", "update-progress", "tailscale-log") 와 일치해야 한다.
 mod commands;
 mod profile;
 mod remote;
@@ -8,7 +8,7 @@ mod shell;
 mod tailscale;
 mod update;
 
-use commands::{agents, fs, git, keychain, pty, script, ssh, usage};
+use commands::{agents, fs, git, keychain, pty, pty_reconnect, script, ssh, usage};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -37,8 +37,10 @@ pub fn run() {
             // 키체인 서비스 이름이 identifier 를 따르므로 키체인을 쓰기 전에
             profile::init(&app.config().identifier);
             let handle = app.handle().clone();
-            // 터미널 출력·종료 이벤트를 낼 곳 — 명령이 오기 전에(PtyState 는 위에서 등록)
-            app.state::<pty::PtyState>().attach(&handle);
+            // 터미널 출력·종료 이벤트를 낼 곳과 원격 터미널의 재접속 감독 — 명령이 오기 전에(PtyState 는 위에서 등록)
+            let ptys = app.state::<pty::PtyState>();
+            ptys.attach(&handle);
+            ptys.set_supervisor(pty_reconnect::supervise);
             // 앱에 등록한 ssh 호스트 목록(설정 폴더)
             if let Ok(dirs) = profile::dirs(&handle) {
                 ssh::init(&dirs.config);
@@ -78,6 +80,7 @@ pub fn run() {
             pty::pty_kill,
             pty::pty_kill_by_cwd,
             pty::pty_processes,
+            pty_reconnect::pty_reconnect,
             agents::claude_subagents,
             usage::agent_usage,
             script::script_run,
