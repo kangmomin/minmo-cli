@@ -6,7 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/too
 import { cn } from '../../lib/utils'
 import { useRefreshTree } from './useTree'
 
-/** AC-04: 트리 재조회 + ● 갱신 */
+/** AC-04: 트리 재조회 + worktree 표시(초록 번호) 갱신 */
 export function RefreshButton() {
   const refresh = useRefreshTree()
   const [busy, setBusy] = useState(false)

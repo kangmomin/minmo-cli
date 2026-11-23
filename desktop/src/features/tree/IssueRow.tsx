@@ -33,6 +33,9 @@ export interface IssueRowProps {
 }
 
 const PATH_CHANGED_TEXT = '설정의 worktree 경로가 바뀌었습니다. 기존 worktree 는 이동하지 않습니다.'
+const WORKTREE_TEXT = 'worktree 있음'
+// #95: worktree 가 있으면 번호(★기타는 이름) 글자색만 바꾼다. 라이트 700 · 어두운 테마 400 — 세 테마의 배경·선택 행(accent) 모두 대비 4.5:1 이상(최저: 라이트 accent 4.9:1)
+const WORKTREE_MARK = 'text-emerald-700 dark:text-emerald-400'
 
 /** 삭제 확인 문구의 개수. null = git 검사 실패로 개수 불명(F-4) */
 function countText(label: string, n: number | null) {
@@ -47,7 +50,7 @@ function countText(label: string, n: number | null) {
   )
 }
 
-/** 이슈 행: 클릭 = 열기(터미널이 떠 있으면 그 터미널로 포커스), 왼쪽 점 = 에이전트 상태, 닫힘·경로 변경 배지, 컨텍스트 메뉴 "worktree 삭제" */
+/** 이슈 행: 클릭 = 열기(터미널이 떠 있으면 그 터미널로 포커스), 왼쪽 점 = 에이전트 상태, 초록 번호 = worktree 있음, 닫힘·경로 변경 배지, 컨텍스트 메뉴 "worktree 삭제" */
 export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged, selected, onOpen }: IssueRowProps) {
   const actions = useIssueActions()
   const isEtc = issue.key === 'etc'
@@ -99,7 +102,7 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
             ref={rowRef}
             type="button"
             data-testid={`issue-row-${issue.key}`}
-            // worktree 유무는 화면에 표시하지 않는다 — 테스트가 읽는 값이다
+            // 화면 표시(번호 색)와 별도로 E2E 가 읽는 값이다
             data-worktree={hasWorktree ? 'true' : undefined}
             aria-current={selected ? 'true' : undefined}
             aria-describedby={pathChanged ? pathChangedId : undefined}
@@ -124,17 +127,23 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
             {isEtc ? (
               <>
                 <StarIcon className="size-3.5 fill-amber-400 text-amber-500" />
-                <span>기타</span>
+                <span className={cn(hasWorktree && WORKTREE_MARK)} title={hasWorktree ? WORKTREE_TEXT : undefined}>
+                  기타
+                </span>
               </>
             ) : (
               <>
-                <span className="text-muted-foreground">#{issue.number}</span>
+                <span className={cn('text-muted-foreground', hasWorktree && WORKTREE_MARK)} title={hasWorktree ? WORKTREE_TEXT : undefined}>
+                  #{issue.number}
+                </span>
                 {/* 배지(닫힘·경로 변경됨)가 함께 있어도 제목은 최소 40px 보인다 — 배지가 줄고 … 를 보인다 (#70) */}
                 <span className="min-w-10 flex-1 truncate" title={issue.title}>
                   {issue.title}
                 </span>
               </>
             )}
+            {/* 색으로만 알리지 않는다 — 스크린 리더는 행 이름 끝에서 읽는다 */}
+            {hasWorktree && <span className="sr-only">{WORKTREE_TEXT}</span>}
             <AssigneeBadge assignees={issue.assignees} me={assign.me} className={cn('max-w-24', shrinkBadge)} />
             {issue.state === 'closed' && (
               <Badge variant="secondary" className={shrinkBadge}>
