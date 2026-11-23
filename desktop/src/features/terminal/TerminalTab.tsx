@@ -10,18 +10,20 @@ import { useBaseDeps } from '../../app/deps'
 import { Button } from '../../components/ui/button'
 import { newOrigin } from '../../lib/sharedState'
 import { remotePty } from '../../lib/sshHost'
-import type { TauriApi, WindowsPty } from '../../lib/tauri'
+import type { PtyFound, TauriApi, WindowsPty } from '../../lib/tauri'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
 import type { UiState } from '../../store/ui'
 import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
-import { noteTerminalInput } from '../agents/useAgentTracker'
+import { muteTerminalActivity, noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, EDIT_KEYS, MOUSE_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 import { attachLinks } from './links'
 import { attachOsc52 } from './osc52'
+import { ReconnectNotice } from './ReconnectNotice'
 import { TerminalKeyBar, registerTerminalInput, useNarrow, useTouch } from './TerminalKeyBar'
 import { layoutPanes, leafIds } from './panes'
+import { usePtyLink } from './usePtyLink'
 import { attachWebgl } from './webgl'
 
 /** remote 가 있으면 그 호스트(SSH 프로필)의 cwd 에서 터미널을 연다 */
@@ -39,6 +41,10 @@ function paneRole(issueId: string, paneId: string) {
 
 /** 터미널 크기를 가져온 뒤 입력을 넣기까지 두는 틈 — 크기 변경과 입력이 겹치면 셸이 그 입력을 잃는다 */
 const TAKE_OVER_SETTLE_MS = 250
+/** 원격 터미널이 다시 접속할 때 그 패널의 출력을 에이전트 활동으로 세지 않는 시간(#89) */
+const RECONNECT_MUTE_MS = 3000
+
+type PtyTmux = NonNullable<PtyFound['tmux']>
 
 /** 패널이 아직 화면 구성에 있는가 — 없어진 패널의 터미널만 끝낸다 */
 function paneExists(issueId: string, paneId: string): boolean {
@@ -302,6 +308,18 @@ function TerminalSession({
   useEffect(() => {
     onExitRef.current = onExit
   }, [onExit])
+  // 원격 터미널의 연결 상태(#89) — ① 다시 접속하는 중 · ② 다시 접속하지 못함 · ③ 다시 접속했음
+  const reconnectButton = useRef<HTMLButtonElement>(null)
+  const noticeId = useId()
+  /** 마지막 연결 상태 이벤트를 받을 때(화면이 바뀌기 전) 포커스가 있던 곳 — 실패 안내로 바뀌거나 안내가 사라질 때 쓴다 */
+  const linkFocus = useRef<'terminal' | 'notice' | null>(null)
+  const link = usePtyLink(tauri, (e) => {
+    const focused = document.activeElement
+    linkFocus.current = host.current?.contains(focused) ? 'terminal' : focused !== null && focused === reconnectButton.current ? 'notice' : null
+    // 다시 접속할 때의 준비 출력·구분 줄·tmux 다시 그리기는 에이전트의 출력이 아니다 — 이 이벤트가 그 데이터보다 먼저 온다
+    if (e.phase === 'connecting' || e.phase === 'connected') muteTerminalActivity(paneId, RECONNECT_MUTE_MS)
+  })
+  const { attach: attachLink, setId: setLinkId, linkRef } = link
 
   // 세션 생성: 마운트 1회(다시 시작 시 gen 이 바뀌면 다시). 언마운트(이슈의 worktree 삭제 등) 시 PTY 종료
   useEffect(() => {
@@ -386,7 +404,9 @@ function TerminalSession({
       end: () => {
         if (disposed || state.ended) return
         state.ended = true
-        focusRestartButton.current = el.contains(document.activeElement)
+        // 재접속 안내의 버튼도 터미널의 일부로 본다 — 종료 안내로 바뀌며 그 버튼이 사라진다
+        const focused = document.activeElement
+        focusRestartButton.current = el.contains(focused) || (focused !== null && focused === reconnectButton.current)
         setEnded(true)
       },
     }
@@ -439,6 +459,20 @@ function TerminalSession({
       t.focus()
     }
     const cleanups: (() => void)[] = []
+    /** 이 패널이 붙은 tmux 세션(Rust 가 가진 실제 값) — 분할 패널(-pN)이면 패널을 닫을 때 그 세션도 끝낸다(AC-06·EC-05) */
+    let tmux: Promise<PtyTmux | null> = Promise.resolve(null)
+    /**
+     * 터미널을 끝낸다. 패널을 닫았으면(closed) 그 패널의 tmux 분할 세션도 원격에서 1번 끝낸다 — 세션 정보는 ptyKill 전에 물어 둔 값
+     * (그 뒤에는 Rust 가 모른다). 실패는 무시한다(남은 세션은 작업 폴더를 지울 때 KILL_TMUX 가 정리한다)
+     */
+    const kill = (id: string, closed: boolean) => {
+      const killed = tauri.ptyKill(id).catch(() => undefined)
+      if (!closed || remoteHost === undefined) return
+      const where = remoteHost
+      void Promise.all([tmux, killed]).then(([info]) => {
+        if (info?.ephemeral) return tauri.sshExec(where, ['tmux', '-L', 'minmo', 'kill-session', '-t', `=${info.session}`]).then(() => undefined, () => undefined)
+      })
+    }
 
     void (async () => {
       // spawn 응답(id 확정) 전에 온 출력은 첫 프롬프트일 수 있어 id 별로 보관했다가 확정 후 flush 한다(CR-07)
@@ -452,12 +486,14 @@ function TerminalSession({
       cleanups.push(() => clearTimeout(launchTimer))
       const launchWhenReady = () => {
         if (!state.ptyId) return
+        // 연결이 끊긴 동안의 입력은 원격으로 가지 않는다(EC-02) — 다시 연결된 뒤의 출력에서 넣는다
+        if (linkRef.current !== null) return
         if (launchCmd === null) launchCmd = takeLaunch(paneId)
         if (launchCmd === undefined) return
         const id = state.ptyId
         clearTimeout(launchTimer)
         launchTimer = setTimeout(() => {
-          if (disposed || state.ended || !launchCmd) return
+          if (disposed || state.ended || !launchCmd || linkRef.current !== null) return
           // ssh 가 비밀번호·호스트 키를 묻는 중이면 넣지 않고 다음 출력을 기다린다
           const buf = t.buffer?.active
           const line = buf?.getLine(buf.baseY + buf.cursorY)?.translateToString(true) ?? ''
@@ -488,6 +524,24 @@ function TerminalSession({
           return
         }
         cleanups.push(unlisten)
+        // 연결 상태와 종료 알림은 id 가 정해지기 전(ptyFind·ptySpawn 을 기다리는 동안)부터 받는다 — 그 사이의 변화를 놓치지 않게(AC-09)
+        const unLink = await attachLink()
+        if (disposed) {
+          unLink()
+          return
+        }
+        cleanups.push(unLink)
+        /** id 가 정해지기 전에 끝난 터미널 */
+        const exitedEarly = new Set<string>()
+        const unExit = await tauri.onPtyExit((ended) => {
+          if (!settled) exitedEarly.add(ended)
+          else if (ended === state.ptyId) state.end()
+        })
+        if (disposed) {
+          unExit()
+          return
+        }
+        cleanups.push(unExit)
         try {
           fit.fit()
         } catch {
@@ -505,13 +559,20 @@ function TerminalSession({
           ? found.id
           : await tauri.ptySpawn({ cwd: spec.cwd, cols: Math.max(t.cols, 20), rows: Math.max(t.rows, 5), remote, key: paneId })
         settled = true
+        if (found) tmux = Promise.resolve(found.tmux ?? null)
+        // 이 화면이 만들었으면 실제 세션을 한 번 묻는다 — 그 사이 다른 기기(다른 tmux 설정)가 먼저 열었을 수 있다
+        else if (remoteHost !== undefined) tmux = tauri.ptyFind(paneId).then((f) => (f?.id === id ? (f.tmux ?? null) : null), () => null)
         if (disposed) {
           pending.clear()
           // 방금 이 화면이 만든 터미널만 정리한다 — 붙기만 한 터미널은 다른 화면이 쓰고 있다
-          if (!found && !paneExists(spec.issueId, paneId)) tauri.ptyKill(id).catch(() => undefined)
+          if (!found && !paneExists(spec.issueId, paneId)) kill(id, true)
           return
         }
         state.ptyId = id
+        // 붙었으면 ptyFind 가 알려 준 지금 연결 상태부터(그 사이에 온 이벤트와는 seq 로 비교한다)
+        setLinkId(id, found?.link)
+        if (exitedEarly.has(id)) state.end()
+        exitedEarly.clear()
         if (found) {
           // 지금까지의 출력을 그 터미널의 크기로 그린다(크기가 다르면 줄바꿈 위치가 어긋난다). 크기는 이 화면에서 입력할 때 가져온다
           state.owner = false
@@ -535,9 +596,6 @@ function TerminalSession({
           t.write(early)
           launchWhenReady()
         }
-        const unExit = await tauri.onPtyExit((ended) => {
-          if (ended === id) state.end()
-        })
         // 알림은 PTY 에 적용된 순서로 온다(요청마다 하나씩) — 마지막으로 받은 알림의 크기가 곧 PTY 의 크기다
         const adopt = (cols: number, rows: number) => {
           if (cols !== t.cols || rows !== t.rows) t.resize(cols, rows)
@@ -571,11 +629,10 @@ function TerminalSession({
           t.resize(e.cols, e.rows)
         })
         if (disposed) {
-          unExit()
           unResized()
           return
         }
-        cleanups.push(unExit, unResized)
+        cleanups.push(unResized)
         useUiStore.setState((s) => ({ terminalIds: { ...s.terminalIds, [paneId]: id } }))
         const sub = t.onData((d) => {
           if (state.ended || replaying) return
@@ -601,8 +658,8 @@ function TerminalSession({
       // 화면만 내려간 경우) 터미널은 남겨 둔다 — 다른 기기가 보고 있을 수 있고, 돌아오면 다시 붙는다.
       // kill 의 reject(이미 종료된 PTY 등)는 무시한다
       const sessionGone = live.current.mounted && !live.current.keys.has(sessionKey(spec))
-      if (state.ptyId && (state.ended || sessionGone || !paneExists(spec.issueId, paneId)))
-        tauri.ptyKill(state.ptyId).catch(() => undefined)
+      const closed = !paneExists(spec.issueId, paneId)
+      if (state.ptyId && (state.ended || sessionGone || closed)) kill(state.ptyId, closed)
       useUiStore.setState((s) => {
         const terminalIds = { ...s.terminalIds }
         delete terminalIds[paneId]
@@ -611,8 +668,8 @@ function TerminalSession({
       t.dispose()
       term.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- live 는 바뀌지 않는 ref 다
-  }, [tauri, spec.cwd, spec.issueId, remoteHost, remoteTmux, paneId, hintId, gen])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- live 는 바뀌지 않는 ref 다(attachLink·setLinkId·linkRef 도 바뀌지 않는다)
+  }, [tauri, spec.cwd, spec.issueId, remoteHost, remoteTmux, paneId, hintId, gen, attachLink, setLinkId, linkRef])
 
   // 보이는 동안만 WebGL 로 그린다. 이슈·패널마다 터미널이 숨은 채 살아 있어 모두 켜 두면 페이지당 WebGL context 상한
   // (Chromium 약 16개)을 넘고, 넘친 만큼 오래된 터미널의 context 가 끊긴다. 숨은 동안은 DOM 렌더러로 둔다
@@ -654,6 +711,25 @@ function TerminalSession({
     restartButton.current?.focus()
   }, [ended])
 
+  // 연결 상태가 바뀔 때의 포커스(#89): 실패로 바뀔 때 터미널을 쓰던 중이었으면 [재접속] 으로(AX-34 와 같은 규칙),
+  // 안내가 사라질 때(다시 접속함) 그 버튼에 있었으면 터미널로 돌려준다. 그 밖에는 옮기지 않는다(AX-02)
+  const linkPhase = link.link?.phase ?? null
+  const prevLinkPhase = useRef(linkPhase)
+  useEffect(() => {
+    if (prevLinkPhase.current === linkPhase) return
+    prevLinkPhase.current = linkPhase
+    const was = linkFocus.current
+    linkFocus.current = null
+    if (linkPhase === 'failed' && was === 'terminal') reconnectButton.current?.focus()
+    else if (linkPhase === null && was === 'notice') term.current?.t.focus()
+  }, [linkPhase])
+
+  // 재접속 중에는 입력이 원격으로 가지 않는다 — 그 이유(① 문구)를 입력에도 연결한다(AX-39)
+  const reconnecting = !ended && (linkPhase === 'waiting' || linkPhase === 'connecting')
+  useEffect(() => {
+    term.current?.t.textarea?.setAttribute('aria-describedby', reconnecting ? `${hintId} ${noticeId}` : hintId)
+  }, [reconnecting, hintId, noticeId, gen])
+
   // 표시·리사이즈 시 크기 맞추고 PTY 에 전달. 포커스는 옮기지 않는다 — 탭·이슈 전환 시 포커스 강탈 금지(AX-02)
   useEffect(() => {
     const el = host.current
@@ -685,6 +761,9 @@ function TerminalSession({
     focusAfterRestart.current = true
     setEnded(false)
     setError(null)
+    // 새 PTY 는 이전 터미널의 연결 상태를 이어받지 않는다
+    link.reset()
+    linkFocus.current = null
     // 어차피 새 PTY 를 만드므로 지금 설정을 따른다(예: 연결이 끊겨 tmux 를 켠 뒤 다시 시작)
     setRemoteTmux(spec.remote?.tmux ?? false)
     setGen((g) => g + 1)
@@ -704,7 +783,7 @@ function TerminalSession({
           </Button>
         </div>
       )}
-      {ended && (
+      {ended ? (
         <div className="absolute inset-x-2 bottom-2 z-10 flex items-center gap-3 rounded border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md">
           <p role="alert" className="flex-1">
             터미널 세션이 종료되었습니다
@@ -713,6 +792,21 @@ function TerminalSession({
             다시 시작
           </Button>
         </div>
+      ) : (
+        // 원격 터미널만 연결이 끊겨 다시 접속한다 — 종료 안내가 우선이다
+        remoteHost !== undefined && (
+          <ReconnectNotice
+            link={link.link}
+            justConnectedAt={link.justConnectedAt}
+            buttonRef={reconnectButton}
+            messageId={noticeId}
+            // 결과는 pty-link 로 온다 — 이미 끝난 터미널 등의 거절은 무시한다
+            onReconnect={() => {
+              const id = term.current?.ptyId
+              if (id) tauri.ptyReconnect(id).catch(() => undefined)
+            }}
+          />
+        )
       )}
       <div key={gen} ref={host} className="size-full" />
     </div>
