@@ -440,7 +440,7 @@ export function tmuxSessionName(worktreePath: string): string {
 
 /**
  * 원격 터미널 요청. tmux 가 있으면 첫 패널은 worktree 의 기본 세션(앱을 꺼도 유지),
- * 분할로 만든 패널은 떼면 사라지는 세션을 쓴다. tmux 가 없으면 로그인 셸.
+ * 분할로 만든 패널은 자기 세션(-pN)을 쓴다 — 패널을 닫으면 앱이 그 세션을 끝내고, 끊겨도 남아 재접속 때 다시 붙는다. tmux 가 없으면 로그인 셸.
  */
 export function remotePty(alias: string, tmux: boolean, cwd: string, pane: { primary: boolean; seq: number }): RemotePty {
   if (!tmux) return { host: alias, session: null, ephemeral: false }

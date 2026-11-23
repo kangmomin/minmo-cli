@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Listener, Manager};
 use tokio::sync::{broadcast, oneshot};
 
-use crate::commands::{keychain, pty};
+use crate::commands::{keychain, pty, pty_reconnect};
 use crate::{profile, server};
 
 pub const DEFAULT_PORT: u16 = 8790;
@@ -55,6 +55,7 @@ const ALLOWED: &[&str] = &[
     "ptyWindows",
     "ptyKill",
     "ptyKillByCwd",
+    "ptyReconnect",
     "ptyList",
     "ptyProcesses",
     "claudeSubagents",
@@ -93,6 +94,7 @@ const FORWARDED_EVENTS: &[&str] = &[
     "pty-data",
     "pty-exit",
     "pty-resized",
+    "pty-link",
     "script-log",
     "shared-changed",
     "agents-changed",
@@ -935,6 +937,8 @@ async fn call(ctx: &Ctx, method: &str, args: Value) -> Result<Value, String> {
                 .map(Value::String)
         }
         "ptyFind" => to(serde_json::to_value(pty::pty_find(ptys(), arg(&args, 0)?)?)),
+        // [지금 재접속]·[재접속] — 끊긴 패널을 보는 어느 화면에서든 바로 누를 수 있어야 해서 직접 처리한다
+        "ptyReconnect" => ok(pty_reconnect::pty_reconnect(ptys(), arg(&args, 0)?)),
         "ptyList" => to(serde_json::to_value(pty::pty_list(ptys())?)),
         "sharedGet" => to(serde_json::to_value(
             ctx.mgr().shared_get(&arg::<String>(&args, 0)?)?,
@@ -1906,6 +1910,14 @@ mod tests {
         }
     }
 
+    // 붙은 기기도 같은 재접속 안내를 보려면 pty-link 가 전달돼야 한다(AC-09)
+    #[test]
+    fn terminal_link_events_reach_attached_devices() {
+        for e in ["pty-data", "pty-exit", "pty-resized", "pty-link"] {
+            assert!(FORWARDED_EVENTS.contains(&e), "{e}");
+        }
+    }
+
     #[test]
     fn remote_cannot_call_host_only_commands_or_read_tokens() {
         let none = json!([]);
@@ -1913,6 +1925,7 @@ mod tests {
             "ptySpawn",
             "ptyFind",
             "ptyWrite",
+            "ptyReconnect",
             "gitRun",
             "readTextFile",
             "sharedSet",

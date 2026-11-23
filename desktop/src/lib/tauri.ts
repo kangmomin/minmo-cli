@@ -29,7 +29,7 @@ export type TextFile = { content: string; version: string }
 export type SshProbe = { platform: 'linux' | 'darwin'; home: string; git: string; tmux: boolean }
 export type SshErrorKind = 'host_key' | 'auth' | 'unreachable' | 'unsupported_os' | 'no_git' | 'unknown_host' | 'failed'
 export type SshError = { kind: SshErrorKind; message: string }
-/** 원격 터미널 — session 이 있으면 전용 tmux 세션에 붙고(ephemeral 은 떼면 사라짐), null 이면 로그인 셸 */
+/** 원격 터미널 — session 이 있으면 전용 tmux 세션에 붙고(ephemeral 은 분할 패널의 -pN 세션 — 끊겨도 남고 패널을 닫을 때 앱이 끝냄), null 이면 로그인 셸 */
 export type RemotePty = { host: string; session: string | null; ephemeral: boolean }
 
 /** key(화면의 패널 id)가 있으면 그 패널의 터미널이 이미 떠 있을 때 새로 만들지 않고 그 id 를 돌려준다(다른 기기와 함께 쓴다) */

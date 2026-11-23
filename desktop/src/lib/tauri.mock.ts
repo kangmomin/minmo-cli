@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 브라우저 열기 등은 window.__MINMO_MOCK__ 로 노출해 E2E 가 확인한다.
-import type { CloseAction, CmdResult, DirEntry, NotifyTarget, Platform, PtyDataEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus, TailscaleLogEvent, TailscaleStatus } from './tauri'
+import type { CloseAction, CmdResult, DirEntry, NotifyTarget, Platform, PtyDataEvent, PtyLink, PtyLinkEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus, TailscaleLogEvent, TailscaleStatus } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -33,6 +33,10 @@ export interface MinmoMockHandle {
   ptyWrites: string[]
   /** n 번째(1부터)로 만든 터미널에 출력이 나온 것처럼 보낸다 */
   emitPty(n: number, data: string): void
+  /** ptyReconnect 로 재접속을 요청한 터미널 id 기록 */
+  ptyReconnects: string[]
+  /** n 번째(1부터)로 만든 원격 터미널의 연결 상태가 바뀐 것처럼 pty-link 를 보낸다 */
+  emitPtyLink(n: number, link: PtyLink): void
   /** n 번째 터미널에서 도는 프로세스 이름(에이전트 감지용) */
   setPtyProcesses(n: number, names: string[]): void
   /** 작업 폴더(cwd)에서 도는 Claude Code 의 하위 에이전트 메타 파일을 정한다 */
@@ -145,6 +149,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   const worktreeRepo = new Map<string, string>()
   const trustedHosts = new Set<string>()
   const ptyListeners = new Set<(e: PtyDataEvent) => void>()
+  const ptyLinkListeners = new Set<(e: PtyLinkEvent) => void>()
   const scriptListeners = new Set<(e: ScriptLogEvent) => void>()
   const ptyCwd = new Map<string, string>()
   const ptyProcs = new Map<string, string[]>()
@@ -192,6 +197,10 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     gitCalls: [],
     ptyWrites: [],
     emitPty: (n, data) => emitPty(`mock-pty-${n}`, data),
+    ptyReconnects: [],
+    emitPtyLink: (n, link) => {
+      for (const l of [...ptyLinkListeners]) l({ id: `mock-pty-${n}`, ...link })
+    },
     setPtyProcesses: (n, names) => void ptyProcs.set(`mock-pty-${n}`, names),
     setSubagents: (cwd, files) => void subagents.set(cwd, files),
     notifications: [],
@@ -332,9 +341,15 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     ptyList: async () => [...ptyCwd].map(([id, cwd]) => ({ id, key: null, cwd, host: null })),
     onPtyExit: async () => () => {},
     onPtyResized: async () => () => {},
-    // TODO(#89 5.2): 재접속 기록·emitPtyLink — 지금은 타입을 맞추는 빈 스텁
-    ptyReconnect: async () => {},
-    onPtyLink: async () => () => {},
+    ptyReconnect: async (id) => {
+      handle.ptyReconnects.push(id)
+    },
+    onPtyLink: async (cb) => {
+      ptyLinkListeners.add(cb)
+      return () => {
+        ptyLinkListeners.delete(cb)
+      }
+    },
     // 공유 상태·원격 접속은 mock 에서 쓰지 않는다(화면 상태는 평소처럼 브라우저 저장소에만 남는다)
     sharedGet: async () => ({ value: null, rev: 0 }),
     sharedSet: async (_key, _value, _origin, base) => base + 1,
