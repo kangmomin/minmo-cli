@@ -1,4 +1,4 @@
-// 원격 호스트(SSH 프로필) — 호스트 추가·전환, 원격에서 이슈 열기(mock ssh), 호스트별 ● 표시
+// 원격 호스트(SSH 프로필) — 호스트 추가·전환, 원격에서 이슈 열기(mock ssh), 호스트별 worktree 표시(초록 번호)
 import { expect, test } from '@playwright/test'
 
 import { expandWidgets, login, openTerminal, routeGitHub, routeServer } from './fixtures'
