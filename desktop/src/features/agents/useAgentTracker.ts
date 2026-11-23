@@ -134,7 +134,6 @@ export function useAgentTracker() {
           useAgentStore.getState().set(paneId, null)
         }
       }
-      for (const [paneId, until] of [...mutedUntil]) if (until <= now) mutedUntil.delete(paneId)
       for (const [paneId, ptyId] of Object.entries(live)) {
         const t = trackedOf(paneId, ptyId)
         // 이 PC 의 터미널만 프로세스를 조회한다(원격은 ssh 만 보인다 — 제목으로 판단)
