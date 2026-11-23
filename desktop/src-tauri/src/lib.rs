@@ -37,6 +37,8 @@ pub fn run() {
             // 키체인 서비스 이름이 identifier 를 따르므로 키체인을 쓰기 전에
             profile::init(&app.config().identifier);
             let handle = app.handle().clone();
+            // 터미널 출력·종료 이벤트를 낼 곳 — 명령이 오기 전에(PtyState 는 위에서 등록)
+            app.state::<pty::PtyState>().attach(&handle);
             // 앱에 등록한 ssh 호스트 목록(설정 폴더)
             if let Ok(dirs) = profile::dirs(&handle) {
                 ssh::init(&dirs.config);

@@ -2,13 +2,14 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 
+use super::pty_link::ALT_SCREEN_MODES;
 use super::ssh;
 
 /// 원격 터미널 요청. session 이 있으면 전용 tmux(-L minmo) 세션에 붙고, 없으면 로그인 셸을 연다
@@ -23,9 +24,7 @@ pub struct RemotePty {
 }
 
 pub struct PtySession {
-    master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    proc: Proc,
     cwd: String,
     /// 원격(ssh) 세션이면 호스트 별칭 — 이때 cwd 는 원격 경로다
     host: Option<String>,
@@ -35,17 +34,24 @@ pub struct PtySession {
     scrollback: Arc<Mutex<Scrollback>>,
     cols: u16,
     rows: u16,
+}
+
+/// 셸(원격이면 ssh) 프로세스 하나와 그 PTY — 원격 터미널이 다시 접속하면 이것만 통째로 바뀐다
+pub(crate) struct Proc {
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    child: Box<dyn Child + Send + Sync>,
     /// ConPTY 시작 커서 위치 질의(ESC[6n)의 응답(CPR)이 입력으로 지나갔는지
     cpr_answered: bool,
-    /// 셸과 그 자손이 속한 Job Object — 만들지 못하면 None(트리 종료만으로 정리)
+    /// 셸과 그 자손이 속한 Job Object — 만들지 못하면 None(트리 종료만으로 정리). 세션 잠금 밖에서도 끝낼 수 있게 Arc
     #[cfg(windows)]
-    job: Option<job::Job>,
+    job: Option<Arc<job::Job>>,
 }
 
 #[cfg(windows)]
 use super::job;
 
-impl PtySession {
+impl Proc {
     fn write_input(&mut self, data: &[u8]) -> std::io::Result<()> {
         if !self.cpr_answered && contains_cpr(data) {
             self.cpr_answered = true;
@@ -71,7 +77,10 @@ impl PtySession {
         // 자손(에이전트가 띄운 프로세스 등)을 끝낸다.
         #[cfg(windows)]
         {
-            if let Some(pid) = self.child.process_id() {
+            // 이미 끝난 셸은 pid 로 트리를 찾을 수 없어 taskkill 을 띄우지 않는다(끊긴 ssh 를 정리할 때마다 생긴다).
+            // 남은 자손은 Job 이 끝낸다 — Job 은 핸들이라 셸이 먼저 끝나도 항상 끝낸다(EC-09)
+            let exited = matches!(self.child.try_wait(), Ok(Some(_)));
+            if let (false, Some(pid)) = (exited, self.child.process_id()) {
                 super::taskkill_tree(pid);
             }
             if let Some(job) = &self.job {
@@ -97,8 +106,6 @@ impl PtySession {
 /// 보관하는 최근 출력의 상한(바이트)
 const SCROLLBACK_LIMIT: usize = 256 * 1024;
 
-/// 대체 화면을 켜는 DEC private mode — 전체 화면 프로그램(Claude Code 등)이 쓴다
-const ALT_SCREEN_MODES: [u16; 3] = [47, 1047, 1049];
 /// 조각 끝에서 잘린 모드 시퀀스(`ESC[?…`)로 보고 다음 조각까지 넘기는 길이의 상한
 const MODE_CARRY_LIMIT: usize = 32;
 
@@ -307,12 +314,61 @@ fn contains_cpr(data: &[u8]) -> bool {
     })
 }
 
+/// PTY 가 화면에 알리는 통로 — 앱에서는 이벤트(AppSink), 테스트에서는 기록용
+pub(crate) trait Sink: Send + Sync {
+    fn data(&self, id: &str, data: String, end: u64);
+    fn exit(&self, id: &str);
+    fn resized(&self, id: &str, cols: u16, rows: u16, by: Option<String>);
+}
+
+struct AppSink(AppHandle);
+
+impl Sink for AppSink {
+    fn data(&self, id: &str, data: String, end: u64) {
+        let id = id.to_string();
+        let _ = self.0.emit("pty-data", PtyData { id, data, end });
+    }
+
+    fn exit(&self, id: &str) {
+        let _ = self.0.emit("pty-exit", id.to_string());
+    }
+
+    fn resized(&self, id: &str, cols: u16, rows: u16, by: Option<String>) {
+        let id = id.to_string();
+        let _ = self
+            .0
+            .emit("pty-resized", PtyResized { id, cols, rows, by });
+    }
+}
+
+/// 터미널 세션과 알림 통로. 리더 스레드는 AppHandle 대신 이것을 받는다 — 테스트가 기록용 Sink 로 그대로 돌릴 수 있게.
+/// 잠금 순서: sessions → Scrollback(→ 세대 꼬리). 반대 방향으로 잡지 않는다(Scrollback 을 쥔 채 sessions 를 잡지 않는다)
 #[derive(Default)]
-pub struct PtyState {
+pub(crate) struct Hub {
     sessions: Mutex<HashMap<String, PtySession>>,
     /// key 로 여는 동안 잡는다 — 두 화면이 같은 패널을 동시에 열어도 셸은 하나만 뜬다
     opening: Mutex<()>,
     seq: AtomicU64,
+    /// setup 에서 한 번 넣는다 — PtyState 를 등록하는 순서(on_page_load·remote.rs 가 쓴다)를 바꾸지 않게
+    sink: OnceLock<Arc<dyn Sink>>,
+}
+
+impl Hub {
+    fn sink(&self) -> Option<&dyn Sink> {
+        self.sink.get().map(|s| s.as_ref())
+    }
+}
+
+#[derive(Default)]
+pub struct PtyState {
+    hub: Arc<Hub>,
+}
+
+impl PtyState {
+    /// 이벤트를 낼 앱을 넣는다(setup 에서 한 번)
+    pub fn attach(&self, app: &AppHandle) {
+        let _ = self.hub.sink.set(Arc::new(AppSink(app.clone())));
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -321,6 +377,15 @@ struct PtyData {
     data: String,
     /// 이 조각까지의 전체 출력 길이 — 붙는 화면이 지난 출력(scrollback)과 겹치는 조각을 가려낸다
     end: u64,
+}
+
+/// 출력 한 조각을 보관(모드 추적)하고 화면에 보낸다. 보관과 알림을 같은 잠금 안에서 해 알림 순서가 end 순서와 같다
+fn emit_output(hub: &Hub, id: &str, scrollback: &Mutex<Scrollback>, text: String) {
+    let mut sb = scrollback.lock().ok();
+    let end = sb.as_mut().map_or(0, |sb| sb.push(&text));
+    if let Some(sink) = hub.sink() {
+        sink.data(id, text, end);
+    }
 }
 
 fn default_shell() -> String {
@@ -425,9 +490,10 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 
 /// key(화면의 패널 id)가 있고 그 패널의 터미널이 이미 떠 있으면 새로 만들지 않고 그 id 를 돌려준다 —
 /// 이 PC 의 창과 원격 접속한 기기가 같은 터미널을 함께 쓴다.
+/// (app 은 원격 호출(remote.rs)과 같은 인자를 두려고 남긴다 — 알림은 setup 에서 넣은 Sink 로 간다)
 #[tauri::command]
 pub fn pty_spawn(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, PtyState>,
     cwd: String,
     cols: u16,
@@ -435,15 +501,16 @@ pub fn pty_spawn(
     remote: Option<RemotePty>,
     key: Option<String>,
 ) -> Result<String, String> {
+    let hub = &state.hub;
     let Some(k) = &key else {
-        return spawn(&app, &state, None, cwd, cols, rows, remote);
+        return spawn(hub, None, cwd, cols, rows, remote);
     };
     // 찾기와 만들기를 한 묶음으로 — 그 사이에 다른 화면이 같은 패널을 열면 셸이 두 개 뜬다
-    let _opening = state.opening.lock().map_err(err)?;
-    if let Some(found) = find_alive(&state, k)? {
+    let _opening = hub.opening.lock().map_err(err)?;
+    if let Some(found) = find(hub, k)? {
         return Ok(found.id);
     }
-    spawn(&app, &state, key, cwd, cols, rows, remote)
+    spawn(hub, key, cwd, cols, rows, remote)
 }
 
 #[derive(Serialize)]
@@ -459,9 +526,9 @@ pub struct PtyFound {
 }
 
 /// key 의 터미널이 살아 있으면 돌려준다. 셸이 끝난 터미널은 치운다(그 패널은 새 터미널을 만들 수 있다)
-fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
+pub(crate) fn find(hub: &Hub, key: &str) -> Result<Option<PtyFound>, String> {
     let ended = {
-        let mut sessions = state.sessions.lock().map_err(err)?;
+        let mut sessions = hub.sessions.lock().map_err(err)?;
         let Some(id) = sessions
             .iter()
             .find(|(_, s)| s.key.as_deref() == Some(key))
@@ -470,7 +537,7 @@ fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
             return Ok(None);
         };
         let s = sessions.get_mut(&id).ok_or("pty 없음")?;
-        if matches!(s.child.try_wait(), Ok(None)) {
+        if matches!(s.proc.child.try_wait(), Ok(None)) {
             let (scrollback, offset, repaint) = {
                 let sb = s.scrollback.lock().map_err(err)?;
                 let (text, repaint) = sb.restore();
@@ -480,7 +547,7 @@ fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
             // pty-data 로 가므로 붙는 화면이 이어서 그린다. 크기는 그대로이므로 pty-resized 는 알리지 않는다
             if repaint && s.rows > 1 {
                 for rows in [s.rows - 1, s.rows] {
-                    let _ = s.master.resize(PtySize {
+                    let _ = s.proc.master.resize(PtySize {
                         rows,
                         cols: s.cols,
                         pixel_width: 0,
@@ -499,7 +566,7 @@ fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
         sessions.remove(&id)
     };
     if let Some(s) = ended {
-        std::thread::spawn(move || kill_and_close(vec![s]));
+        std::thread::spawn(move || kill_and_close(vec![s.proc]));
     }
     Ok(None)
 }
@@ -507,7 +574,7 @@ fn find_alive(state: &PtyState, key: &str) -> Result<Option<PtyFound>, String> {
 /// 패널(key)의 터미널이 이미 떠 있으면 그 id 와 지금까지의 출력을 돌려준다(없으면 null)
 #[tauri::command]
 pub fn pty_find(state: State<'_, PtyState>, key: String) -> Result<Option<PtyFound>, String> {
-    find_alive(&state, &key)
+    find(&state.hub, &key)
 }
 
 #[derive(Serialize)]
@@ -522,7 +589,7 @@ pub struct PtyInfo {
 /// 떠 있는 터미널 목록 — 원격 화면이 열어 보지 않은 이슈의 에이전트 상태도 알 수 있게 한다
 #[tauri::command]
 pub fn pty_list(state: State<'_, PtyState>) -> Result<Vec<PtyInfo>, String> {
-    let sessions = state.sessions.lock().map_err(err)?;
+    let sessions = state.hub.sessions.lock().map_err(err)?;
     Ok(sessions
         .iter()
         .map(|(id, s)| PtyInfo {
@@ -535,8 +602,7 @@ pub fn pty_list(state: State<'_, PtyState>) -> Result<Vec<PtyInfo>, String> {
 }
 
 fn spawn(
-    app: &AppHandle,
-    state: &PtyState,
+    hub: &Arc<Hub>,
     key: Option<String>,
     cwd: String,
     cols: u16,
@@ -564,88 +630,93 @@ fn spawn(
     let child = pair.slave.spawn_command(cmd).map_err(err)?;
     drop(pair.slave);
     #[cfg(windows)]
-    let job = child.process_id().and_then(job::Job::for_process);
+    let job = child
+        .process_id()
+        .and_then(job::Job::for_process)
+        .map(Arc::new);
 
-    let mut reader = pair.master.try_clone_reader().map_err(err)?;
+    let reader = pair.master.try_clone_reader().map_err(err)?;
     let writer = pair.master.take_writer().map_err(err)?;
-    let id = format!("pty-{}", state.seq.fetch_add(1, Ordering::SeqCst) + 1);
+    let id = format!("pty-{}", hub.seq.fetch_add(1, Ordering::SeqCst) + 1);
 
-    let emit_id = id.clone();
     let scrollback = Arc::new(Mutex::new(Scrollback::default()));
     let kept = scrollback.clone();
     // 리더 스레드보다 먼저 넣는다 — 리더가 시작 질의를 읽자마자 이 세션으로 답할 수 있게
-    state.sessions.lock().map_err(err)?.insert(
+    hub.sessions.lock().map_err(err)?.insert(
         id.clone(),
         PtySession {
-            master: pair.master,
-            writer,
-            child,
+            proc: Proc {
+                master: pair.master,
+                writer,
+                child,
+                cpr_answered: false,
+                #[cfg(windows)]
+                job,
+            },
             cwd,
             host: remote.map(|r| r.host),
             key,
             scrollback,
             cols,
             rows,
-            cpr_answered: false,
-            #[cfg(windows)]
-            job,
         },
     );
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 8192];
-        let mut pending: Vec<u8> = Vec::new();
-        let mut startup = StartupQuery::new();
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    pending.extend_from_slice(&buf[..n]);
-                    let (text, query) = startup.filter(take_utf8(&mut pending));
-                    if query {
-                        // 세션이 이미 빠졌으면(종료 중) terminate() 가 대신 답한다
-                        if let Ok(mut sessions) = app.state::<PtyState>().sessions.lock() {
-                            if let Some(s) = sessions.get_mut(&emit_id) {
-                                s.answer_startup_query();
-                            }
+    let hub = hub.clone();
+    let emit_id = id.clone();
+    std::thread::spawn(move || read_output(&hub, &emit_id, reader, &kept));
+    Ok(id)
+}
+
+/// 리더 스레드: 출력을 보관하고 화면에 보낸다. 출력이 끝나면(셸 종료) 화면에 알리고 세션을 치운다
+fn read_output(
+    hub: &Hub,
+    id: &str,
+    mut reader: Box<dyn Read + Send>,
+    scrollback: &Mutex<Scrollback>,
+) {
+    let mut buf = [0u8; 8192];
+    let mut pending: Vec<u8> = Vec::new();
+    let mut startup = StartupQuery::new();
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                pending.extend_from_slice(&buf[..n]);
+                let (text, query) = startup.filter(take_utf8(&mut pending));
+                if query {
+                    // 세션이 이미 빠졌으면(종료 중) terminate() 가 대신 답한다
+                    if let Ok(mut sessions) = hub.sessions.lock() {
+                        if let Some(s) = sessions.get_mut(id) {
+                            s.proc.answer_startup_query();
                         }
                     }
-                    if !text.is_empty() {
-                        let end = kept.lock().map(|mut k| k.push(&text)).unwrap_or(0);
-                        let _ = app.emit(
-                            "pty-data",
-                            PtyData {
-                                id: emit_id.clone(),
-                                data: text,
-                                end,
-                            },
-                        );
-                    }
+                }
+                if !text.is_empty() {
+                    emit_output(hub, id, scrollback, text);
                 }
             }
         }
-        // 출력이 끝났다(셸 종료) — 붙어 있는 화면에 알리고 목록에서 뺀다
-        let _ = app.emit("pty-exit", emit_id.clone());
-        let ended = app
-            .state::<PtyState>()
-            .sessions
-            .lock()
-            .ok()
-            .and_then(|mut s| s.remove(&emit_id));
-        if let Some(s) = ended {
-            kill_and_close(vec![s]);
-        }
-    });
-    Ok(id)
+    }
+    if let Some(sink) = hub.sink() {
+        sink.exit(id);
+    }
+    let ended = hub.sessions.lock().ok().and_then(|mut s| s.remove(id));
+    if let Some(s) = ended {
+        kill_and_close(vec![s.proc]);
+    }
 }
 
 #[tauri::command]
 pub fn pty_write(state: State<'_, PtyState>, id: String, data: String) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().map_err(err)?;
+    write(&state.hub, &id, &data)
+}
+
+pub(crate) fn write(hub: &Hub, id: &str, data: &str) -> Result<(), String> {
+    let mut sessions = hub.sessions.lock().map_err(err)?;
     let s = sessions
-        .get_mut(&id)
+        .get_mut(id)
         .ok_or_else(|| format!("pty {id} 없음"))?;
-    s.write_input(data.as_bytes()).map_err(err)
+    s.proc.write_input(data.as_bytes()).map_err(err)
 }
 
 #[derive(Clone, Serialize)]
@@ -657,21 +728,33 @@ struct PtyResized {
     by: Option<String>,
 }
 
+/// (app 은 pty_spawn 과 같은 이유로 남긴다)
 #[tauri::command]
 pub fn pty_resize(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, PtyState>,
     id: String,
     cols: u16,
     rows: u16,
     by: Option<String>,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().map_err(err)?;
+    resize(&state.hub, &id, cols, rows, by)
+}
+
+pub(crate) fn resize(
+    hub: &Hub,
+    id: &str,
+    cols: u16,
+    rows: u16,
+    by: Option<String>,
+) -> Result<(), String> {
+    let mut sessions = hub.sessions.lock().map_err(err)?;
     let s = sessions
-        .get_mut(&id)
+        .get_mut(id)
         .ok_or_else(|| format!("pty {id} 없음"))?;
     if s.cols != cols || s.rows != rows {
-        s.master
+        s.proc
+            .master
             .resize(PtySize {
                 rows,
                 cols,
@@ -685,15 +768,9 @@ pub fn pty_resize(
     // 같은 터미널을 보는 다른 화면이 같은 크기로 그리게 알린다. 크기가 그대로여도 알린다 — 요청한 화면이 요청마다 답을
     // 하나씩 받아야 "마지막 요청이 적용됐다"를 알 수 있다. 잠근 채로 알린다 — 원격 호출은 따로 돌아 동시에 올 수 있는데,
     // 알림 순서가 적용 순서와 같아야 화면들이 받은 마지막 알림이 곧 PTY 의 크기다
-    let _ = app.emit(
-        "pty-resized",
-        PtyResized {
-            id,
-            cols,
-            rows,
-            by,
-        },
-    );
+    if let Some(sink) = hub.sink() {
+        sink.resized(id, cols, rows, by);
+    }
     drop(sessions);
     Ok(())
 }
@@ -742,16 +819,16 @@ const CLOSE_DEADLINE: Duration = Duration::from_secs(3);
 /// 모든 셸(과 자손)을 끝낸 뒤 ConPTY 를 닫고, 마감 안에 닫힌 세션 수를 돌려준다(블로킹).
 /// 정리 순서를 지키도록 닫힐 때까지 기다리되, 한 세션의 닫기가 멈춰도 다른 세션과 호출자(worktree 삭제)가
 /// 막히지 않도록 세션마다 스레드를 두고 공통 마감까지만 기다린다.
-fn kill_and_close(mut sessions: Vec<PtySession>) -> usize {
-    for s in &mut sessions {
-        s.terminate();
+fn kill_and_close(mut procs: Vec<Proc>) -> usize {
+    for p in &mut procs {
+        p.terminate();
     }
-    let total = sessions.len();
+    let total = procs.len();
     let (tx, rx) = mpsc::channel();
-    for s in sessions {
+    for p in procs {
         let tx = tx.clone();
         std::thread::spawn(move || {
-            s.close();
+            p.close();
             let _ = tx.send(());
         });
     }
@@ -769,7 +846,8 @@ async fn kill_sessions(sessions: Vec<PtySession>) -> Result<(), String> {
     if sessions.is_empty() {
         return Ok(());
     }
-    tauri::async_runtime::spawn_blocking(move || kill_and_close(sessions))
+    let procs = sessions.into_iter().map(|s| s.proc).collect();
+    tauri::async_runtime::spawn_blocking(move || kill_and_close(procs))
         .await
         .map(|_| ())
         .map_err(err)
@@ -780,9 +858,9 @@ async fn kill_sessions(sessions: Vec<PtySession>) -> Result<(), String> {
 #[tauri::command]
 pub async fn pty_processes(state: State<'_, PtyState>, id: String) -> Result<Vec<String>, String> {
     let pid = {
-        let sessions = state.sessions.lock().map_err(err)?;
+        let sessions = state.hub.sessions.lock().map_err(err)?;
         match sessions.get(&id) {
-            Some(s) if s.host.is_none() => s.child.process_id(),
+            Some(s) if s.host.is_none() => s.proc.child.process_id(),
             _ => None,
         }
     };
@@ -799,18 +877,27 @@ pub async fn pty_processes(state: State<'_, PtyState>, id: String) -> Result<Vec
 
 #[tauri::command]
 pub async fn pty_kill(state: State<'_, PtyState>, id: String) -> Result<(), String> {
-    let removed = state.sessions.lock().map_err(err)?.remove(&id);
+    let removed = take_by_id(&state.hub, &id)?;
     kill_sessions(removed.into_iter().collect()).await
+}
+
+/// id 의 터미널을 목록에서 뺀다 — 끝내기(kill_and_close)는 호출자가 잠금 밖에서
+pub(crate) fn take_by_id(hub: &Hub, id: &str) -> Result<Option<PtySession>, String> {
+    Ok(hub.sessions.lock().map_err(err)?.remove(id))
 }
 
 /// 모든 PTY 를 백그라운드에서 끝낸다 — 웹뷰가 새로 고쳐지면(React 정리가 돌지 않음) 남은 셸·에이전트를 정리한다
 pub fn kill_all(state: &PtyState) {
-    let sessions: Vec<PtySession> = match state.sessions.lock() {
-        Ok(mut s) => s.drain().map(|(_, v)| v).collect(),
+    kill_all_in(&state.hub);
+}
+
+pub(crate) fn kill_all_in(hub: &Hub) {
+    let procs: Vec<Proc> = match hub.sessions.lock() {
+        Ok(mut s) => s.drain().map(|(_, v)| v.proc).collect(),
         Err(_) => return,
     };
-    if !sessions.is_empty() {
-        std::thread::spawn(move || kill_and_close(sessions));
+    if !procs.is_empty() {
+        std::thread::spawn(move || kill_and_close(procs));
     }
 }
 
@@ -832,18 +919,25 @@ pub async fn pty_kill_by_cwd(
     path: String,
     host: Option<String>,
 ) -> Result<u32, String> {
-    let targets: Vec<PtySession> = {
-        let mut sessions = state.sessions.lock().map_err(err)?;
-        let ids: Vec<String> = sessions
-            .iter()
-            .filter(|(_, s)| in_target(s, &path, host.as_deref()))
-            .map(|(id, _)| id.clone())
-            .collect();
-        ids.iter().filter_map(|id| sessions.remove(id)).collect()
-    };
+    let targets = take_by_cwd(&state.hub, &path, host.as_deref())?;
     let n = targets.len() as u32;
     kill_sessions(targets).await?;
     Ok(n)
+}
+
+/// cwd 가 path(또는 하위)인 터미널을 목록에서 빼서 돌려준다
+pub(crate) fn take_by_cwd(
+    hub: &Hub,
+    path: &str,
+    host: Option<&str>,
+) -> Result<Vec<PtySession>, String> {
+    let mut sessions = hub.sessions.lock().map_err(err)?;
+    let ids: Vec<String> = sessions
+        .iter()
+        .filter(|(_, s)| in_target(s, path, host))
+        .map(|(id, _)| id.clone())
+        .collect();
+    Ok(ids.iter().filter_map(|id| sessions.remove(id)).collect())
 }
 
 #[cfg(test)]
@@ -1047,6 +1141,7 @@ mod tests {
     #[cfg(windows)]
     mod conpty {
         use super::super::*;
+        use crate::commands::pty_link::{cpr_reply, MarkerFilter, Signal};
         use std::mem::ManuallyDrop;
         use std::path::Path;
         use std::sync::Arc;
@@ -1070,28 +1165,37 @@ mod tests {
 
         struct Pty {
             // 실패로 unwinding 중 drop 되면 바로 그 ClosePseudoConsole 대기로 테스트가 멈출 수 있어 직접 drop 하지 않는다
-            session: ManuallyDrop<PtySession>,
+            proc: ManuallyDrop<Proc>,
             output: mpsc::Receiver<Vec<u8>>,
             input_log: Arc<Mutex<Vec<u8>>>,
         }
 
-        /// cmd.exe PTY 를 띄우고, 앱의 리더 스레드처럼 출력을 계속 비우면서 누적 출력을 채널로 보낸다
-        fn spawn_cmd_pty(cwd: Option<&Path>) -> Pty {
+        const ROWS: u16 = 24;
+
+        fn cmd_exe(cwd: Option<&Path>) -> CommandBuilder {
+            let mut cmd = CommandBuilder::new("cmd.exe");
+            if let Some(dir) = cwd {
+                cmd.cwd(dir);
+            }
+            cmd
+        }
+
+        /// cmd 를 PTY 로 띄우고, 앱의 리더 스레드처럼 출력을 계속 비우면서 누적 출력을 채널로 보낸다
+        fn spawn_cmd_pty(cmd: CommandBuilder) -> Pty {
             let pair = native_pty_system()
                 .openpty(PtySize {
-                    rows: 24,
+                    rows: ROWS,
                     cols: 80,
                     pixel_width: 0,
                     pixel_height: 0,
                 })
                 .unwrap();
-            let mut cmd = CommandBuilder::new("cmd.exe");
-            if let Some(dir) = cwd {
-                cmd.cwd(dir);
-            }
             let child = pair.slave.spawn_command(cmd).unwrap();
             drop(pair.slave);
-            let job = child.process_id().and_then(job::Job::for_process);
+            let job = child
+                .process_id()
+                .and_then(job::Job::for_process)
+                .map(Arc::new);
             assert!(job.is_some(), "셸을 Job Object 에 넣지 못했다");
             let input_log = Arc::new(Mutex::new(Vec::new()));
             let writer = Box::new(Tee {
@@ -1108,21 +1212,15 @@ mod tests {
                     let _ = tx.send(out.clone());
                 }
             });
-            let session = PtySession {
+            let proc = Proc {
                 master: pair.master,
                 writer,
                 child,
-                cwd: String::new(),
-                host: None,
-                key: None,
-                scrollback: Arc::default(),
-                cols: 80,
-                rows: 24,
                 cpr_answered: false,
                 job,
             };
             Pty {
-                session: ManuallyDrop::new(session),
+                proc: ManuallyDrop::new(proc),
                 output,
                 input_log,
             }
@@ -1146,19 +1244,19 @@ mod tests {
         /// xterm 처럼 커서 질의에 응답하고 셸이 명령을 처리하는지 확인한다
         fn answer_cursor_query_and_wait_shell(pty: &mut Pty) {
             wait_output(&pty.output, b"\x1b[6n", "커서 위치 질의(ESC[6n)");
-            pty.session.write_input(b"\x1b[1;1R").unwrap();
+            pty.proc.write_input(b"\x1b[1;1R").unwrap();
             // 입력 에코(minmo-%OS%)와 구분되도록 셸이 확장한 값을 기다린다
-            pty.session.write_input(b"echo minmo-%OS%\r").unwrap();
+            pty.proc.write_input(b"echo minmo-%OS%\r").unwrap();
             wait_output(&pty.output, b"minmo-Windows_NT", "셸 응답");
         }
 
         /// kill_and_close 를 별도 스레드에서 실행해 멈춰도 테스트가 무한 대기하지 않게 한다.
         /// 마감 안에 닫힌 세션 수와 입력 기록을 돌려준다
         fn kill_with_timeout(pty: Pty) -> (usize, Vec<u8>) {
-            let session = ManuallyDrop::into_inner(pty.session);
+            let proc = ManuallyDrop::into_inner(pty.proc);
             let (done_tx, done_rx) = mpsc::channel();
             std::thread::spawn(move || {
-                let _ = done_tx.send(kill_and_close(vec![session]));
+                let _ = done_tx.send(kill_and_close(vec![proc]));
             });
             let closed = done_rx
                 .recv_timeout(Duration::from_secs(10))
@@ -1170,7 +1268,7 @@ mod tests {
         /// 실제 앱: spawn 응답 전에 터미널이 언마운트되면 xterm 이 커서 질의에 응답할 기회 없이 ptyKill 이 호출된다
         #[test]
         fn kill_before_cursor_query_answered_closes_conpty() {
-            let pty = spawn_cmd_pty(None);
+            let pty = spawn_cmd_pty(cmd_exe(None));
             wait_output(&pty.output, b"\x1b[6n", "커서 위치 질의(ESC[6n)");
             let (closed, input) = kill_with_timeout(pty);
             assert_eq!(
@@ -1187,7 +1285,7 @@ mod tests {
         /// 정상 흐름: xterm 이 응답해 셸이 떠 있는 상태에서 종료
         #[test]
         fn kill_running_shell_after_cursor_query_answered() {
-            let mut pty = spawn_cmd_pty(None);
+            let mut pty = spawn_cmd_pty(cmd_exe(None));
             answer_cursor_query_and_wait_shell(&mut pty);
             let (closed, input) = kill_with_timeout(pty);
             assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
@@ -1201,7 +1299,7 @@ mod tests {
         /// #56: 화면 없이도 시작 질의에 답해 셸이 뜨고, 화면으로 가는 출력에는 질의가 없다(화면이 또 답하지 않는다)
         #[test]
         fn startup_query_is_answered_without_a_screen() {
-            let mut pty = spawn_cmd_pty(None);
+            let mut pty = spawn_cmd_pty(cmd_exe(None));
             let mut startup = StartupQuery::waiting(true);
             let mut shown = String::new();
             let mut seen = 0;
@@ -1218,11 +1316,11 @@ mod tests {
                 seen = out.len();
                 shown.push_str(&text);
                 if query {
-                    pty.session.answer_startup_query();
+                    pty.proc.answer_startup_query();
                 }
-                if pty.session.cpr_answered && !typed {
+                if pty.proc.cpr_answered && !typed {
                     typed = true;
-                    pty.session.write_input(b"echo minmo-%OS%\r").unwrap();
+                    pty.proc.write_input(b"echo minmo-%OS%\r").unwrap();
                 }
             }
             assert!(!shown.contains(CURSOR_QUERY), "시작 질의가 화면으로 갔다");
@@ -1240,9 +1338,9 @@ mod tests {
         fn kill_releases_cwd_held_by_grandchild() {
             let dir = std::env::temp_dir().join(format!("minmo-pty-test-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
-            let mut pty = spawn_cmd_pty(Some(&dir));
+            let mut pty = spawn_cmd_pty(cmd_exe(Some(&dir)));
             answer_cursor_query_and_wait_shell(&mut pty);
-            pty.session
+            pty.proc
                 .write_input(b"powershell -NoProfile -Command \"Write-Output ('gc-' + 'ready'); Start-Sleep 60\"\r")
                 .unwrap();
             wait_output(&pty.output, b"gc-ready", "손자 프로세스 시작");
@@ -1269,14 +1367,9 @@ mod tests {
             String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
         }
 
-        /// 패널 닫기(Ctrl+W) 시나리오: 에이전트처럼 중간 부모가 먼저 끝나 부모 체인이 끊긴 자손도 함께 끝나야 한다.
-        /// taskkill /T 는 이런 고아를 찾지 못하므로 Job Object 가 없으면 실패한다
-        #[test]
-        fn kill_terminates_orphaned_descendant() {
-            let mut pty = spawn_cmd_pty(None);
-            answer_cursor_query_and_wait_shell(&mut pty);
-            // 바깥 powershell 은 손자를 띄우고 pid 를 출력한 뒤 바로 끝난다 → 손자는 부모 없는 고아가 된다
-            pty.session
+        /// 셸에서 손자를 띄우고 중간 부모(powershell)는 바로 끝내 부모 체인이 끊긴 고아를 만든다. 그 pid 를 돌려준다
+        fn start_orphan(pty: &mut Pty) -> u32 {
+            pty.proc
                 .write_input(
                     concat!(
                         "powershell -NoProfile -Command \"$p = Start-Process powershell ",
@@ -1304,8 +1397,11 @@ mod tests {
                 }
             };
             assert!(pid_alive(pid), "고아 프로세스가 시작되지 않았다");
-            let (closed, _) = kill_with_timeout(pty);
-            // TerminateJobObject 도 종료를 시작만 하므로 잠시 기다린다
+            pid
+        }
+
+        /// 프로세스가 곧 끝나는지 본다 — TerminateJobObject 도 종료를 시작만 하므로 잠시 기다린다. 남으면 정리한다
+        fn gone_soon(pid: u32) -> bool {
             let gone = (0..50).any(|_| {
                 let alive = pid_alive(pid);
                 if alive {
@@ -1317,8 +1413,192 @@ mod tests {
                 // 실패해도 테스트 프로세스가 남지 않게 정리한다
                 super::super::super::taskkill_tree(pid);
             }
-            assert!(gone, "PTY 종료 후에도 고아 자손(pid {pid})이 살아 있다");
+            gone
+        }
+
+        /// 패널 닫기(Ctrl+W) 시나리오: 에이전트처럼 중간 부모가 먼저 끝나 부모 체인이 끊긴 자손도 함께 끝나야 한다.
+        /// taskkill /T 는 이런 고아를 찾지 못하므로 Job Object 가 없으면 실패한다
+        #[test]
+        fn kill_terminates_orphaned_descendant() {
+            let mut pty = spawn_cmd_pty(cmd_exe(None));
+            answer_cursor_query_and_wait_shell(&mut pty);
+            let pid = start_orphan(&mut pty);
+            let (closed, _) = kill_with_timeout(pty);
+            assert!(
+                gone_soon(pid),
+                "PTY 종료 후에도 고아 자손(pid {pid})이 살아 있다"
+            );
             assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
+        }
+
+        /// EC-09: 셸이 먼저 끝난 뒤(트리 종료는 건너뜀)에도 남은 자손은 Job 이 끝낸다
+        #[test]
+        fn kill_after_the_shell_exited_still_ends_descendants_through_the_job() {
+            let mut pty = spawn_cmd_pty(cmd_exe(None));
+            answer_cursor_query_and_wait_shell(&mut pty);
+            let pid = start_orphan(&mut pty);
+            pty.proc.write_input(b"exit\r").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !matches!(pty.proc.child.try_wait(), Ok(Some(_))) {
+                assert!(Instant::now() < deadline, "셸이 10초 안에 끝나지 않았다");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(pid_alive(pid), "셸이 끝났을 때 자손이 이미 없다(검사 전제)");
+            // Job 을 하나 더 쥐어 닫기(KILL_ON_JOB_CLOSE)로 끝나는 것과 가린다 — 끝내기(TerminateJobObject)만 본다
+            let held = pty.proc.job.clone();
+            let (closed, _) = kill_with_timeout(pty);
+            let gone = gone_soon(pid);
+            drop(held);
+            assert!(
+                gone,
+                "셸이 먼저 끝난 뒤 남은 자손(pid {pid})을 끝내지 못했다"
+            );
+            assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
+        }
+
+        // ── #89 재접속의 ConPTY 전제(U3 관문) ─────────────────────────────
+
+        /// 관측 출력을 읽을 수 있게 — 제어 문자를 이스케이프로
+        fn show(text: &str) -> String {
+            text.chars()
+                .map(|c| match c {
+                    '\x1b' => "\\e".to_string(),
+                    '\x07' => "\\a".to_string(),
+                    '\r' => "\\r".to_string(),
+                    '\n' => "\\n".to_string(),
+                    c if c.is_control() => format!("\\x{:02x}", c as u32),
+                    c => c.to_string(),
+                })
+                .collect()
+        }
+
+        /// 명령을 PTY 로 돌려 시작 질의에 reply 로 답하고, done 이 나온 뒤 잠시 더 받은 출력(질의 뒤)을 돌려준다.
+        /// 제목은 다음 화면 갱신에 실려 올 수 있어 끝 표시 뒤에도 조금 기다린다
+        fn probe(cmd: CommandBuilder, reply: &[u8], done: &str) -> String {
+            let mut pty = spawn_cmd_pty(cmd);
+            wait_output(&pty.output, b"\x1b[6n", "커서 위치 질의(ESC[6n)");
+            pty.proc.write_input(reply).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut out = Vec::new();
+            while !String::from_utf8_lossy(&out).contains(done) {
+                match pty
+                    .output
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                {
+                    Ok(o) => out = o,
+                    Err(_) => {
+                        let seen = show(&String::from_utf8_lossy(&out));
+                        let _ = kill_with_timeout(pty);
+                        panic!("{done} 을(를) 20초 안에 받지 못했다. 출력: {seen}");
+                    }
+                }
+            }
+            let settle = Instant::now() + Duration::from_millis(500);
+            while let Ok(o) = pty
+                .output
+                .recv_timeout(settle.saturating_duration_since(Instant::now()))
+            {
+                out = o;
+            }
+            let _ = kill_with_timeout(pty);
+            let text = String::from_utf8_lossy(&out).into_owned();
+            let at = text
+                .find(CURSOR_QUERY)
+                .map_or(0, |i| i + CURSOR_QUERY.len());
+            text[at..].to_string()
+        }
+
+        fn powershell(script: &str) -> CommandBuilder {
+            let mut cmd = CommandBuilder::new("powershell.exe");
+            cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+            cmd
+        }
+
+        /// 원격의 표시처럼 창 제목(OSC 2)을 VT 로 쓰는 함수 T — ssh.exe 가 원격 출력을 콘솔에 쓰는 것과 같다.
+        /// 표시 글자는 실행 중에 이어 붙여 명령줄·창 제목에 그대로 나오지 않게 한다
+        const TITLE_FN: &str =
+            "$e=[char]27; $b=[char]7; function T($t) { [Console]::Write($e+']2;'+$t+$b) };";
+        const DONE: &str = "Write-Output ('probe-'+'done')";
+
+        /// 앱의 MarkerFilter 로 표시를 찾는다 — 찾으면 표시 뒤의 출력
+        fn after_marker(out: &str) -> Option<String> {
+            match MarkerFilter::new(false).filter(out, false) {
+                (_, Some((Signal::Marker, rest))) => Some(rest),
+                _ => None,
+            }
+        }
+
+        /// 관문 ①: 원격이 쓴 창 제목 표시(OSC 2 minmo-link)가 ConPTY 를 지나 출력에 나온다
+        #[test]
+        fn conpty_passes_the_link_marker_title_to_the_output() {
+            let script = format!("{TITLE_FN} T('minmo-'+'link'); {DONE}");
+            let out = probe(powershell(&script), CURSOR_HOME_REPORT, "probe-done");
+            eprintln!("관문 ① 관측: {}", show(&out));
+            assert!(
+                after_marker(&out).is_some(),
+                "표시 제목이 출력에 없다: {}",
+                show(&out)
+            );
+        }
+
+        /// 관문 ②: 표시 뒤 0.2초 기다렸다 다른 제목(tmux·프롬프트)을 써도 표시가 남는다 —
+        /// ConPTY 는 한 번의 화면 갱신에 마지막 제목만 보내므로 원격 명령이 표시 뒤에 잠깐 기다린다
+        #[test]
+        fn conpty_keeps_the_marker_when_the_next_title_comes_after_the_wait() {
+            let script = format!(
+                "{TITLE_FN} T('minmo-'+'link'); Start-Sleep -Milliseconds 200; T('other-'+'title'); {DONE}"
+            );
+            let out = probe(powershell(&script), CURSOR_HOME_REPORT, "probe-done");
+            eprintln!("관문 ② 관측(0.2초 대기): {}", show(&out));
+            let rest = after_marker(&out)
+                .unwrap_or_else(|| panic!("표시가 다음 제목에 덮였다: {}", show(&out)));
+            // 다음 제목도 실제로 왔어야 이 검사가 뜻이 있다
+            assert!(
+                rest.contains("other-title"),
+                "다음 제목이 오지 않았다: {}",
+                show(&out)
+            );
+        }
+
+        /// 관찰용(단언 없음): 기다리지 않고 바로 다른 제목을 쓰면 표시가 남는가 — 원격 명령에 대기를 둔 이유
+        #[test]
+        #[ignore = "관찰용 — cargo test conpty_marker_without -- --ignored --nocapture"]
+        fn conpty_marker_without_the_wait_is_only_observed() {
+            let script = format!("{TITLE_FN} T('minmo-'+'link'); T('other-'+'title'); {DONE}");
+            let out = probe(powershell(&script), CURSOR_HOME_REPORT, "probe-done");
+            let kept = if after_marker(&out).is_some() {
+                "남음"
+            } else {
+                "덮임"
+            };
+            eprintln!("관찰(대기 없음): 표시 {kept} — {}", show(&out));
+        }
+
+        /// 관문 ③: 시작 질의에 맨 아래 행(CPR {rows};1)으로 답한 뒤 화면보다 많은 줄을 내도 화면을 지우거나 처음부터 다시
+        /// 그리지 않고 줄바꿈으로만 스크롤한다 — 재접속 준비 시퀀스가 커서를 둔 맨 아래 행과 ConPTY 의 커서가 맞는다
+        #[test]
+        fn conpty_scrolls_from_the_bottom_row_without_repainting() {
+            let lines = ROWS * 2;
+            let script =
+                format!("1..{lines} | ForEach-Object {{ 'minmo-row-' + $_ + '-end' }}; {DONE}");
+            let out = probe(
+                powershell(&script),
+                cpr_reply(ROWS).as_bytes(),
+                "probe-done",
+            );
+            eprintln!("관문 ③ 관측: {}", show(&out));
+            for bad in ["\x1b[H", "\x1b[1;1H", "\x1b[2J"] {
+                assert!(!out.contains(bad), "{} 가 있다: {}", show(bad), show(&out));
+            }
+            for i in 1..=lines {
+                let line = format!("minmo-row-{i}-end");
+                assert_eq!(
+                    out.matches(&line).count(),
+                    1,
+                    "{line} 을(를) 다시 그렸다: {}",
+                    show(&out)
+                );
+            }
         }
     }
 }
