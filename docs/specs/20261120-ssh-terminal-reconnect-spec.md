@@ -178,14 +178,14 @@
 | D-27 | 원격 셸 종료 코드 | 원격 로그인 셸(tmux 끔)이 255로 끝나면 254로 바꿔 전달한다 — ssh 자체의 실패(255)와 가린다. tmux 첫 창은 `exec`라 해당 없음 | 사용자 답(Plan 단계), `pty.rs` `login_shell` |
 
 ## Assumption
-- [Assumption] D-13: 재접속 중 키 입력은 버린다 — 근거: 지금 종료 상태와 같은 처리(TerminalTab.tsx:580)
-- [Assumption] D-14: 끊긴 동안 닫은 분할 패널은 세션 끝내기를 1번만 시도한다 — 근거: worktree 삭제 때 KILL_TMUX가 `-pN`도 정리(sshHost.ts:126)
-- [Assumption] D-15: [지금 재접속] = 기다림 건너뛰기, [재접속] = 5번 다시 — 근거: 확정 레이아웃
-- [Assumption] D-16: 재접속 중 Ctrl+W·worktree 삭제는 재접속을 멈춘다 — 근거: TerminalTab.tsx:633 cleanup
-- [Assumption] D-17: 자동 재접속은 처음 연 tmux 설정을 쓴다 — 근거: TerminalTab.tsx:280
-- [Assumption] D-22: 앱을 꺼도 분할 tmux 세션이 남고 다음 실행 때 다시 붙는다 — 근거: D-06의 결과, 패널 구성은 저장됨(README:296)
-- [Assumption] D-23: 새 이벤트·명령 이름은 구현에서 정하고 원격 기기에도 허용한다 — 근거: README:297
-- [Assumption] D-24: 구분 줄 시각은 이 PC의 현지 시각 HH:MM. 안내 ①은 role=status, ②는 role=alert — 근거: AX-34·AX-35 패턴(TerminalTab.tsx:692)
+- D-13: 재접속 중 키 입력은 버린다 — 근거: 지금 종료 상태와 같은 처리(TerminalTab.tsx:580)
+- D-14: 끊긴 동안 닫은 분할 패널은 세션 끝내기를 1번만 시도한다 — 근거: worktree 삭제 때 KILL_TMUX가 `-pN`도 정리(sshHost.ts:126)
+- D-15: [지금 재접속] = 기다림 건너뛰기, [재접속] = 5번 다시 — 근거: 확정 레이아웃
+- D-16: 재접속 중 Ctrl+W·worktree 삭제는 재접속을 멈춘다 — 근거: TerminalTab.tsx:633 cleanup
+- D-17: 자동 재접속은 처음 연 tmux 설정을 쓴다 — 근거: TerminalTab.tsx:280
+- D-22: 앱을 꺼도 분할 tmux 세션이 남고 다음 실행 때 다시 붙는다 — 근거: D-06의 결과, 패널 구성은 저장됨(README:296)
+- D-23: 새 이벤트·명령 이름은 구현에서 정하고 원격 기기에도 허용한다 — 근거: README:297
+- D-24: 구분 줄 시각은 이 PC의 현지 시각 HH:MM. 안내 ①은 role=status, ②는 role=alert — 근거: AX-34·AX-35 패턴(TerminalTab.tsx:692)
 
 ## 알려진 제한
 구현 뒤에도 남는 제한이다(README '연결이 끊기면'에도 사용자에게 의미 있는 것을 적었다).
