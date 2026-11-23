@@ -669,7 +669,8 @@ fn auth_failure_fails_at_once_and_removing_while_failed_exits_within_two_seconds
 // AC-02: 표시도 보이는 출력도 없이 멈춘 시도는 마감에 끝내고(프로세스까지) 다음 시도로 넘어간다 — 그 시도가 표시를 내면 연결됨
 #[test]
 fn a_stuck_attempt_is_killed_at_the_deadline_and_the_next_attempt_follows() {
-    let deadline = MS(1500);
+    // 다음 시도(powershell)가 같은 마감 안에 연결 표시를 내야 한다 — Windows 에서 powershell 시작이 3초를 넘기도 하므로 넉넉히 둔다
+    let deadline = Duration::from_secs(10);
     let env = Env::new(
         timing([MS(100); 5], deadline),
         vec![

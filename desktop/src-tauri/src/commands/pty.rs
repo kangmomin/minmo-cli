@@ -2062,7 +2062,8 @@ mod tests {
             let mut pty = spawn_cmd_pty(cmd);
             wait_output(&pty.output, b"\x1b[6n", "커서 위치 질의(ESC[6n)");
             pty.proc.write_input(reply).unwrap();
-            let deadline = Instant::now() + Duration::from_secs(20);
+            // powershell 이 느린 PC(시작만 3초 넘음)에서도 끝 표시를 기다리도록 넉넉히 둔다 — 정말 멈추면 여기서 드러난다
+            let deadline = Instant::now() + Duration::from_secs(60);
             let mut out = Vec::new();
             while !String::from_utf8_lossy(&out).contains(done) {
                 match pty
@@ -2073,7 +2074,7 @@ mod tests {
                     Err(_) => {
                         let seen = show(&String::from_utf8_lossy(&out));
                         let _ = kill_with_timeout(pty);
-                        panic!("{done} 을(를) 20초 안에 받지 못했다. 출력: {seen}");
+                        panic!("{done} 을(를) 60초 안에 받지 못했다. 출력: {seen}");
                     }
                 }
             }
