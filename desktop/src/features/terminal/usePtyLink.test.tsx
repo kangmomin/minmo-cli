@@ -55,6 +55,21 @@ describe('usePtyLink', () => {
     expect(h.result.current.link).toMatchObject(expected)
   })
 
+  // AC-09 — 터미널 화면을 다시 만들며 다시 구독할 때도(이전 id 가 남아 있어도) 그 사이의 이벤트를 놓치지 않는다
+  it('이전 id 가 있던 채로 다시 attach 해도 setId 전에 온 이벤트를 id 가 정해지면 반영한다', async () => {
+    const h = await attached()
+    act(() => h.result.current.setId('pty-1'))
+    h.emit(ev('pty-1', { phase: 'failed', attempt: 5, seq: 4 }))
+    await act(async () => {
+      await h.result.current.attach()
+    })
+    // id 가 정해질 때까지 지금 표시는 그대로
+    expect(h.result.current.link).toMatchObject({ phase: 'failed', seq: 4 })
+    h.emit(ev('pty-2', { phase: 'waiting', attempt: 1, seq: 1 }))
+    act(() => h.result.current.setId('pty-2'))
+    expect(h.result.current.link).toMatchObject({ phase: 'waiting', attempt: 1, seq: 1 })
+  })
+
   // AC-09 — 늦게 온 옛 상태로 되돌아가지 않는다
   it('지금 seq 이하의 이벤트는 버린다', async () => {
     const h = await attached()
