@@ -5,10 +5,6 @@ import type { Ref } from 'react'
 import { Button } from '../../components/ui/button'
 import type { PtyLink } from '../../lib/tauri'
 
-/** 재접속이 시작될 때 상태 알림 영역에 넣는 문구 — 시도 횟수가 바뀌어도 그대로 둬 다시 읽히지 않게 한다 */
-const STARTED = '연결이 끊겨 다시 접속하는 중입니다'
-const REASON: Record<NonNullable<PtyLink['reason']>, string> = { auth: '인증 실패', host_key: '호스트 키 확인 실패', spawn: '접속할 수 없음' }
-
 export interface ReconnectNoticeProps {
   /** 지금 연결 상태 — null 이면 연결됨(Live) */
   link: PtyLink | null
@@ -21,6 +17,10 @@ export interface ReconnectNoticeProps {
   /** ① 문구의 id — 재접속 중 터미널 입력의 설명(aria-describedby)으로 쓴다 */
   messageId?: string
 }
+
+/** 재접속이 시작될 때 상태 알림 영역에 넣는 문구 — 시도 횟수가 바뀌어도 그대로 둬 다시 읽히지 않게 한다 */
+const STARTED = '연결이 끊겨 다시 접속하는 중입니다'
+const REASON: Record<NonNullable<PtyLink['reason']>, string> = { auth: '인증 실패', host_key: '호스트 키 확인 실패', spawn: '접속할 수 없음' }
 
 /**
  * 종료 안내와 같은 자리·모양(xterm host 앞 — AX-34). role=alert 는 ② 문구에만 두고 버튼은 형제로 둔다(AX-35).
