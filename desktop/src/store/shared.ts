@@ -22,8 +22,8 @@ type SharedHosts = Pick<HostsState, 'baseRepos' | 'baseDirs' | 'repoHosts'>
 type SharedUi = {
   worktreePathMap: UiState['worktreePathMap']
   agentCommands: UiState['agentCommands']
-  /** 포커스는 기기마다 다르므로 뺀다 */
-  panes: Record<string, Pick<IssuePanes, 'tree' | 'seq'>>
+  /** 포커스는 기기마다 다르므로 뺀다. first(원격 tmux 의 기본 세션을 쓰는 패널)는 기기마다 같아야 한다(#89 D-26) */
+  panes: Record<string, Pick<IssuePanes, 'tree' | 'seq' | 'first'>>
   /**
    * 열어 본 이슈의 정보(번호·제목) — 다른 기기가 연 이슈의 터미널도 이 화면의 에이전트 현황에 이름과 함께 나오고,
    * 다른 PC 에서 그 이슈를 바로 열 수 있다
@@ -37,7 +37,7 @@ export function pickSharedUi(s: UiState): SharedUi {
   return {
     worktreePathMap: s.worktreePathMap,
     agentCommands: s.agentCommands,
-    panes: Object.fromEntries(Object.entries(s.panes).map(([id, p]) => [id, { tree: p.tree, seq: p.seq }])),
+    panes: Object.fromEntries(Object.entries(s.panes).map(([id, p]) => [id, { tree: p.tree, seq: p.seq, ...(p.first !== undefined && { first: p.first }) }])),
   }
 }
 
@@ -57,7 +57,9 @@ export function applySharedUi(value: unknown) {
         const tree = (p.tree ?? null) as PaneNode | null
         // 이 기기에서 포커스하던 패널이 아직 있으면 그대로 둔다
         const focused = s.panes[id]?.focused ?? null
-        panes[id] = { tree, seq: p.seq, focused: focused !== null && leafIds(tree).includes(focused) ? focused : null }
+        // first 는 지금 패널이 아니어도(첫 패널을 닫은 뒤) 그대로 받는다. 없으면(이전 버전 화면) 이 기기의 값을 둔다
+        const first = typeof p.first === 'string' ? p.first : s.panes[id]?.first
+        panes[id] = { tree, seq: p.seq, focused: focused !== null && leafIds(tree).includes(focused) ? focused : null, ...(first !== undefined && { first }) }
       }
       next.panes = panes
       // 다른 기기가 패널 구성을 지운 이슈(작업 폴더 삭제 등)는 터미널 시작 표시도 지운다 — 지워진 폴더에서 셸을 다시 띄우지 않게

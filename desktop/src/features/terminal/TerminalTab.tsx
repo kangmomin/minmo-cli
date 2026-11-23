@@ -28,10 +28,13 @@ import { attachWebgl } from './webgl'
 /** remote.tmux: 전용 tmux 세션으로 여는가(설정이 켜져 있고 원격에 tmux 가 있을 때) */
 export type TerminalSessionSpec = { issueId: string; cwd: string; remote?: { host: string; tmux: boolean } }
 
-/** 원격 tmux 세션 선택: 이슈의 첫 패널이 기본 세션(앱을 꺼도 유지), 나머지는 패널과 함께 사라지는 세션 */
+/**
+ * 원격 tmux 세션 선택: 이슈의 첫 패널(first)이 기본 세션, 나머지는 그 패널의 세션(-pN — 패널을 닫을 때 끝낸다). 둘 다 앱을 꺼도 남는다.
+ * first 는 분할·닫기로 바뀌지 않는다 — 첫 패널을 닫아도 남은 패널이 기본 세션으로 옮겨 붙지 않고 자기 세션에 다시 붙게(#89 D-26)
+ */
 function paneRole(issueId: string, paneId: string) {
-  const first = leafIds(useUiStore.getState().panes[issueId]?.tree ?? null)[0]
-  return { primary: first === undefined || first === paneId, seq: Number(paneId.slice(paneId.lastIndexOf('::') + 2)) || 1 }
+  const first = useUiStore.getState().firstPane(issueId)
+  return { primary: first === null || first === paneId, seq: Number(paneId.slice(paneId.lastIndexOf('::') + 2)) || 1 }
 }
 
 /** 터미널 크기를 가져온 뒤 입력을 넣기까지 두는 틈 — 크기 변경과 입력이 겹치면 셸이 그 입력을 잃는다 */

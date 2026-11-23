@@ -17,6 +17,12 @@ export type Theme = 'ghostty' | 'black' | 'light'
  */
 export type IssuePanes = { tree: PaneNode | null; focused: string | null; seq: number; first?: string }
 
+/** 패널이 없을 때 새로 만드는 패널 하나 — 이 패널이 first 가 된다(패널을 처음 만드는 모든 경로가 쓴다) */
+function freshPanes(issueId: string, seq: number): IssuePanes & { focused: string } {
+  const id = paneIdOf(issueId, seq)
+  return { tree: leaf(id), focused: id, seq, first: id }
+}
+
 const THEME_VALUES: readonly Theme[] = ['ghostty', 'black', 'light']
 
 /** 터미널·파일 편집기의 글자 크기(px) */
@@ -207,11 +213,10 @@ export const useUiStore = create<UiState>()(
         }
         if (!cur || leaves.length === 0) {
           // 패널이 없으면(모두 닫음·아직 안 만듦) 새로 만든다
-          const seq = (cur?.seq ?? 0) + 1
-          const id = paneIdOf(issueId, seq)
-          cur = { tree: leaf(id), focused: id, seq }
-          if (!keepFirst) return commit(cur, id)
-          leaves.push(id)
+          const fresh = freshPanes(issueId, (cur?.seq ?? 0) + 1)
+          cur = fresh
+          if (!keepFirst) return commit(fresh, fresh.focused)
+          leaves.push(fresh.focused)
         } else if (!keepFirst && !leaves.some((p) => p in s.terminalIds)) {
           // 하나도 터미널을 띄우지 않았으면 그 자리를 쓴다
           return commit({ ...cur, focused: leaves[0] }, leaves[0])
@@ -219,7 +224,7 @@ export const useUiStore = create<UiState>()(
         const from = cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[leaves.length - 1]
         const seq = cur.seq + 1
         const id = paneIdOf(issueId, seq)
-        return commit({ tree: splitPane(cur.tree!, from, 'row', id), focused: id, seq }, id)
+        return commit({ ...cur, tree: splitPane(cur.tree!, from, 'row', id), focused: id, seq }, id)
       },
       openTerminal: (issueId) => {
         const s = get()
@@ -278,9 +283,17 @@ export const useUiStore = create<UiState>()(
           return { focusRequest: { paneId, token: (s.focusRequest?.token ?? 0) + 1 } }
         }),
       ensurePanes: (issueId) =>
-        set((s) => (s.panes[issueId] ? s : { panes: { ...s.panes, [issueId]: { tree: leaf(paneIdOf(issueId, 1)), focused: null, seq: 1 } } })),
-      // TODO(#89 5.2): Red 단계의 빈 스텁
-      firstPane: () => null,
+        set((s) => (s.panes[issueId] ? s : { panes: { ...s.panes, [issueId]: { ...freshPanes(issueId, 1), focused: null } } })),
+      firstPane: (issueId) => {
+        const cur = get().panes[issueId]
+        if (!cur) return null
+        if (cur.first !== undefined) return cur.first
+        // 이전 버전의 상태 — 지금 첫 패널로 한 번만 정한다(그 뒤에는 첫 패널을 닫아도 바꾸지 않는다)
+        const first = leafIds(cur.tree)[0]
+        if (first === undefined) return null
+        set((s) => (s.panes[issueId] === cur ? { panes: { ...s.panes, [issueId]: { ...cur, first } } } : s))
+        return first
+      },
       splitPane: (issueId, paneId, dir) =>
         set((s) => {
           const cur = s.panes[issueId]
@@ -290,7 +303,7 @@ export const useUiStore = create<UiState>()(
           const tree = splitPane(cur.tree, paneId, dir, newId)
           if (tree === cur.tree) return s
           return {
-            panes: { ...s.panes, [issueId]: { tree, focused: newId, seq } },
+            panes: { ...s.panes, [issueId]: { ...cur, tree, focused: newId, seq } },
             focusRequest: { paneId: newId, token: (s.focusRequest?.token ?? 0) + 1 },
           }
         }),
@@ -314,11 +327,10 @@ export const useUiStore = create<UiState>()(
         set((s) => {
           const cur = s.panes[issueId]
           if (cur?.tree) return s
-          const seq = (cur?.seq ?? 0) + 1
-          const id = paneIdOf(issueId, seq)
+          const next = freshPanes(issueId, (cur?.seq ?? 0) + 1)
           return {
-            panes: { ...s.panes, [issueId]: { tree: leaf(id), focused: id, seq } },
-            focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 },
+            panes: { ...s.panes, [issueId]: next },
+            focusRequest: { paneId: next.focused, token: (s.focusRequest?.token ?? 0) + 1 },
           }
         }),
     }),
