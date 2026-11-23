@@ -404,7 +404,7 @@ function TerminalSession({
       end: () => {
         if (disposed || state.ended) return
         state.ended = true
-        // 재접속 안내의 버튼도 터미널의 일부로 본다 — 종료 안내로 바뀌며 그 버튼이 사라진다
+        // [Assumption] 재접속 안내의 버튼에 포커스가 있을 때 종료되면 [다시 시작]으로 옮긴다 — 버튼이 사라지며 포커스를 잃지 않게 터미널 안과 같이 본다(Plan 이 두 규칙의 겹침을 정하지 않음)
         const focused = document.activeElement
         focusRestartButton.current = el.contains(focused) || (focused !== null && focused === reconnectButton.current)
         setEnded(true)
