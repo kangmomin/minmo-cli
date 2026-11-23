@@ -26,6 +26,9 @@ export interface PtyLinkState {
 /**
  * onEvent: 이 패널의 새 상태(실시간 이벤트)를 받아들일 때마다 — 화면에 그리기 전에 부른다
  * (바뀌기 전 화면의 포커스 위치를 보거나, 뒤따르는 출력보다 먼저 할 일을 한다)
+ *
+ * attach·setId·reset·linkRef 는 렌더가 바뀌어도 같은 값이다(useCallback·useRef) — 성능이 아니라 정확성 때문이다:
+ * attach·setId·linkRef 는 TerminalTab 의 터미널 세션 effect 의존성이라, 바뀌면 그 effect 가 터미널 화면을 다시 만든다
  */
 export function usePtyLink(tauri: Pick<TauriApi, 'onPtyLink'>, onEvent?: (e: PtyLinkEvent) => void): PtyLinkState {
   const [link, setLink] = useState<PtyLink | null>(null)
