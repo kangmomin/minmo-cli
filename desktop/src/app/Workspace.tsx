@@ -13,6 +13,7 @@ import { useAgentTracker } from '../features/agents/useAgentTracker'
 import { useDeepLinkOpen } from '../features/remote/deepLink'
 import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
 import { usePeerSync } from '../features/remote/peerSync'
+import { usePairSync } from '../features/pairSync/pairSync'
 import { RemoteAccessDialog } from '../features/remote/RemoteAccessDialog'
 import { useSharedTerminals } from '../features/remote/useRemoteHost'
 import { useBaseDeps } from './deps'
@@ -71,6 +72,7 @@ export function Workspace() {
   usePeerAgents(baseTauri)
   useAgentPublisher(baseTauri, useLocalRows())
   usePeerSync(baseTauri, { tauri: baseTauri, api: baseDeps.api, queryClient })
+  usePairSync(baseTauri, { api: baseDeps.api, onApplied: () => void queryClient.invalidateQueries() })
   useDeepLinkOpen()
   // 열어 둔 모든 터미널의 에이전트 상태를 추적한다(이슈 행·패널·현황·알림)
   useAgentTracker()
