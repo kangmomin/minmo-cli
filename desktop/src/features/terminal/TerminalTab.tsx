@@ -721,11 +721,11 @@ function TerminalSession({
     else if (linkPhase === null && was === 'notice') term.current?.t.focus()
   }, [linkPhase])
 
-  // 재접속 중에는 입력이 원격으로 가지 않는다 — 그 이유(① 문구)를 입력에도 연결한다(AX-39)
-  const reconnecting = !ended && (linkPhase === 'waiting' || linkPhase === 'connecting')
+  // 연결이 끊긴 동안(①·②)에는 입력이 원격으로 가지 않는다 — 그 이유(①·② 문구)를 입력에도 연결한다(AX-39)
+  const disconnected = !ended && linkPhase !== null
   useEffect(() => {
-    term.current?.t.textarea?.setAttribute('aria-describedby', reconnecting ? `${hintId} ${noticeId}` : hintId)
-  }, [reconnecting, hintId, noticeId, gen])
+    term.current?.t.textarea?.setAttribute('aria-describedby', disconnected ? `${hintId} ${noticeId}` : hintId)
+  }, [disconnected, hintId, noticeId, gen])
 
   // 표시·리사이즈 시 크기 맞추고 PTY 에 전달. 포커스는 옮기지 않는다 — 탭·이슈 전환 시 포커스 강탈 금지(AX-02)
   useEffect(() => {

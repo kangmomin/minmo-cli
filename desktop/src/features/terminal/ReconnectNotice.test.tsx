@@ -92,6 +92,15 @@ describe('ReconnectNotice ② 다시 접속하지 못함', () => {
     expect(alert.parentElement).toBe(button.parentElement)
   })
 
+  // AX-39 — 포커스가 [재접속] 으로 옮겨 온 뒤에도 실패 이유를 듣는다
+  it('② 문구는 messageId 를 id 로 갖고, [재접속] 의 aria-describedby 가 그 문구를 가리킨다', () => {
+    render(
+      <ReconnectNotice link={link({ phase: 'failed', attempt: 5 })} justConnectedAt={null} onReconnect={vi.fn()} messageId="notice-1" />,
+    )
+    expect(screen.getByRole('alert')).toHaveAttribute('id', 'notice-1')
+    expect(screen.getByRole('button', { name: '재접속' })).toHaveAttribute('aria-describedby', 'notice-1')
+  })
+
   // AC-07 — ①↔② 가 바뀌어도 같은 버튼 요소라 포커스가 유지된다
   it('[지금 재접속] 과 [재접속] 은 같은 버튼 요소다(문구만 바뀐다)', () => {
     const v = view({ link: link({ phase: 'connecting', attempt: 5 }) })

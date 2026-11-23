@@ -14,7 +14,7 @@ export interface ReconnectNoticeProps {
   onReconnect: () => void
   /** ①·② 의 버튼(같은 요소) — 실패로 바뀔 때 포커스를 옮기는 데 쓴다 */
   buttonRef?: Ref<HTMLButtonElement>
-  /** ① 문구의 id — 재접속 중 터미널 입력의 설명(aria-describedby)으로 쓴다 */
+  /** ①·② 문구의 id — 연결이 끊긴 동안 터미널 입력의 설명(aria-describedby)으로 쓰고, ② 에서는 [재접속] 의 설명으로도 쓴다 */
   messageId?: string
 }
 
@@ -41,7 +41,7 @@ export function ReconnectNotice({ link, justConnectedAt, onReconnect, buttonRef,
         <div className="absolute inset-x-2 bottom-2 z-10 flex flex-wrap items-center gap-3 rounded border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md">
           {failed ? (
             // 실패할 때마다 새로 마운트해 다시 읽히게 한다
-            <p key={`failed-${link.seq}`} role="alert" className="flex-1">
+            <p key={`failed-${link.seq}`} id={messageId} role="alert" className="flex-1">
               연결이 끊겼습니다. 다시 접속하지 못했습니다({link.reason ? REASON[link.reason] : `${link.attempt}번`})
             </p>
           ) : link !== null ? (
@@ -53,12 +53,14 @@ export function ReconnectNotice({ link, justConnectedAt, onReconnect, buttonRef,
             <p className="flex-1">{done}</p>
           )}
           {link !== null && (
-            // 시도 중에는 누를 수 없음을 aria-disabled 로 알린다 — disabled 는 포커스를 잃게 해 쓰지 않는다
+            // 시도 중에는 누를 수 없음을 aria-disabled 로 알린다 — disabled 는 포커스를 잃게 해 쓰지 않는다.
+            // ② 에서는 실패 이유를 버튼의 설명으로도 둔다 — 포커스가 [재접속] 으로 옮겨 온 뒤에도 들을 수 있게
             <Button
               ref={buttonRef}
               size="sm"
               variant="secondary"
               aria-disabled={connecting || undefined}
+              aria-describedby={failed ? messageId : undefined}
               className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
               onClick={() => {
                 if (!connecting) onReconnect()

@@ -1588,6 +1588,20 @@ describe('원격 터미널 재접속 (#89)', () => {
     expect(screen.getByRole('button', { name: '재접속' })).toHaveFocus()
   })
 
+  // AX-39 — 실패(②)한 뒤에도 입력은 원격으로 가지 않는다 → 그 이유(② 문구)를 입력의 설명으로 둔다
+  it('failed 상태에서도 입력 textarea 의 aria-describedby 에 안내 문구의 id 가 들어간다 — 다시 연결되면 빠진다', async () => {
+    const t = setupRemote()
+    await opened()
+    const input = xterm.instances[0].textarea as HTMLTextAreaElement
+    const hintId = input.getAttribute('aria-describedby')
+    t.emitLink({ id: 'pty-1', ...link({ phase: 'failed', attempt: 5, seq: 1 }) })
+    const alert = screen.getByRole('alert')
+    expect(alert.id).not.toBe('')
+    expect(input.getAttribute('aria-describedby')?.split(' ')).toEqual([hintId, alert.id])
+    t.emitLink({ id: 'pty-1', ...link({ phase: 'connected', attempt: 0, seq: 2, at: '14:02' }) })
+    expect(input.getAttribute('aria-describedby')).toBe(hintId)
+  })
+
   // EC-02 — 재접속 중의 입력은 원격으로 가지 않는다 → 맡긴 명령은 연결된 뒤에 넣어야 사라지지 않는다
   it('연결이 끊긴 동안에는 [에이전트 실행] 으로 맡긴 명령을 넣지 않고, 다시 연결되면 넣는다', async () => {
     const data = emitter<PtyDataEvent>()
