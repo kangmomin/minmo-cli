@@ -36,22 +36,25 @@ export type RemotePty = { host: string; session: string | null; ephemeral: boole
 export type PtySpawnRequest = { cwd: string; cols: number; rows: number; remote?: RemotePty; key?: string }
 /** end: 이 조각까지의 전체 출력 길이 — 붙는 화면이 지난 출력(PtyFound.scrollback)과 겹치는 조각을 가려낸다 */
 export type PtyDataEvent = { id: string; data: string; end?: number }
-/** 원격 터미널의 연결 상태(src-tauri/src/commands/pty_link.rs). connected = 연결됨(안내 없음) */
+/** 원격 터미널의 연결 상태(src-tauri/src/commands/pty.rs 의 LinkView). connected = 연결됨(안내 없음) */
 export type PtyLinkPhase = 'waiting' | 'connecting' | 'connected' | 'failed'
 /** seq: 상태가 바뀔 때마다 오르는 번호 — 늦게 온 옛 상태를 버린다. at: 다시 접속한 시각(HH:MM) */
 export type PtyLink = { phase: PtyLinkPhase; attempt: number; max: number; seq: number; reason: null | 'auth' | 'host_key' | 'spawn'; at: string | null }
 export type PtyLinkEvent = PtyLink & { id: string }
+/** 터미널이 붙은 tmux 세션(src-tauri/src/commands/pty.rs 의 PtyTmux) */
+export type PtyTmux = { session: string; ephemeral: boolean }
 /** 이미 떠 있는 터미널 — scrollback(지금까지의 출력)을 먼저 그리고 붙는다 */
-/** offset: scrollback 이 담은 마지막 위치(전체 출력 길이) */
-/** link: 원격 터미널의 지금 연결 상태, tmux: 그 터미널이 붙은 tmux 세션(Rust 가 가진 실제 값, 없으면 null) */
 export type PtyFound = {
   id: string
   scrollback: string
+  /** scrollback 이 담은 마지막 위치(전체 출력 길이) */
   offset: number
   cols: number
   rows: number
+  /** 원격 터미널의 지금 연결 상태 */
   link?: PtyLink
-  tmux?: { session: string; ephemeral: boolean } | null
+  /** 그 터미널이 붙은 tmux 세션(Rust 가 가진 실제 값, 없으면 null) */
+  tmux?: PtyTmux | null
 }
 export type PtyInfo = { id: string; key: string | null; cwd: string; host: string | null }
 /** by: 크기를 바꾼 화면이 ptyResize 에 넘긴 표시(없으면 null) — 화면이 자기가 바꾼 것을 알아본다 */

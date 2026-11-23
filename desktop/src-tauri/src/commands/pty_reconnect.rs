@@ -1,5 +1,5 @@
 // 원격 터미널 재접속 감독(#89). 원격 세션마다 스레드 하나가 끊김(Eof)·[지금 재접속](Kick)·시간을 받아
-// pty_link 의 전이를 적용하고 새 ssh 를 연다. 원격 세션의 pty-exit 는 이 감독만 낸다.
+// pty_link 의 전이를 적용하고 새 ssh 를 연다. 감독이 붙은 원격 세션의 pty-exit 는 이 감독만 낸다.
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, MutexGuard};
@@ -182,7 +182,6 @@ impl Supervisor {
             self.deadline_done = true;
             let alive = s.proc.alive();
             let seen = pty_link::visible(&s.proc.shared.tail());
-            let seq = s.link.seq;
             if pty_link::on_deadline(&mut s.link, gen, alive, seen, &pty::now_hhmm()) {
                 // 표시도 보이는 출력도 없이 멈춘 시도 — ssh 와 그 자손(ProxyCommand 등)을 잠금 밖에서 끝낸다.
                 // 곧 올 Eof 가 다음 시도로 넘긴다(유예 안에 오지 않으면 감독이 넘긴다)
@@ -196,7 +195,7 @@ impl Supervisor {
                 });
                 return Flow::Go;
             }
-            if s.link.seq != seq {
+            if s.link.provisional {
                 // 안전망 Live(표시가 빠진 환경·프롬프트 인증) — 입력을 받고 제목을 다시 통과시킨다
                 s.proc.shared.set_connecting(false);
                 pty::announce(&hub, &self.id, s, None);

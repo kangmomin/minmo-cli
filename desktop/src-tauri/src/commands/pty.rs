@@ -28,8 +28,6 @@ pub struct RemotePty {
 pub struct PtySession {
     pub(crate) proc: Proc,
     pub(crate) cwd: String,
-    /// 원격(ssh) 세션이면 호스트 별칭 — 이때 cwd 는 원격 경로다
-    host: Option<String>,
     /// 화면의 패널 id — 같은 패널을 여는 다른 기기(원격 접속)가 이 터미널에 함께 붙는다
     key: Option<String>,
     /// 최근 출력 — 나중에 붙은 화면이 지금까지의 내용을 그릴 수 있게 보관한다
@@ -48,6 +46,11 @@ pub struct PtySession {
 }
 
 impl PtySession {
+    /// 원격(ssh) 세션이면 호스트 별칭 — 이때 cwd 는 원격 경로다
+    fn host(&self) -> Option<&str> {
+        self.remote.as_ref().map(|r| r.host.as_str())
+    }
+
     /// 지금 세대를 올린다(link.gen 과 거울을 함께)
     pub(crate) fn advance_gen(&mut self) -> u64 {
         self.link.advance_gen();
@@ -96,10 +99,7 @@ impl GenShared {
             tail.push_str(text);
             // visible() 이 끝 TAIL_LIMIT 를 자르며 잘린 앞 조각을 버린다 — 그보다 넉넉히 남겨 이 자름이 보이지 않게
             if tail.len() > 2 * TAIL_LIMIT {
-                let mut cut = tail.len() - TAIL_LIMIT * 3 / 2;
-                while !tail.is_char_boundary(cut) {
-                    cut += 1;
-                }
+                let cut = pty_link::char_boundary_from(&tail, tail.len() - TAIL_LIMIT * 3 / 2);
                 tail.drain(..cut);
             }
         }
@@ -265,10 +265,7 @@ impl Scrollback {
         self.text.push_str(text);
         if self.text.len() > SCROLLBACK_LIMIT {
             // 넘친 만큼 앞을 버리되 줄 경계에서 자른다 — 제어 문자열 중간부터 다시 그리면 화면이 깨진다
-            let mut cut = self.text.len() - SCROLLBACK_LIMIT;
-            while !self.text.is_char_boundary(cut) {
-                cut += 1;
-            }
+            let cut = pty_link::char_boundary_from(&self.text, self.text.len() - SCROLLBACK_LIMIT);
             let cut = self.text[cut..].find('\n').map_or(cut, |i| cut + i + 1);
             self.text.drain(..cut);
             self.truncated = true;
@@ -319,9 +316,7 @@ impl Scrollback {
     }
 
     fn alt_screen(&self) -> bool {
-        ALT_SCREEN_MODES
-            .iter()
-            .any(|m| self.modes.get(m) == Some(&true))
+        pty_link::alt_screen_on(&self.modes)
     }
 
     /// 새 세대의 출력 앞에 넣을 준비 시퀀스. 옛 세대가 조각 끝에 남긴 잘린 모드 시퀀스는 버린다(새 출력과 이어 읽지 않게)
@@ -970,7 +965,7 @@ pub fn pty_list(state: State<'_, PtyState>) -> Result<Vec<PtyInfo>, String> {
             id: id.clone(),
             key: s.key.clone(),
             cwd: s.cwd.clone(),
-            host: s.host.clone(),
+            host: s.host().map(str::to_string),
         })
         .collect())
 }
@@ -996,7 +991,6 @@ pub(crate) fn spawn_session(hub: &Arc<Hub>, req: SpawnReq) -> Result<String, Str
     let session = PtySession {
         proc: opened.proc,
         cwd: req.cwd,
-        host: req.remote.as_ref().map(|r| r.host.clone()),
         key: req.key,
         scrollback: Arc::default(),
         cols: req.cols,
@@ -1193,8 +1187,10 @@ impl Reader {
         if s.link.seq == seq {
             return;
         }
-        // 구분 줄은 표시로 알았고 대체 화면이 아닐 때만 — tmux 제목으로 알았거나 대체 화면이면 커서가 어디인지 모른다
-        // (화면의 "다시 접속했습니다" 안내가 알린다, D-25)
+        // 구분 줄은 연결 표시(minmo-link)로 알았을 때만 넣는다 — tmux 제목으로 먼저 알았으면 커서가 어디인지 모른다
+        // (화면의 "다시 접속했습니다" 안내가 알린다, D-25). 준비 시퀀스가 대체 화면을 먼저 꺼 두므로 !alt 는 사실상
+        // 늘 참인 방어 검사다. tmux 재접속도 표시가 tmux 제목보다 먼저 와서 구분 줄은 tmux 화면 앞 일반 화면에
+        // 들어간다(화면에서는 tmux 가 덮는다)
         let alt = s.scrollback.lock().map_or(true, |sb| sb.alt_screen());
         let inject = (separate && signal == Signal::Marker && !alt)
             .then(|| pty_link::separator(s.link.at.as_deref().unwrap_or_default()));
@@ -1383,7 +1379,7 @@ pub async fn pty_processes(state: State<'_, PtyState>, id: String) -> Result<Vec
     let pid = {
         let sessions = state.hub.sessions.lock().map_err(err)?;
         match sessions.get(&id) {
-            Some(s) if s.host.is_none() => s.proc.child.process_id(),
+            Some(s) if s.remote.is_none() => s.proc.child.process_id(),
             _ => None,
         }
     };
@@ -1427,7 +1423,7 @@ pub(crate) fn kill_all_in(hub: &Hub) {
 
 /// 같은 호스트(None = 이 PC)의 세션이고 cwd 가 path 와 같거나 그 하위인가
 fn in_target(s: &PtySession, path: &str, host: Option<&str>) -> bool {
-    if s.host.as_deref() != host {
+    if s.host() != host {
         return false;
     }
     match host {

@@ -33,7 +33,7 @@ pub(crate) struct Timing {
     pub delays: [Duration; MAX_ATTEMPTS as usize],
     /// 시도(Connecting)가 연결 표시 없이 이만큼 지나면 마감
     pub deadline: Duration,
-    /// 연결됨·실패 중에 세션이 남아 있는지(와 EOF 없이 끝난 ssh)를 보는 주기
+    /// 연결됨·시도 중·실패 중에 세션이 남아 있는지(와 EOF 없이 끝난 ssh)를 보는 주기
     pub poll: Duration,
     /// 끝난(끝낸) ssh 의 Eof 를 기다리는 유예 — 지나면 감독이 대신 처리한다
     pub grace: Duration,
@@ -261,17 +261,21 @@ pub(crate) fn normalize_tail(tail: &str) -> String {
         .collect()
 }
 
+/// at 이상에서 처음 나오는 글자 경계 — 앞을 자를 때 UTF-8 글자 중간을 피한다
+pub(crate) fn char_boundary_from(text: &str, mut at: usize) -> usize {
+    while !text.is_char_boundary(at) {
+        at += 1;
+    }
+    at
+}
+
 /// 끝 TAIL_LIMIT 바이트. 자를 때 걸린 앞 조각(제어 문자열의 중간일 수 있다)은 첫 제어 문자까지 버린다 —
 /// 그 문자가 BEL 이면 잘린 OSC 의 끝이므로 함께 버린다
 fn tail_of(text: &str) -> &str {
     if text.len() <= TAIL_LIMIT {
         return text;
     }
-    let mut cut = text.len() - TAIL_LIMIT;
-    while !text.is_char_boundary(cut) {
-        cut += 1;
-    }
-    let rest = &text[cut..];
+    let rest = &text[char_boundary_from(text, text.len() - TAIL_LIMIT)..];
     match rest.find(|c: char| c.is_ascii_control()) {
         Some(i) if rest.as_bytes()[i] == 0x07 => &rest[i + 1..],
         Some(i) => &rest[i..],
@@ -481,6 +485,11 @@ impl MarkerFilter {
     }
 }
 
+/// 대체 화면 모드가 하나라도 켜져 있는가
+pub(crate) fn alt_screen_on(modes: &BTreeMap<u16, bool>) -> bool {
+    ALT_SCREEN_MODES.iter().any(|m| modes.get(m) == Some(&true))
+}
+
 /// 재접속한 새 ssh 의 출력 앞에 넣는 준비 시퀀스 — 끊기기 전 프로그램이 켜 둔 모드를 끄고 커서를 맨 아래 새 줄로
 pub(crate) fn reattach_prelude(
     modes: &BTreeMap<u16, bool>,
@@ -489,7 +498,7 @@ pub(crate) fn reattach_prelude(
 ) -> String {
     let on = |m: &u16| modes.get(m) == Some(&true);
     let mut out = String::new();
-    if ALT_SCREEN_MODES.iter().any(on) {
+    if alt_screen_on(modes) {
         out.push_str("\x1b[?1049l");
     }
     for m in INPUT_MODES.iter().chain([&SYNC_OUTPUT]).filter(|m| on(m)) {

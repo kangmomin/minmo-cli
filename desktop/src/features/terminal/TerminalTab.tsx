@@ -10,7 +10,7 @@ import { useBaseDeps } from '../../app/deps'
 import { Button } from '../../components/ui/button'
 import { newOrigin } from '../../lib/sharedState'
 import { remotePty } from '../../lib/sshHost'
-import type { PtyFound, TauriApi, WindowsPty } from '../../lib/tauri'
+import type { PtyTmux, TauriApi, WindowsPty } from '../../lib/tauri'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
 import type { UiState } from '../../store/ui'
@@ -43,8 +43,6 @@ function paneRole(issueId: string, paneId: string) {
 const TAKE_OVER_SETTLE_MS = 250
 /** 원격 터미널이 다시 접속할 때 그 패널의 출력을 에이전트 활동으로 세지 않는 시간(#89) */
 const RECONNECT_MUTE_MS = 3000
-
-type PtyTmux = NonNullable<PtyFound['tmux']>
 
 /** 패널이 아직 화면 구성에 있는가 — 없어진 패널의 터미널만 끝낸다 */
 function paneExists(issueId: string, paneId: string): boolean {
@@ -468,9 +466,8 @@ function TerminalSession({
     const kill = (id: string, closed: boolean) => {
       const killed = tauri.ptyKill(id).catch(() => undefined)
       if (!closed || remoteHost === undefined) return
-      const where = remoteHost
       void Promise.all([tmux, killed]).then(([info]) => {
-        if (info?.ephemeral) return tauri.sshExec(where, ['tmux', '-L', 'minmo', 'kill-session', '-t', `=${info.session}`]).then(() => undefined, () => undefined)
+        if (info?.ephemeral) return tauri.sshExec(remoteHost, ['tmux', '-L', 'minmo', 'kill-session', '-t', `=${info.session}`]).then(() => undefined, () => undefined)
       })
     }
 
