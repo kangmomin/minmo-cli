@@ -14,7 +14,7 @@ import { Textarea } from '../../components/ui/textarea'
 import { useUiStore } from '../../store/ui'
 import { LAUNCH_LABEL } from '../agents/launch'
 import { goToPane } from '../agents/navigate'
-import { isActive, useE2eQueueStore } from './queueStore'
+import { ALREADY_QUEUED_TEXT, isActive, useE2eQueueStore } from './queueStore'
 import type { E2eJob, JobNotice } from './queueStore'
 import { DEFAULT_ROLES, E2E_ROLES, MODEL_RE, ROLE_KINDS, ROLE_LABEL } from './roles'
 import type { E2eRole, RoleKind } from './roles'
@@ -71,7 +71,7 @@ function statusText(j: E2eJob): string {
     case 'queued':
       return '대기'
     case 'running':
-      return `실행 중 ${j.stage + 1}/3 ${ROLE_LABEL[E2E_ROLES[j.stage]]}${j.waitingHost ? ' · 원격 호스트 연결 대기' : ''}`
+      return `실행 중 ${j.stage + 1}/${E2E_ROLES.length} ${ROLE_LABEL[E2E_ROLES[j.stage]]}${j.waitingHost ? ' · 원격 호스트 연결 대기' : ''}`
     case 'done':
       return '완료'
     case 'failed':
@@ -175,7 +175,7 @@ function JobRow({ job, onDone, onRemove }: { job: E2eJob; onDone(): void; onRemo
           {statusText(job)}
         </span>
         <span role="status" className="block text-xs text-muted-foreground" data-testid="e2e-retry-status">
-          {duplicate && '이미 E2E 큐에서 대기·실행 중입니다'}
+          {duplicate && ALREADY_QUEUED_TEXT}
         </span>
         {job.status === 'running' && job.notice && (
           <span className="block text-xs text-amber-700 dark:text-amber-400" data-testid="e2e-job-notice">

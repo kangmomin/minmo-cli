@@ -42,6 +42,9 @@ export interface E2eQueueState {
   setWaitingHost(id: string, stage: JobStage, waiting: boolean): void
 }
 
+/** 같은 이슈가 이미 대기·실행 중이라 넣지 않았을 때의 안내(EC-04) — 이슈 화면과 E2E 큐 대화상자가 함께 쓴다 */
+export const ALREADY_QUEUED_TEXT = '이미 E2E 큐에서 대기·실행 중입니다'
+
 /** 대기·실행 중(아직 끝나지 않음) */
 export const isActive = (j: E2eJob) => j.status === 'queued' || j.status === 'running'
 

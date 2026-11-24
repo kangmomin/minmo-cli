@@ -9,7 +9,7 @@ import { useRepoFullNameIfNicknamed, useRepoLabel } from '../../store/repos'
 import type { IssueOpenState } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { LaunchAgentDialog } from '../agents/LaunchAgentDialog'
-import { useE2eQueueStore } from '../e2eQueue/queueStore'
+import { ALREADY_QUEUED_TEXT, useE2eQueueStore } from '../e2eQueue/queueStore'
 import { IssueManageActions } from './IssueManageActions'
 import { LocalFilesDialog } from './LocalFilesDialog'
 import { useIssueActions } from './useWorktree'
@@ -102,7 +102,7 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
             <FlaskConicalIcon /> E2E 큐에 추가
           </Button>
           <span role="status" className="text-xs text-muted-foreground" data-testid="e2e-enqueue-status">
-            {queued?.issueId === issueId && (queued.added ? 'E2E 큐에 추가했습니다' : '이미 E2E 큐에서 대기·실행 중입니다')}
+            {queued?.issueId === issueId && (queued.added ? 'E2E 큐에 추가했습니다' : ALREADY_QUEUED_TEXT)}
           </span>
           <Button size="sm" variant="ghost" onClick={() => setLocalOpen(true)}>
             <FileKeyIcon /> 로컬 파일
