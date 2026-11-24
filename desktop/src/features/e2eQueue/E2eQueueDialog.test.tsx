@@ -1,5 +1,5 @@
 // E2E 큐 화면(#92) — 작업 목록·버튼, 역할 설정(CLI·모델·지시문), 상단 버튼의 수·"확인 필요"
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -41,7 +41,14 @@ beforeEach(() => {
     e2eRoles: DEFAULT_ROLES,
     selectedIssueId: ISSUE,
     tab: 'notes',
-    panes: { [ISSUE]: { tree: { kind: 'split', dir: 'row', a: { kind: 'leaf', id: PANE_1 }, b: { kind: 'leaf', id: PANE_2 } }, focused: PANE_1, seq: 2, first: PANE_1 } },
+    panes: {
+      [ISSUE]: {
+        tree: { kind: 'split', dir: 'row', a: { kind: 'leaf', id: PANE_1 }, b: { kind: 'leaf', id: PANE_2 } },
+        focused: PANE_1,
+        seq: 2,
+        first: PANE_1,
+      },
+    },
   })
 })
 
@@ -96,7 +103,12 @@ describe('작업 탭', () => {
   })
 
   it('AC-07 [취소]는 대기·실행 중 작업을 취소하고 아직 입력되지 않은 명령을 지운다', async () => {
-    useE2eQueueStore.setState({ jobs: [job({ id: 'a', status: 'running', panes: [PANE_2, null, null] }), job({ id: 'b', issueId: 'acme/app#7', title: 'app #7 Fix' })] })
+    useE2eQueueStore.setState({
+      jobs: [
+        job({ id: 'a', status: 'running', panes: [PANE_2, null, null] }),
+        job({ id: 'b', issueId: 'acme/app#7', title: 'app #7 Fix' }),
+      ],
+    })
     queueLaunch(PANE_2, 'claude x')
     const { user } = renderDialog()
     await user.click(screen.getByRole('button', { name: '취소 (app #42 Add login)' }))
@@ -150,6 +162,60 @@ describe('작업 탭', () => {
   })
 })
 
+describe('Phase 8 접근성 회귀 — 누른 버튼이 사라져도 포커스를 잃지 않는다(WCAG 2.4.3)', () => {
+  it('[취소] 뒤에는 같은 행의 [다시 실행]으로 포커스가 간다', async () => {
+    useE2eQueueStore.setState({ jobs: [job({ id: 'a', status: 'queued' })] })
+    const { user } = renderDialog()
+    await user.click(screen.getByRole('button', { name: '취소 (app #42 Add login)' }))
+    expect(screen.getByRole('button', { name: '다시 실행 (app #42 Add login)' })).toHaveFocus()
+  })
+
+  it('③에서 [다음 단계]로 완료되면 같은 행의 [다시 실행]으로, 단계만 넘어가면 [다음 단계]에 그대로 둔다', async () => {
+    useE2eQueueStore.setState({ jobs: [job({ id: 'a', status: 'running', stage: 1, panes: [PANE_1, PANE_2, null] })] })
+    const { user } = renderDialog()
+    const next = screen.getByRole('button', { name: '다음 단계 (app #42 Add login)' })
+    await user.click(next)
+    expect(next).toHaveFocus()
+    await user.click(next)
+    expect(useE2eQueueStore.getState().jobs[0].status).toBe('done')
+    expect(screen.getByRole('button', { name: '다시 실행 (app #42 Add login)' })).toHaveFocus()
+  })
+
+  it('[목록에서 지우기] 뒤에는 다음 행(없으면 이전 행)의 첫 버튼, 모두 지우면 빈 안내로 포커스가 간다', async () => {
+    useE2eQueueStore.setState({
+      jobs: [
+        job({ id: 'a', status: 'done' }),
+        job({ id: 'b', issueId: 'acme/app#7', title: 'app #7 Fix', status: 'failed', error: 'x' }),
+        job({ id: 'c', issueId: 'acme/app#8', title: 'app #8 Stop', status: 'cancelled' }),
+      ],
+    })
+    const { user } = renderDialog()
+    await user.click(screen.getByRole('button', { name: '목록에서 지우기 (app #7 Fix)' }))
+    expect(screen.getByRole('button', { name: '다시 실행 (app #8 Stop)' })).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: '목록에서 지우기 (app #8 Stop)' }))
+    expect(screen.getByRole('button', { name: '다시 실행 (app #42 Add login)' })).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: '목록에서 지우기 (app #42 Add login)' }))
+    expect(screen.getByText(/큐가 비어 있습니다/)).toHaveFocus()
+  })
+
+  it('[다시 실행] 중복 안내는 4초 뒤 지운다', () => {
+    vi.useFakeTimers()
+    try {
+      useE2eQueueStore.setState({ jobs: [job({ id: 'a', status: 'failed', error: 'x' }), job({ id: 'b', status: 'queued' })] })
+      renderDialog()
+      const row = jobRow(0)
+      fireEvent.click(within(row).getByRole('button', { name: '다시 실행 (app #42 Add login)' }))
+      expect(within(row).getByRole('status')).toHaveTextContent('이미 E2E 큐에서 대기·실행 중입니다')
+      act(() => vi.advanceTimersByTime(3900))
+      expect(within(row).getByRole('status')).toHaveTextContent('이미 E2E 큐에서 대기·실행 중입니다')
+      act(() => vi.advanceTimersByTime(100))
+      expect(within(row).getByRole('status')).toBeEmptyDOMElement()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('역할 설정 탭', () => {
   async function openRoles(agentModelsRaw?: (kind: string) => Promise<string>) {
     const r = renderDialog(agentModelsRaw)
@@ -161,7 +227,11 @@ describe('역할 설정 탭', () => {
   it('AC-10 역할마다 CLI·지시문을 고르면 ui store 에 저장한다 — CLI 를 바꾸면 모델은 기본값, [기본값]은 지시문을 되돌린다', async () => {
     useUiStore.getState().setE2eRole('edge', { ...DEFAULT_ROLES.edge, model: 'opus' })
     const { user } = await openRoles()
-    expect(screen.getAllByRole('group').map((g) => g.querySelector('legend')?.textContent)).toEqual(['① E2E 실행', '② 엣지케이스 찾기', '③ 엣지케이스 기반 테스트'])
+    expect(screen.getAllByRole('group').map((g) => g.querySelector('legend')?.textContent)).toEqual([
+      '① E2E 실행',
+      '② 엣지케이스 찾기',
+      '③ 엣지케이스 기반 테스트',
+    ])
     const edge = role('② 엣지케이스 찾기')
     await user.click(within(edge).getByRole('radio', { name: 'Codex' }))
     expect(useUiStore.getState().e2eRoles.edge).toMatchObject({ kind: 'codex', model: '' })
@@ -186,7 +256,12 @@ describe('역할 설정 탭', () => {
     const run = role('① E2E 실행')
     await waitFor(() => expect(within(run).getByRole('status')).toHaveTextContent('모델 2개'))
     const select = within(run).getByLabelText('모델')
-    expect([...select.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['기본값(CLI 설정)', 'GPT-5.1 Codex (gpt-5.1-codex)', 'GPT-5.1 Codex Mini (gpt-5.1-codex-mini)', '직접 입력…'])
+    expect([...select.querySelectorAll('option')].map((o) => o.textContent)).toEqual([
+      '기본값(CLI 설정)',
+      'GPT-5.1 Codex (gpt-5.1-codex)',
+      'GPT-5.1 Codex Mini (gpt-5.1-codex-mini)',
+      '직접 입력…',
+    ])
     await user.selectOptions(select, 'gpt-5.1-codex-mini')
     expect(useUiStore.getState().e2eRoles.run.model).toBe('gpt-5.1-codex-mini')
     expect(raw).toHaveBeenCalledWith('codex')
@@ -212,7 +287,11 @@ describe('역할 설정 탭', () => {
       return ''
     })
     const run = role('① E2E 실행')
-    await waitFor(() => expect(within(run).getByRole('status')).toHaveTextContent('모델 목록을 불러오지 못했습니다: gemini 를 찾지 못했습니다 — 모델 이름을 직접 입력할 수 있습니다'))
+    await waitFor(() =>
+      expect(within(run).getByRole('status')).toHaveTextContent(
+        '모델 목록을 불러오지 못했습니다: gemini 를 찾지 못했습니다 — 모델 이름을 직접 입력할 수 있습니다',
+      ),
+    )
     await user.selectOptions(within(run).getByLabelText('모델'), '직접 입력…')
     await user.type(within(run).getByLabelText('모델 이름'), 'gemini-2.5-pro')
     expect(useUiStore.getState().e2eRoles.run.model).toBe('gemini-2.5-pro')
@@ -273,6 +352,57 @@ describe('역할 설정 탭', () => {
   })
 })
 
+describe('Phase 8 접근성 회귀 — 역할 설정', () => {
+  async function openRoles(agentModelsRaw?: (kind: string) => Promise<string>) {
+    const r = renderDialog(agentModelsRaw)
+    await r.user.click(screen.getByRole('tab', { name: '역할 설정' }))
+    return r
+  }
+  const role = (name: string) => screen.getByRole('group', { name })
+
+  it('[기본값]을 누르면 버튼이 사라지므로 그 역할의 지시문으로 포커스가 간다', async () => {
+    useUiStore.getState().setE2eRole('edge', { ...DEFAULT_ROLES.edge, prompt: '바꾼 지시문' })
+    const { user } = await openRoles()
+    const edge = role('② 엣지케이스 찾기')
+    await user.click(within(edge).getByRole('button', { name: '기본값' }))
+    expect(within(edge).getByLabelText('지시문')).toHaveFocus()
+  })
+
+  it('모델 목록 상태는 select 의 설명이고, 받는 동안 [새로 고침]은 aria-disabled 로 포커스를 유지하며 눌러도 다시 받지 않는다', async () => {
+    let d = deferred<string>()
+    const raw = vi.fn(() => d.promise)
+    const { user } = await openRoles(raw)
+    const run = role('① E2E 실행')
+    expect(within(run).getByLabelText('모델')).toHaveAccessibleDescription('모델 목록을 불러오는 중…')
+    await waitFor(() => expect(raw).toHaveBeenCalled())
+    const calls = raw.mock.calls.length
+    const refresh = within(run).getByRole('button', { name: '모델 목록 새로 고침' })
+    expect(refresh).toHaveAttribute('aria-disabled', 'true')
+    expect(refresh).not.toBeDisabled()
+    await user.click(refresh)
+    expect(refresh).toHaveFocus()
+    expect(raw).toHaveBeenCalledTimes(calls)
+    const first = d
+    d = deferred<string>()
+    await act(async () => first.resolve(''))
+    await waitFor(() => expect(within(run).getByLabelText('모델')).toHaveAccessibleDescription('모델 3개'))
+    expect(refresh).not.toHaveAttribute('aria-disabled')
+  })
+
+  it('모델 목록 오류는 바로 읽히고(assertive), 직접 입력 오류는 role=alert 로 알린다', async () => {
+    useUiStore.getState().setE2eRole('run', { ...DEFAULT_ROLES.run, kind: 'gemini' })
+    const { user } = await openRoles(async (kind) => {
+      if (kind === 'gemini') throw new Error('없음')
+      return ''
+    })
+    const run = role('① E2E 실행')
+    await waitFor(() => expect(within(run).getByRole('status')).toHaveAttribute('aria-live', 'assertive'))
+    await user.selectOptions(within(run).getByLabelText('모델'), '직접 입력…')
+    await user.type(within(run).getByLabelText('모델 이름'), '--x')
+    expect(within(run).getByRole('alert')).toHaveTextContent('저장하지 않았습니다')
+  })
+})
+
 describe('상단 [E2E 큐] 버튼', () => {
   function renderButton() {
     const onClick = vi.fn()
@@ -290,7 +420,11 @@ describe('상단 [E2E 큐] 버튼', () => {
     expect(button()).toHaveAccessibleName('E2E 큐')
     act(() =>
       useE2eQueueStore.setState({
-        jobs: [job({ id: 'a', status: 'running', panes: [PANE_1, null, null] }), job({ id: 'b', issueId: 'x#1' }), job({ id: 'c', issueId: 'x#2', status: 'done' })],
+        jobs: [
+          job({ id: 'a', status: 'running', panes: [PANE_1, null, null] }),
+          job({ id: 'b', issueId: 'x#1' }),
+          job({ id: 'c', issueId: 'x#2', status: 'done' }),
+        ],
       }),
     )
     expect(button()).toHaveAccessibleName('E2E 큐 (2)')

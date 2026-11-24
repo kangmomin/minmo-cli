@@ -33,7 +33,10 @@ export function E2eQueueButton({ onClick }: { onClick(): void }) {
         >
           <FlaskConicalIcon />
           {active > 0 && (
-            <Badge variant={check ? 'destructive' : 'secondary'} className="px-1.5 py-0">
+            <Badge
+              variant={check ? 'outline' : 'secondary'}
+              className={check ? 'border-amber-500 px-1.5 py-0 text-amber-700 dark:text-amber-400' : 'px-1.5 py-0'}
+            >
               {active}
             </Badge>
           )}
