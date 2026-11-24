@@ -83,6 +83,12 @@ const finish = (j: E2eJob, status: 'done' | 'failed' | 'cancelled', error?: stri
   ...(error !== undefined && { error }),
 })
 
+/** 실행 중인 작업의 현재 단계 패널에서 아직 입력되지 않은 명령을 지운다 */
+function cancelPendingLaunch(job: E2eJob): void {
+  const pane = job.status === 'running' ? job.panes[job.stage] : null
+  if (pane !== null) cancelLaunch(pane)
+}
+
 export const useE2eQueueStore = create<E2eQueueState>()((set, get) => {
   /** id 의 작업 하나를 바꾼다. 목록이 그대로면 상태도 그대로 둬 구독자에게 알리지 않는다 */
   const change = (id: string, fn: (j: E2eJob) => E2eJob) =>
@@ -114,8 +120,7 @@ export const useE2eQueueStore = create<E2eQueueState>()((set, get) => {
       // [다음 단계]와 자동 완료가 겹치면 뒤에 온 쪽은 단계가 이미 달라 무시된다(EC-13)
       if (!job || job.status !== 'running' || job.stage !== expectedStage) return
       // 터미널이 뜨기 전에 넘기면 그 단계 명령이 나중에 실행돼 다음 단계와 동시에 돈다 — 아직 입력 안 된 명령은 지운다(AC-02·AC-06)
-      const pane = job.panes[job.stage]
-      if (pane !== null) cancelLaunch(pane)
+      cancelPendingLaunch(job)
       change(id, (j) => {
         if (j.status !== 'running' || j.stage !== expectedStage) return j
         if (j.stage === 2) return finish(j, 'done')
@@ -127,8 +132,7 @@ export const useE2eQueueStore = create<E2eQueueState>()((set, get) => {
       const job = get().jobs.find((j) => j.id === id)
       if (!job || !isActive(job)) return
       // 아직 입력되지 않은 명령은 지운다 — 이미 돌고 있는 에이전트는 패널에 남긴다(A-11, EC-16·EC-22)
-      const pane = job.status === 'running' ? job.panes[job.stage] : null
-      if (pane !== null) cancelLaunch(pane)
+      cancelPendingLaunch(job)
       change(id, (j) => finish(j, 'cancelled'))
     },
     retry: (id) => {
