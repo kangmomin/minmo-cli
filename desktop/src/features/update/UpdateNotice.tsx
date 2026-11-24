@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { Button } from '../../components/ui/button'
 import { getTauri } from '../../lib/tauri'
 import type { TauriApi } from '../../lib/tauri'
+import { isPrimaryWindow } from '../../lib/windowScope'
 import { useUpdateStore } from '../../store/update'
 import { checkForUpdate, installUpdate, progressPercent } from './update'
 
@@ -17,6 +18,8 @@ export function UpdateNotice({ tauri = getTauri() }: { tauri?: TauriApi }) {
   const { available, dismissed, installing, progress, error, set } = useUpdateStore()
 
   useEffect(() => {
+    // 업데이트 확인·안내는 주 창이 맡는다(보조 창마다 확인하고 설치를 따로 시작하지 않게, #105)
+    if (!isPrimaryWindow()) return
     const first = setTimeout(() => void checkForUpdate(tauri), UPDATE_CHECK_DELAY_MS)
     const again = setInterval(() => {
       // 설치 중에는 상태를 바꾸지 않는다

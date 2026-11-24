@@ -6,6 +6,7 @@ import type { LaunchKind } from '../features/agents/launch'
 import { closePane, leaf, leafIds, splitPane } from '../features/terminal/panes'
 import type { PaneNode, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
+import { followOtherWindows, perWindowStorage } from '../lib/windowScope'
 
 export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes'
 /** ghostty = Ghostty 터미널의 기본 색(기본값) */
@@ -341,7 +342,8 @@ export const useUiStore = create<UiState>()(
     }),
     {
       name: 'minmo-ui',
-      storage: createJSONStorage(() => localStorage),
+      // 창마다 다른 값(지금 보는 이슈·펼친 노드·탭)은 보조 창이 덮지 않는다. 보조 창은 고른 이슈 없이 시작한다(#105)
+      storage: createJSONStorage(() => perWindowStorage(['selectedIssueId', 'expanded', 'tab'], ['selectedIssueId'])),
       // Plan 은 terminal ids 도 persist 였으나 PTY 세션 id 는 프로세스 수명과 같아 재시작 후 의미가 없다 → 영속 대상에서 제외
       partialize: (s) => ({
         expanded: s.expanded,
@@ -386,6 +388,7 @@ export const useUiStore = create<UiState>()(
     },
   ),
 )
+followOtherWindows('minmo-ui', () => useUiStore.persist.rehydrate())
 
 /** 패널 id: 이슈 안에서 단조 증가하는 번호 */
 export const paneIdOf = (issueId: string, seq: number) => `${issueId}::${seq}`

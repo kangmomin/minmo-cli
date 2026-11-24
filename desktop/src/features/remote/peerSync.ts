@@ -17,6 +17,7 @@ import type { ApiClient, SyncDoc, SyncNote, SyncSetting } from '@minmo/api-clien
 import { SHARED_CONFLICT } from '../../lib/sharedState'
 import type { Peer, SharedValue, TauriApi } from '../../lib/tauri'
 import type { RemoteConnection } from '../../lib/tauri.remote'
+import { ownsAppTasks } from '../../lib/windowScope'
 import { usePeersStore } from '../../store/peers'
 import { splitFullName, useReposStore } from '../../store/repos'
 import { useUiStore } from '../../store/ui'
@@ -226,7 +227,7 @@ export function usePeerSync(tauri: TauriApi, deps: SyncDeps) {
     .sort()
     .join('\n')
   useEffect(() => {
-    if (tauri.runtime !== 'native' || !enabled || onlineIds === '') return
+    if (!ownsAppTasks(tauri) || !enabled || onlineIds === '') return
     const run = () => {
       for (const id of onlineIds.split('\n')) {
         const peer = usePeersStore.getState().peers.find((p) => p.id === id)
