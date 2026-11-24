@@ -1,5 +1,5 @@
-import { ArrowDownWideNarrowIcon, BotIcon, ListFilterIcon, ServerCogIcon } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { ArrowDownWideNarrowIcon, BotIcon, LayersIcon, ListFilterIcon, ServerCogIcon } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { GitHubOwner, GitHubRepo } from '@minmo/core'
 
@@ -14,11 +14,15 @@ import { ScrollArea } from '../../components/ui/scroll-area'
 import { useHostsStore } from '../../store/hosts'
 import { usePeersStore } from '../../store/peers'
 import { useBaseDeps } from '../../app/deps'
-import { LOCAL_OWNER, splitFullName, useReposStore } from '../../store/repos'
+import { windowScope } from '../../lib/windowScope'
+import type { WindowScope } from '../../lib/windowScope'
+import { LOCAL_OWNER, isLocalOwner, splitFullName, useReposStore } from '../../store/repos'
 import { useUiStore } from '../../store/ui'
 import { HostsDialog } from '../hosts/HostsDialog'
 import type { PreviewIssue } from '../settings/SettingsDialog'
 import { AddRepoMenu } from './AddRepoMenu'
+import { GroupDialog } from './GroupDialog'
+import { GroupNode } from './GroupNode'
 import { PublishDialog } from './LocalRepoDialogs'
 import { OrgNode } from './OrgNode'
 import { PublishContext } from './publishContext'
@@ -38,9 +42,35 @@ export interface SidebarProps {
   onOpenSettings(scope: SettingsScope, preview: PreviewIssue | null): void
 }
 
-/** 좌측 트리: 개인 계정(첫 노드) → 조직 → 저장소 → ★기타 + 이슈 (AC-03) */
 /** 호스트 선택 값에서 다른 PC 를 가리는 접두어(SSH 호스트 별칭과 겹치지 않는다) */
 const PEER_PREFIX = 'peer:'
+
+const sameName = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
+/** 범위 창에서 처음에 펼쳐 둘 노드 — 창을 열자마자 그 조직·저장소·그룹의 내용이 보이게 */
+function scopeNodeIds(scope: WindowScope): string[] {
+  switch (scope.kind) {
+    case 'org':
+      return [`org:${scope.owner}`]
+    case 'repo':
+      return [`org:${scope.owner}`, `repo:${scope.owner}/${scope.repo}`]
+    case 'group':
+      return [`group:${scope.id}`]
+  }
+}
+
+/** 이 창의 범위(#105) — URL 에서 한 번 읽는다. 범위 창은 범위 노드를 펼친 채 시작한다 */
+function useWindowScope(): WindowScope | null {
+  const [scope] = useState(() => windowScope())
+  useEffect(() => {
+    if (!scope) return
+    const { setExpanded } = useUiStore.getState()
+    for (const id of scopeNodeIds(scope)) setExpanded(id, true)
+  }, [scope])
+  return scope
+}
+
+/** 좌측 트리: 그룹 → 개인 계정(첫 노드) → 조직 → 저장소 → ★기타 + 이슈 (AC-03). 범위 창이면 그 조직·저장소·그룹만 */
 
 export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: SidebarProps & { className?: string }) {
   const aliases = useHostsStore((s) => s.aliases)
@@ -61,6 +91,10 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
   const host = useHost()
   const added = useReposStore((s) => s.added)
   const localRepos = useReposStore((s) => s.local)
+  const groups = useReposStore((s) => s.groups)
+  const [groupOpen, setGroupOpen] = useState(false)
+  const scope = useWindowScope()
+  const groupIds = useMemo(() => Object.keys(groups).sort((a, b) => groups[a].name.localeCompare(groups[b].name)), [groups])
   // 직접 추가한 GitHub 저장소를 소유자별로 묶는다(소유자 이름은 대소문자를 가리지 않는다)
   const addedByOwner = useMemo(() => {
     const map = new Map<string, { login: string; repos: GitHubRepo[] }>()
@@ -170,10 +204,14 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
         >
           <ArrowDownWideNarrowIcon />
         </Button>
+        <Button variant="ghost" size="icon-sm" aria-label="그룹 만들기" title="그룹 만들기(여러 저장소를 이름을 붙여 묶기)" onClick={() => setGroupOpen(true)}>
+          <LayersIcon />
+        </Button>
         <AddRepoMenu />
         <RefreshButton />
       </div>
       <VisibleReposDialog open={filterOpen} onOpenChange={setFilterOpen} />
+      <GroupDialog id={null} open={groupOpen} onOpenChange={setGroupOpen} />
       {publishId !== null && <PublishDialog id={publishId} open onOpenChange={(o) => !o && setPublishId(null)} />}
       {!connection.ready && selected !== null && (
         <HostStatusNotice
@@ -204,27 +242,78 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
                 </Button>
               </div>
             )}
-            {localList.length > 0 && (
-              <OrgNode
-                owner={{ login: LOCAL_OWNER, kind: 'org', avatarUrl: null }}
-                label="로컬 저장소"
-                extra={localList}
-                fixed
+            {scope ? (
+              <ScopedTree
+                scope={scope}
+                owners={owners.data}
+                addedByOwner={addedByOwner}
+                localList={localList}
                 onOpenSettings={onOpenSettings}
               />
+            ) : (
+              <>
+                {groupIds.map((id) => (
+                  <GroupNode key={id} id={id} onOpenSettings={onOpenSettings} />
+                ))}
+                {localList.length > 0 && (
+                  <OrgNode
+                    owner={{ login: LOCAL_OWNER, kind: 'org', avatarUrl: null }}
+                    label="로컬 저장소"
+                    extra={localList}
+                    fixed
+                    onOpenSettings={onOpenSettings}
+                  />
+                )}
+                {owners.data && owners.data.length > 0 && shownOwners?.length === 0 && foreignOwners.length === 0 && (
+                  <p className="p-2 text-xs text-muted-foreground">표시하도록 고른 저장소가 없습니다 — 위의 필터 버튼에서 고르세요.</p>
+                )}
+                {shownOwners?.map((o) => (
+                  <OrgNode key={o.login} owner={o} extra={addedByOwner.get(o.login.toLowerCase())?.repos} onOpenSettings={onOpenSettings} />
+                ))}
+                {foreignOwners.map(({ owner, repos }) => (
+                  <OrgNode key={owner.login} owner={owner} extra={repos} fixed onOpenSettings={onOpenSettings} />
+                ))}
+              </>
             )}
-            {owners.data && owners.data.length > 0 && shownOwners?.length === 0 && foreignOwners.length === 0 && (
-              <p className="p-2 text-xs text-muted-foreground">표시하도록 고른 저장소가 없습니다 — 위의 필터 버튼에서 고르세요.</p>
-            )}
-            {shownOwners?.map((o) => (
-              <OrgNode key={o.login} owner={o} extra={addedByOwner.get(o.login.toLowerCase())?.repos} onOpenSettings={onOpenSettings} />
-            ))}
-            {foreignOwners.map(({ owner, repos }) => (
-              <OrgNode key={owner.login} owner={owner} extra={repos} fixed onOpenSettings={onOpenSettings} />
-            ))}
           </div>
         </PublishContext.Provider>
       </ScrollArea>
     </SidebarFrame>
   )
+}
+
+/**
+ * 범위 창의 트리(#105). "보이는 저장소" 필터는 건너뛴다 — 사용자가 그 조직·저장소를 골라 창을 열었다.
+ * 저장소 창은 GitHub 목록을 불러오지 않고 그 저장소 하나만 둔다(소유자가 내 조직이 아니어도 같은 모양)
+ */
+function ScopedTree(props: {
+  scope: WindowScope
+  owners: GitHubOwner[] | undefined
+  addedByOwner: Map<string, { login: string; repos: GitHubRepo[] }>
+  localList: GitHubRepo[]
+  onOpenSettings: SidebarProps['onOpenSettings']
+}) {
+  const { scope, owners, addedByOwner, localList, onOpenSettings } = props
+  const groupExists = useReposStore((s) => scope.kind === 'group' && s.groups[scope.id] !== undefined)
+  const missing = (text: string) => <p className="p-2 text-xs text-muted-foreground">{text}</p>
+  if (scope.kind === 'group') return groupExists ? <GroupNode id={scope.id} onOpenSettings={onOpenSettings} /> : missing('이 그룹이 삭제되었습니다 — 창을 닫거나 새 창을 여세요.')
+
+  const local = isLocalOwner(scope.owner)
+  const localNode = (extra: GitHubRepo[]) => (
+    <OrgNode owner={{ login: LOCAL_OWNER, kind: 'org', avatarUrl: null }} label="로컬 저장소" extra={extra} fixed onOpenSettings={onOpenSettings} />
+  )
+  if (scope.kind === 'repo') {
+    const repo: GitHubRepo = { owner: scope.owner, name: scope.repo, defaultBranch: '' }
+    // 로컬 저장소는 폴더가 있는 호스트를 볼 때만 연다(다른 호스트에서 그 경로로 작업하지 않게)
+    if (local) return localList.some((r) => r.name === scope.repo) ? localNode([repo]) : missing('이 로컬 저장소는 지금 고른 호스트에 없습니다 — 위에서 호스트를 바꾸세요.')
+    return <OrgNode owner={owners?.find((o) => sameName(o.login, scope.owner)) ?? { login: scope.owner, kind: 'org', avatarUrl: null }} extra={[repo]} fixed onOpenSettings={onOpenSettings} />
+  }
+  if (local) return localList.length > 0 ? localNode(localList) : missing('이 호스트에 로컬 저장소가 없습니다.')
+  // 조직 목록을 불러오는 중이면 위의 불러오기 표시가 보인다
+  if (!owners) return null
+  const mine = owners.find((o) => sameName(o.login, scope.owner))
+  const extra = addedByOwner.get(scope.owner.toLowerCase())?.repos
+  if (mine) return <OrgNode owner={mine} extra={extra} unfiltered onOpenSettings={onOpenSettings} />
+  if (extra) return <OrgNode owner={{ login: extra[0].owner, kind: 'org', avatarUrl: null }} extra={extra} fixed onOpenSettings={onOpenSettings} />
+  return missing('이 조직을 목록에서 찾을 수 없습니다.')
 }

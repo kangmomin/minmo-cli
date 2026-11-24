@@ -105,9 +105,10 @@ test('AC-02 최소 폭(240)에서 배지가 있는 저장소·연결 대기 행 
     const firstButton = (await buttons.first().boundingBox())!
     for (const badge of await badges.all()) {
       expect(await badge.evaluate((el) => getComputedStyle(el.parentElement!).overflowX), `${name} 배지를 담은 칸`).toBe('hidden')
-      // 보조 확인: 배지가 첫 버튼과 겹치지 않는다
-      const b = (await badge.boundingBox())!
-      expect(b.x + b.width).toBeLessThanOrEqual(firstButton.x)
+      // 보조 확인: 배지를 자르는 칸이 첫 버튼과 겹치지 않는다 — 배지 상자 자체는 그 칸 밖으로 나갈 수 있지만 잘려 보이지 않는다
+      // (행 버튼이 늘면(#105 새 창으로 열기) 최소 폭에서 배지 상자가 칸 끝을 넘는다)
+      const clip = await badge.evaluate((el) => el.parentElement!.getBoundingClientRect().right)
+      expect(clip).toBeLessThanOrEqual(firstButton.x)
     }
     for (const button of await buttons.all()) {
       const r = (await button.boundingBox())!

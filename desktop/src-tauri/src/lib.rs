@@ -60,7 +60,13 @@ pub fn run() {
             if webview.label() == "main"
                 && payload.event() == tauri::webview::PageLoadEvent::Started
             {
-                pty::kill_all(&webview.state::<pty::PtyState>());
+                // 보조 창(ws-*)이 떠 있으면 그 창들이 터미널을 쓰고 있다 — 다시 붙을 수 있는(패널 id 가 있는) 세션은 남긴다
+                let ptys = webview.state::<pty::PtyState>();
+                if shell::has_secondary_windows(webview.app_handle()) {
+                    pty::kill_unkeyed(&ptys);
+                } else {
+                    pty::kill_all(&ptys);
+                }
                 // 붙은 기기의 호출 중 이 화면에 맡겨 둔 것은 답이 오지 않는다 — 기다리게 두지 않는다
                 if let Some(remote) = webview.try_state::<remote::RemoteManager>() {
                     remote.fail_pending();
@@ -118,6 +124,7 @@ pub fn run() {
             server::server_open_log_dir,
             shell::app_close,
             shell::app_show,
+            shell::window_open,
             update::app_update_check,
             update::app_update_install,
             remote::remote_status,

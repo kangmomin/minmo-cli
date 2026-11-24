@@ -65,6 +65,7 @@ export function createFakeTauri(overrides: Partial<TauriApi> = {}) {
     agentsPublish: async () => {},
     onSyncApplied: async () => () => {},
     peerOpen: async () => {},
+    windowOpen: async () => {},
     tailscaleStatus: async () => TAILSCALE_MISSING,
     tailscaleInstall: async () => ({ exitCode: 0, cancelled: false }),
     tailscaleInstallCancel: async () => {},

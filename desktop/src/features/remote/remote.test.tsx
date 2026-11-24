@@ -425,6 +425,15 @@ describe('store 의 함께 쓰는 부분', () => {
     useReposStore.setState({ nicknames: {} })
   })
 
+  it('그룹(#105): 모양이 맞는 그룹만 정리해 받고, 그룹이 없는 값(이 기능 전)은 이 화면의 그룹을 지우지 않는다', () => {
+    useReposStore.setState({ groups: { g1: { name: 'mine', repos: ['a/b'] } } })
+    applySharedRepos({ added: [] })
+    expect(useReposStore.getState().groups).toEqual({ g1: { name: 'mine', repos: ['a/b'] } })
+    applySharedRepos({ groups: { g1: { name: ' theirs ', repos: ['a/b', 'A/B', 3, 'bad'] }, g2: { name: '', repos: [] }, g3: 'x', g4: { name: 'n' } } })
+    expect(useReposStore.getState().groups).toEqual({ g1: { name: 'theirs', repos: ['a/b'] } })
+    useReposStore.setState({ groups: {} })
+  })
+
   it('호스트별 기준 저장소 폴더·기본 폴더: 모양이 맞는 부분만 받고, 기기마다 다른 값(호스트 목록·tmux)은 건드리지 않는다', () => {
     useHostsStore.setState({ aliases: ['mine'], useTmux: true, baseRepos: { local: { 'a/b': '/old' } }, baseDirs: { local: '/old' } })
     applySharedHosts(null)

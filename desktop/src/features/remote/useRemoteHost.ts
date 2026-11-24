@@ -2,11 +2,12 @@
 import { useEffect } from 'react'
 
 import type { TauriApi } from '../../lib/tauri'
+import { ownsAppTasks } from '../../lib/windowScope'
 import { bindSharedStores } from '../../store/shared'
 import { useUiStore } from '../../store/ui'
 
 /** 호스트가 허용 목록으로 이미 걸렀지만(remote.rs ALLOWED), 화면에서도 이 PC 전용 호출은 실행하지 않는다 */
-const NEVER = /^(on[A-Z]|remote|keychain|server|app|openDir$|openUrl$|pickFolder$|notify$|sshHostSave$|sshHostRemove$|runtime$)/
+const NEVER = /^(on[A-Z]|remote|keychain|server|app|openDir$|openUrl$|pickFolder$|notify$|windowOpen$|sshHostSave$|sshHostRemove$|runtime$)/
 
 export async function runRemoteCall(tauri: TauriApi, method: string, args: unknown[]): Promise<unknown> {
   // 객체가 직접 가진 메서드만 — constructor·toString 같은 상속된 이름은 부르지 않는다
@@ -27,7 +28,8 @@ function reason(e: unknown): string {
 /** Tauri 창에서만: 붙은 기기의 호출을 실행해 답한다 */
 export function useRemoteBridge(tauri: TauriApi) {
   useEffect(() => {
-    if (tauri.runtime !== 'native') return
+    // 보조 창도 같은 호출을 받는다 — 주 창만 실행해야 한 번만 일어난다(#105)
+    if (!ownsAppTasks(tauri)) return
     let stop: (() => void) | null = null
     let disposed = false
     void tauri

@@ -1410,6 +1410,21 @@ pub fn kill_all(state: &PtyState) {
     kill_all_in(&state.hub);
 }
 
+/// 화면이 다시 찾을 수 없는 세션(패널 id 가 없는 것)만 끝낸다 — main 을 새로 고쳤지만 보조 창(#105)이 남은 터미널을 쓰고 있을 때.
+/// 패널 id 가 있는 세션은 새로 고친 화면과 보조 창이 pty_find 로 다시 붙는다
+pub fn kill_unkeyed(state: &PtyState) {
+    let procs: Vec<Proc> = match state.hub.sessions.lock() {
+        Ok(mut s) => {
+            let ids: Vec<String> = s.iter().filter(|(_, v)| v.key.is_none()).map(|(k, _)| k.clone()).collect();
+            ids.iter().filter_map(|id| s.remove(id)).map(|v| v.proc).collect()
+        }
+        Err(_) => return,
+    };
+    if !procs.is_empty() {
+        std::thread::spawn(move || kill_and_close(procs));
+    }
+}
+
 pub(crate) fn kill_all_in(hub: &Hub) {
     // 감독 통로는 세션과 함께 바로 버려진다 — 감독마다 pty-exit 를 한 번 낸다. 원격 tmux 세션은 남는다(EC-08)
     let procs: Vec<Proc> = match hub.sessions.lock() {

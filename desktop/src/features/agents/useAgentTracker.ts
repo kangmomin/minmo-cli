@@ -7,6 +7,7 @@ import { useHostsStore } from '../../store/hosts'
 import { repoShortNameOf, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
+import { viewedInOtherWindow } from './windowView'
 import { STATUS_LABEL, derive, issueOfPane, useAgentStore } from './agentStore'
 import type { PaneSignals } from './agentStore'
 import { AGENT_LABEL, guessProgram, parseTitle, titleSignal } from './detect'
@@ -56,8 +57,11 @@ const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(
 
 /** 사용자가 지금 그 이슈의 터미널을 보고 있는가 — 대화상자가 덮고 있으면 보는 것이 아니다 */
 function isViewed(issueId: string): boolean {
+  if (typeof document === 'undefined') return false
+  // 보조 창에서 보고 있어도 본 것이다 — 알림은 주 창이 띄운다(#105)
+  if (viewedInOtherWindow(issueId)) return true
   const ui = useUiStore.getState()
-  if (ui.selectedIssueId !== issueId || ui.tab !== 'terminal' || typeof document === 'undefined') return false
+  if (ui.selectedIssueId !== issueId || ui.tab !== 'terminal') return false
   return document.visibilityState === 'visible' && document.hasFocus() && document.querySelector('[role="dialog"]') === null
 }
 
