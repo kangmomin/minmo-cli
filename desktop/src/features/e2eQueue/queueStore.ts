@@ -109,13 +109,19 @@ export const useE2eQueueStore = create<E2eQueueState>()((set, get) => {
         panes[stage] = paneId
         return { ...j, panes }
       }),
-    advance: (id, expectedStage) =>
+    advance: (id, expectedStage) => {
+      const job = get().jobs.find((j) => j.id === id)
+      // [다음 단계]와 자동 완료가 겹치면 뒤에 온 쪽은 단계가 이미 달라 무시된다(EC-13)
+      if (!job || job.status !== 'running' || job.stage !== expectedStage) return
+      // 터미널이 뜨기 전에 넘기면 그 단계 명령이 나중에 실행돼 다음 단계와 동시에 돈다 — 아직 입력 안 된 명령은 지운다(AC-02·AC-06)
+      const pane = job.panes[job.stage]
+      if (pane !== null) cancelLaunch(pane)
       change(id, (j) => {
-        // [다음 단계]와 자동 완료가 겹치면 뒤에 온 쪽은 단계가 이미 달라 무시된다(EC-13)
         if (j.status !== 'running' || j.stage !== expectedStage) return j
         if (j.stage === 2) return finish(j, 'done')
         return { ...clearRunFlags(j), stage: (j.stage + 1) as JobStage }
-      }),
+      })
+    },
     fail: (id, error) => change(id, (j) => (isActive(j) ? finish(j, 'failed', error) : j)),
     cancel: (id) => {
       const job = get().jobs.find((j) => j.id === id)

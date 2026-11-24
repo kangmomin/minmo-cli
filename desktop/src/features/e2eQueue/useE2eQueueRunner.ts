@@ -31,6 +31,7 @@ const EXIT_POLLS = 3
 const READ_ERROR_POLLS = 5
 
 const PANE_CLOSED = '터미널 패널이 닫혔습니다'
+const LAUNCH_FAILED = '터미널을 띄우지 못했습니다 — 이슈 화면을 열어 두세요'
 
 /** 단계 하나를 지켜본 기록 — 화면 상태가 아니라 runner 안에만 둔다(재마운트하면 처음부터 다시 쌓는다) */
 type Watch = {
@@ -40,6 +41,8 @@ type Watch = {
   queuedAt: number
   /** 명령이 꺼내진 것을 처음 본 시각 */
   takenAt: number | null
+  /** 명령이 입력 대기도 아니고 터미널 id 도 없는 상태가 시작된 시각(EC-12) */
+  noPtySince: number | null
   /** 처음 본 터미널 id — 다른 값이 되면 패널이 새로 만들어진 것이다(EC-18) */
   ptyId: string | null
   /** 이 단계에서 에이전트가 감지된 적 있음 */
@@ -124,8 +127,9 @@ export function useE2eQueueRunner(): void {
         failJob(job, built.error)
         return
       }
-      // 원격의 첫 패널은 남아 있던 tmux 세션에 다시 붙는다 → 쓰지 않는다(EC-15)
-      const paneId = ui.launchPane(job.issueId, alias !== null, { focus: false })
+      // 원격의 첫 패널은 남아 있던 tmux 세션에 다시 붙는다 → 쓰지 않는다(EC-15).
+      // ②·③은 항상 새 분할 패널(D-7) — 앞 단계 터미널이 아직 안 떴으면 launchPane 이 그 칸을 다시 돌려주기 때문
+      const paneId = ui.launchPane(job.issueId, alias !== null || job.stage > 0, { focus: false })
       queueLaunch(paneId, built.command)
       q().setStagePane(job.id, job.stage, paneId)
       watch = newWatch(job, paneId, cfg.kind, Date.now())
@@ -138,6 +142,7 @@ export function useE2eQueueRunner(): void {
         kind,
         queuedAt,
         takenAt: null,
+        noPtySince: null,
         ptyId: null,
         // 재마운트·단계 시작 때 지금 상태를 한 번 본다. 이후는 구독으로 기록한다
         detected: isDetected(useAgentStore.getState().panes[paneId], kind),
@@ -212,13 +217,22 @@ export function useE2eQueueRunner(): void {
       const now = Date.now()
       if (isLaunchPending(paneId)) {
         if (now - w.queuedAt >= LAUNCH_START_MS) {
-          failJob(job, '터미널을 띄우지 못했습니다 — 이슈 화면을 열어 두세요')
+          failJob(job, LAUNCH_FAILED)
           return true
         }
         return false
       }
       w.takenAt ??= now
-      if (ptyId === null) return false
+      if (ptyId === null) {
+        // 재마운트로 queuedAt 이 늦춰진 사이 TTL 로 명령이 버려지면 입력 대기도 터미널도 없이 멈춘다 — 같은 시간 기준으로 실패시킨다(EC-12)
+        w.noPtySince ??= now
+        if (now - w.noPtySince >= LAUNCH_START_MS) {
+          failJob(job, LAUNCH_FAILED)
+          return true
+        }
+        return false
+      }
+      w.noPtySince = null
 
       const deps = depsOf(job.issueId)
       if (deps === null) {
@@ -240,6 +254,9 @@ export function useE2eQueueRunner(): void {
       if (disposed || watch !== w || !stillAt(job.id, job.stage)) return false
 
       if (file.kind === 'error') {
+        // 이번 회차에 현재 파일을 보지 못했다 — 앞 회차의 안정 판정으로 완료하지 않게 처음부터 다시 센다(AC-05 ⓑ)
+        w.fileKey = null
+        w.fileSeen = 0
         w.readErrors++
         if (w.readErrors >= READ_ERROR_POLLS) {
           failJob(job, `결과 파일을 확인하지 못했습니다: ${file.message}`)

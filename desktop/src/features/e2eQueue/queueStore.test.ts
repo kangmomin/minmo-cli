@@ -70,6 +70,37 @@ describe('advance', () => {
     q().advance(id, 0)
     expect(job(A).stage).toBe(1)
   })
+
+  // M-1 (AC-06·AC-02)
+  it('M-1 터미널이 뜨기 전에 단계를 넘기면(③ 완료 포함) 그 단계의 아직 입력 안 된 명령을 지운다 — 두 에이전트가 동시에 돌지 않게', () => {
+    q().enqueue(A, 'a')
+    const id = job(A).id
+    q().start(id)
+    q().setStagePane(id, 0, `${A}::2`)
+    queueLaunch(`${A}::2`, "claude 'run'")
+    q().advance(id, 0)
+    expect(takeLaunch(`${A}::2`)).toBeUndefined()
+
+    q().setStagePane(id, 1, `${A}::3`)
+    q().advance(id, 1)
+    q().setStagePane(id, 2, `${A}::4`)
+    queueLaunch(`${A}::4`, "claude 'verify'")
+    q().advance(id, 2)
+    expect(q().jobs.find((j) => j.id === id)?.status).toBe('done')
+    expect(takeLaunch(`${A}::4`)).toBeUndefined()
+  })
+
+  // M-1 — 단계가 다르면(EC-13) 다른 단계의 명령은 건드리지 않는다
+  it('M-1 이미 넘어간 단계로 온 advance 는 지금 단계의 명령을 지우지 않는다', () => {
+    q().enqueue(A, 'a')
+    const id = job(A).id
+    q().start(id)
+    q().advance(id, 0)
+    q().setStagePane(id, 1, `${A}::2`)
+    queueLaunch(`${A}::2`, "claude 'edge'")
+    q().advance(id, 0)
+    expect(takeLaunch(`${A}::2`)).toBe("claude 'edge'")
+  })
 })
 
 describe('cancel', () => {
