@@ -504,10 +504,7 @@ export function createTauriApi(): TauriApi {
     ptyProcesses: (id) => call(C.ptyProcesses, { id }),
     claudeSubagents: (cwd, sinceMs) => call(C.claudeSubagents, { cwd, sinceMs: Math.max(0, Math.floor(sinceMs)) }),
     agentUsage: (sinceMs) => call(C.agentUsage, { sinceMs: Math.max(0, Math.floor(sinceMs)) }),
-    // TODO(Phase 5.2): call(C.agentModelsRaw, { kind })
-    agentModelsRaw: async () => {
-      throw new Error('not implemented')
-    },
+    agentModelsRaw: (kind) => call(C.agentModelsRaw, { kind }),
     notify: async (title, body, target) => {
       const n = await import('@tauri-apps/plugin-notification')
       let granted = await n.isPermissionGranted()

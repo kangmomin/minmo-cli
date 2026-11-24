@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 브라우저 열기 등은 window.__MINMO_MOCK__ 로 노출해 E2E 가 확인한다.
-import type { CloseAction, CmdResult, DirEntry, NotifyTarget, Platform, PtyDataEvent, PtyLink, PtyLinkEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus, TailscaleLogEvent, TailscaleStatus } from './tauri'
+import type { AgentModelsKind, CloseAction, CmdResult, DirEntry, NotifyTarget, Platform, PtyDataEvent, PtyLink, PtyLinkEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus, TailscaleLogEvent, TailscaleStatus } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -41,6 +41,8 @@ export interface MinmoMockHandle {
   setPtyProcesses(n: number, names: string[]): void
   /** 작업 폴더(cwd)에서 도는 Claude Code 의 하위 에이전트 메타 파일을 정한다 */
   setSubagents(cwd: string, files: SubagentFile[]): void
+  /** 그 CLI 의 모델 목록 원문(agentModelsRaw — 이 PC·원격 호스트 공통). Error 면 조회 실패 */
+  setAgentModels(kind: AgentModelsKind, raw: string | Error): void
   /** notify 로 띄운 알림 */
   notifications: { title: string; body: string }[]
   /** n 번째(1부터)로 띄운 알림을 누른 것처럼 알린다 */
@@ -154,6 +156,12 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   const ptyCwd = new Map<string, string>()
   const ptyProcs = new Map<string, string[]>()
   const subagents = new Map<string, SubagentFile[]>()
+  const agentModels = new Map<string, string | Error>()
+  const modelsOf = (kind: string): string => {
+    const v = agentModels.get(kind) ?? ''
+    if (v instanceof Error) throw v
+    return v
+  }
   let ptySeq = 0
   const cancelled = new Set<string>()
   const closeListeners = new Set<() => void>()
@@ -203,6 +211,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     },
     setPtyProcesses: (n, names) => void ptyProcs.set(`mock-pty-${n}`, names),
     setSubagents: (cwd, files) => void subagents.set(cwd, files),
+    setAgentModels: (kind, raw) => void agentModels.set(kind, raw),
     notifications: [],
     clickNotification: (n) => {
       const target = notifyTargets[n - 1]
@@ -421,8 +430,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       codex: { tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }, limits: [{ usedPercent: 34, windowMinutes: 300, resetsAtMs: 0 }, { usedPercent: 85, windowMinutes: 10080, resetsAtMs: 0 }], limitsAtMs: Date.now() },
       gemini: null,
     }),
-    // TODO(Phase 5.2): setAgentModels 로 제어
-    agentModelsRaw: async () => '',
+    agentModelsRaw: async (kind) => modelsOf(kind),
     notify: async (title, body, target) => {
       handle.notifications.push({ title, body })
       notifyTargets.push(target ?? null)
@@ -464,6 +472,14 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
         paths.delete(rest[rest.length - 1])
         repos.delete(rest[rest.length - 1])
         return ok()
+      }
+      // 원격 호스트의 모델 목록(sshHost.ts AGENT_MODELS, 인자 = CLI)
+      if (o?.stdin?.includes('MINMO_AGENT_MODELS')) {
+        try {
+          return ok(modelsOf(argv[argv.length - 1]))
+        } catch (e) {
+          return fail(e instanceof Error ? e.message : String(e))
+        }
       }
       // 원격 호스트의 AI 사용량(features/usage/remoteUsage.ts)
       if (o?.stdin?.includes('MINMO_USAGE_PY')) return ok(JSON.stringify({ claude: { input: 1000, output: 4000, cacheWrite: 0, cacheRead: 9000 }, codex: null, gemini: null }))
