@@ -17,6 +17,22 @@ export function takeLaunch(paneId: string): string | undefined {
   return q !== undefined && Date.now() - q.at <= LAUNCH_TTL_MS ? q.command : undefined
 }
 
+// TODO(Phase 5.2): 항목을 {command, at, taken} 으로 — 아래 셋은 스텁
+/** 꺼낸 명령을 실제로 입력하기 직전에 확인한다 — 꺼낸 뒤 취소됐거나 새 명령으로 덮였으면 false */
+export function consumeLaunch(_paneId: string): boolean {
+  throw new Error('not implemented')
+}
+
+/** 맡긴 명령을 지운다(꺼낸 것 포함) */
+export function cancelLaunch(_paneId: string): void {
+  throw new Error('not implemented')
+}
+
+/** 맡긴 명령이 아직 꺼내지지 않고 TTL 안에 있는가 */
+export function isLaunchPending(_paneId: string): boolean {
+  throw new Error('not implemented')
+}
+
 /**
  * 터미널의 마지막 줄이 ssh 의 비밀번호·호스트 키 확인을 묻는 중인가 — 그때 명령을 넣으면 그 물음의 답으로 들어간다.
  * 셸이 뜰 때까지 기다린다.

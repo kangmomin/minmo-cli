@@ -421,6 +421,8 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       codex: { tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }, limits: [{ usedPercent: 34, windowMinutes: 300, resetsAtMs: 0 }, { usedPercent: 85, windowMinutes: 10080, resetsAtMs: 0 }], limitsAtMs: Date.now() },
       gemini: null,
     }),
+    // TODO(Phase 5.2): setAgentModels 로 제어
+    agentModelsRaw: async () => '',
     notify: async (title, body, target) => {
       handle.notifications.push({ title, body })
       notifyTargets.push(target ?? null)

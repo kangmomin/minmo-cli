@@ -21,6 +21,7 @@ export type HostOps = Pick<
   | 'listDir'
   | 'claudeSubagents'
   | 'agentUsage'
+  | 'agentModelsRaw'
   | 'readTextFile'
   | 'writeTextFile'
   | 'createDir'
@@ -347,6 +348,10 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
     agentUsage: async (sinceMs) => {
       const r = await script(REMOTE_USAGE_SCRIPT, [String(Math.max(0, Math.floor(sinceMs)))])
       return r.code === 0 ? parseRemoteUsage(r.stdout) : EMPTY_USAGE
+    },
+    // TODO(Phase 5.2): profile 을 읽고 실행하는 sh 래퍼로 모델 목록 원문을 가져온다(claude 는 로컬과 같은 JSON)
+    agentModelsRaw: async () => {
+      throw new Error('not implemented')
     },
     listDir: async (root, rel) => {
       assertRoot(root)

@@ -3,6 +3,8 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 
 import { DEFAULT_AGENT_COMMANDS, LAUNCH_KINDS } from '../features/agents/launch'
 import type { LaunchKind } from '../features/agents/launch'
+import { DEFAULT_ROLES } from '../features/e2eQueue/roles'
+import type { E2eRoles } from '../features/e2eQueue/roles'
 import { closePane, leaf, leafIds, splitPane } from '../features/terminal/panes'
 import type { PaneNode, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
@@ -72,6 +74,8 @@ export interface UiState {
   agentsView: AgentsView
   /** 에이전트별 실행 명령 틀(persist) — [에이전트 실행] 에서 고치면 저장된다 */
   agentCommands: Record<LaunchKind, string>
+  /** E2E 큐의 역할별 CLI·모델·지시문(persist + 공유) — TODO(Phase 5.2): persist·merge sanitize */
+  e2eRoles: E2eRoles
   /** 마지막으로 실행한 에이전트(persist) */
   lastLaunchKind: LaunchKind
   /** 등록한 다른 PC 와 저장소 목록·설정·메모·에이전트 명령을 맞춘다(persist) */
@@ -116,7 +120,7 @@ export interface UiState {
    * keepFirst: 첫 패널을 쓰지 않는다 — 원격 호스트의 첫 패널은 앱을 꺼도 남는 tmux 세션에 다시 붙으므로,
    * 거기서 돌고 있을지 모르는 프로그램에 명령이 입력되지 않게 항상 새 패널을 만든다.
    */
-  launchPane(issueId: string, keepFirst?: boolean): string
+  launchPane(issueId: string, keepFirst?: boolean, opts?: { focus?: boolean }): string
   /** 이슈의 터미널을 연다(Ctrl+T·[터미널 열기]): 아직 없으면 첫 터미널을 시작하고, 이미 있으면 오른쪽에 새 패널을 만든다 */
   openTerminal(issueId: string): void
   /** 이미 떠 있는 터미널에 붙을 때 — 패널 구성·포커스는 건드리지 않고 터미널만 보이게 한다 */
@@ -160,6 +164,7 @@ export const useUiStore = create<UiState>()(
       agentsView: DEFAULT_AGENTS_VIEW,
       treeAgentsOnly: false,
       agentCommands: DEFAULT_AGENT_COMMANDS,
+      e2eRoles: DEFAULT_ROLES,
       lastLaunchKind: 'claude',
       peerSync: true,
       launchRequest: null,
