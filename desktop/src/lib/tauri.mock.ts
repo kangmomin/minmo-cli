@@ -43,6 +43,10 @@ export interface MinmoMockHandle {
   setSubagents(cwd: string, files: SubagentFile[]): void
   /** 그 CLI 의 모델 목록 원문(agentModelsRaw — 이 PC·원격 호스트 공통). Error 면 조회 실패 */
   setAgentModels(kind: AgentModelsKind, raw: string | Error): void
+  /** 작업 폴더(root) 안에 파일이 생긴 것처럼 한다 — readTextFile 과 pathExists(root/rel) 가 본다(에이전트가 쓴 결과 파일 흉내) */
+  putTextFile(root: string, rel: string, content: string): void
+  /** 다음에 만드는 터미널 하나의 첫 출력(null = 기본 프롬프트) — ssh 비밀번호 물음 등을 흉내 낸다 */
+  nextPtyBanner: string | null
   /** notify 로 띄운 알림 */
   notifications: { title: string; body: string }[]
   /** n 번째(1부터)로 띄운 알림을 누른 것처럼 알린다 */
@@ -212,6 +216,12 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     setPtyProcesses: (n, names) => void ptyProcs.set(`mock-pty-${n}`, names),
     setSubagents: (cwd, files) => void subagents.set(cwd, files),
     setAgentModels: (kind, raw) => void agentModels.set(kind, raw),
+    putTextFile: (root, rel, content) => {
+      textFiles.set(fileKey(root, rel), content)
+      const sep = platform === 'win32' ? '\\' : '/'
+      paths.add(`${root}${sep}${rel.split('/').join(sep)}`)
+    },
+    nextPtyBanner: null,
     notifications: [],
     clickNotification: (n) => {
       const target = notifyTargets[n - 1]
@@ -336,7 +346,9 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
       const id = `mock-pty-${++ptySeq}`
       ptyCwd.set(id, req.cwd)
       const where = req.remote ? `${req.remote.host}:${req.cwd}${req.remote.session ? ` [tmux ${req.remote.session}]` : ''}` : req.cwd
-      setTimeout(() => emitPty(id, `minmo mock terminal - ${where}\r\n$ `), 0)
+      const banner = handle.nextPtyBanner
+      handle.nextPtyBanner = null
+      setTimeout(() => emitPty(id, banner ?? `minmo mock terminal - ${where}\r\n$ `), 0)
       return id
     },
     ptyWrite: async (id, data) => {
