@@ -121,12 +121,17 @@ function JobRow({ job, onDone }: { job: E2eJob; onDone(): void }) {
   const active = isActive(job)
   // 버튼 이름에 이슈를 넣어 여러 작업 사이에서도 무엇을 누르는지 알 수 있게 한다
   const named = (action: string) => `${action} (${job.title})`
+  // [다시 실행]을 눌렀지만 같은 이슈가 이미 대기·실행 중이라 넣지 않았음(EC-04) — IssueHeader 와 같은 문구
+  const [duplicate, setDuplicate] = useState(false)
   return (
     <li className="flex flex-wrap items-center gap-2 rounded border px-2 py-1.5 text-sm" data-testid="e2e-job" data-status={job.status}>
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium">{job.title}</span>
         <span className={`block text-xs ${job.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`} data-testid="e2e-job-status">
           {statusText(job)}
+        </span>
+        <span role="status" className="block text-xs text-muted-foreground" data-testid="e2e-retry-status">
+          {duplicate && '이미 E2E 큐에서 대기·실행 중입니다'}
         </span>
         {job.status === 'running' && job.notice && (
           <span className="block text-xs text-amber-700 dark:text-amber-400" data-testid="e2e-job-notice">
@@ -146,7 +151,7 @@ function JobRow({ job, onDone }: { job: E2eJob; onDone(): void }) {
       )}
       {!active && (
         <>
-          <Button type="button" size="sm" variant="outline" aria-label={named('다시 실행')} onClick={() => q().retry(job.id)}>
+          <Button type="button" size="sm" variant="outline" aria-label={named('다시 실행')} onClick={() => setDuplicate(!q().retry(job.id))}>
             다시 실행
           </Button>
           <Button type="button" size="sm" variant="ghost" aria-label={named('목록에서 지우기')} onClick={() => q().remove(job.id)}>
@@ -200,7 +205,8 @@ function RoleEditor({ role }: { role: E2eRole }) {
   const cfg = useUiStore((s) => s.e2eRoles[role])
   const save = (patch: Partial<typeof cfg>) => useUiStore.getState().setE2eRole(role, { ...useUiStore.getState().e2eRoles[role], ...patch })
   const models = useAgentModels(cfg.kind)
-  const list = models.data ?? []
+  // 모델 이름 패턴(EC-05)에 맞지 않는 항목은 저장할 수 없으므로 선택지에서 뺀다
+  const list = (models.data ?? []).filter((m) => MODEL_RE.test(m.id))
   // 직접 입력 칸을 연 상태 — 저장한 모델이 목록에 없을 때도 연다
   const [customOpen, setCustomOpen] = useState(false)
   // 패턴에 맞지 않아 저장하지 않은 입력(null = 저장한 값을 보인다)

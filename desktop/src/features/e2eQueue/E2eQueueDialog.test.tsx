@@ -120,6 +120,17 @@ describe('작업 탭', () => {
     expect(useE2eQueueStore.getState().jobs.map((j) => j.id)).toEqual([jobs[1].id])
   })
 
+  // L-1 (EC-04)
+  it('L-1 [다시 실행] 때 같은 이슈가 이미 대기·실행 중이면 넣지 않고 그 행에 안내한다(role=status)', async () => {
+    useE2eQueueStore.setState({ jobs: [job({ id: 'a', status: 'failed', error: 'x' }), job({ id: 'b', status: 'queued' })] })
+    const { user } = renderDialog()
+    const row = jobRow(0)
+    expect(within(row).getByRole('status')).toBeEmptyDOMElement()
+    await user.click(within(row).getByRole('button', { name: '다시 실행 (app #42 Add login)' }))
+    expect(useE2eQueueStore.getState().jobs.map((j) => j.id)).toEqual(['a', 'b'])
+    expect(within(row).getByRole('status')).toHaveTextContent('이미 E2E 큐에서 대기·실행 중입니다')
+  })
+
   it('AC-09 [패널로 이동]은 그 이슈의 터미널 탭에서 단계 패널을 고르고 대화상자를 닫는다', async () => {
     useUiStore.setState({ selectedIssueId: 'acme/app#7' })
     useE2eQueueStore.setState({ jobs: [job({ id: 'a', status: 'running', stage: 1, panes: [PANE_1, PANE_2, null] })] })
@@ -234,6 +245,23 @@ describe('역할 설정 탭', () => {
     await user.selectOptions(within(run).getByLabelText('모델'), '기본값(CLI 설정)')
     expect(useUiStore.getState().e2eRoles.run.model).toBe('')
     expect(within(run).queryByLabelText('모델 이름')).toBeNull()
+  })
+
+  // L-5 (EC-05)
+  it('L-5 모델 이름 패턴에 맞지 않는 목록 항목은 선택지에서 뺀다 — 저장할 수 없는 값을 고르지 못하게', async () => {
+    useUiStore.getState().setE2eRole('run', { ...DEFAULT_ROLES.run, kind: 'codex' })
+    const raw = JSON.stringify({
+      models: [
+        { slug: 'gpt-5.1-codex', display_name: 'GPT-5.1 Codex', visibility: 'list', priority: 1 },
+        { slug: '--yolo', display_name: 'Bad', visibility: 'list', priority: 2 },
+        { slug: 'bad model;rm', display_name: 'Bad 2', visibility: 'list', priority: 3 },
+      ],
+    })
+    await openRoles(async (kind) => (kind === 'codex' ? raw : ''))
+    const run = role('① E2E 실행')
+    await waitFor(() => expect(within(run).getByRole('status')).toHaveTextContent('모델 1개'))
+    const select = within(run).getByLabelText('모델')
+    expect([...select.querySelectorAll('option')].map((o) => o.value)).toEqual(['', 'gpt-5.1-codex', '__custom__'])
   })
 
   it('AC-10 저장한 모델이 목록에 없으면 직접 입력 칸에 그 값을 보인다', async () => {

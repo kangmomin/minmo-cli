@@ -34,8 +34,8 @@ export interface E2eQueueState {
   advance(id: string, expectedStage: JobStage): void
   fail(id: string, error: string): void
   cancel(id: string): void
-  /** 끝난 작업을 새 jobId 의 대기 작업으로 다시 추가한다(EC-24) */
-  retry(id: string): void
+  /** 끝난 작업을 새 jobId 의 대기 작업으로 다시 추가한다(EC-24). 같은 이슈가 대기·실행 중이라 넣지 않았으면 false(EC-04) */
+  retry(id: string): boolean
   remove(id: string): void
   setNotice(id: string, stage: JobStage, notice: JobNotice | undefined): void
   /** 원격 호스트 연결 대기 표시(EC-14) — 실행 중이고 단계가 같을 때만 */
@@ -133,9 +133,9 @@ export const useE2eQueueStore = create<E2eQueueState>()((set, get) => {
     },
     retry: (id) => {
       const job = get().jobs.find((j) => j.id === id)
-      if (!job || isActive(job)) return
+      if (!job || isActive(job)) return false
       // 새 jobId = 새 결과 폴더 — 옛 결과 파일로 ①이 바로 끝나지 않게(EC-24). 같은 이슈가 이미 대기·실행 중이면 넣지 않는다(EC-04)
-      get().enqueue(job.issueId, job.title)
+      return get().enqueue(job.issueId, job.title)
     },
     remove: (id) => set((s) => (s.jobs.some((j) => j.id === id && !isActive(j)) ? { jobs: s.jobs.filter((j) => j.id !== id) } : s)),
     setNotice: (id, stage, notice) =>
