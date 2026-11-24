@@ -331,6 +331,10 @@ export function useE2eQueueRunner(): void {
       try {
         // 단계가 끝나면 같은 회차에 다음 단계(또는 다음 작업)를 연다 — 한 회차에 몇 걸음까지만
         for (let i = 0; i < 4 && !disposed; i++) if (!(await step())) break
+      } catch (e) {
+        // 예상 못 한 예외 — 그대로 두면 같은 작업에서 매 회차 멈춘다. 실행 중 작업을 실패로 돌려 다음 회차에 다음 작업으로 넘어간다
+        const job = q().jobs.find((j) => j.status === 'running')
+        if (job) failJob(job, `예상하지 못한 오류: ${errText(e)}`)
       } finally {
         busy = false
       }

@@ -23,5 +23,7 @@ export function useAgentModels(kind: RoleKind) {
     queryKey: agentModelsKey(host.alias, kind),
     queryFn: async () => PARSE[kind](await tauri.agentModelsRaw(kind)),
     staleTime: Infinity,
+    // 받지 못하면(CLI 없음 등) 다시 시도해도 같다 — 오류와 직접 입력 안내를 바로 보인다
+    retry: false,
   })
 }

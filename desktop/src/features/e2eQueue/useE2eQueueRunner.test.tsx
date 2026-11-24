@@ -584,6 +584,26 @@ describe('scope 결함 회귀(M-1·L-2·L-3)', () => {
     expect(jobOf(A).error).toContain('터미널을 띄우지 못했습니다')
   })
 
+  it('E-1 회차 중 예상 못 한 예외가 나면 실행 중 작업을 실패(사유 표시)로 돌리고 다음 작업으로 넘어간다', async () => {
+    ready(A, PATH_A, 1)
+    ready(B, PATH_B, 2)
+    mount()
+    const launchPane = useUiStore.getState().launchPane
+    useUiStore.setState({
+      launchPane: () => {
+        throw new Error('boom')
+      },
+    })
+    q().enqueue(A, '#1')
+    q().enqueue(B, '#2')
+    await tick()
+    expect(jobOf(A)).toMatchObject({ status: 'failed', error: '예상하지 못한 오류: boom' })
+    useUiStore.setState({ launchPane })
+    await tick()
+    expect(jobOf(B).status).toBe('running')
+    expect(jobOf(B).panes[0]).not.toBeNull()
+  })
+
   it('L-3 터미널이 한 번 뜬 뒤 110초 넘게 내려가 있어도(원격 재접속 중) 실패시키지 않는다(AC-05)', async () => {
     ready(A, PATH_A)
     mount()
