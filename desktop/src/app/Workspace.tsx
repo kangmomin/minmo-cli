@@ -10,6 +10,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/toolti
 import { AgentsButton, AgentsOverview, useLocalRows } from '../features/agents/AgentsOverview'
 import { useNotifyClick } from '../features/agents/navigate'
 import { useAgentTracker } from '../features/agents/useAgentTracker'
+import { E2eQueueButton } from '../features/e2eQueue/E2eQueueButton'
+import { E2eQueueDialog } from '../features/e2eQueue/E2eQueueDialog'
+import { useE2eQueueRunner } from '../features/e2eQueue/useE2eQueueRunner'
 import { useWindowViewBroadcast } from '../features/agents/windowView'
 import { useDeepLinkOpen } from '../features/remote/deepLink'
 import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
@@ -51,6 +54,7 @@ export function Workspace() {
   const [settings, setSettings] = useState<SettingsTarget | null>(null)
   const [cliOpen, setCliOpen] = useState(false)
   const [agentsOpen, setAgentsOpen] = useState(false)
+  const [e2eOpen, setE2eOpen] = useState(false)
   const [remoteOpen, setRemoteOpen] = useState(false)
   // 좁은 화면(휴대폰)에서는 트리와 작업 화면을 한 번에 하나만 보인다 — 이슈를 고르면(같은 이슈를 다시 골라도) 작업 화면으로 넘어간다.
   // effect 가 아니라 고른 그 렌더에서 넘긴다: 자식(터미널)의 포커스 요청은 이 컴포넌트의 effect 보다 먼저 처리되므로,
@@ -81,6 +85,8 @@ export function Workspace() {
   useDeepLinkOpen()
   // 열어 둔 모든 터미널의 에이전트 상태를 추적한다(이슈 행·패널·현황·알림)
   useAgentTracker()
+  // E2E 큐 — 차례가 된 작업의 단계를 그 이슈의 터미널 패널에서 실행한다(앱에 한 번만)
+  useE2eQueueRunner()
   // 이 창이 보는 이슈를 다른 창(알림을 띄우는 주 창)에 알린다
   useWindowViewBroadcast()
   // 그 알림을 누르면 해당 터미널로 간다
@@ -106,6 +112,7 @@ export function Workspace() {
         <span className="flex-1" />
         {auth.me && <span className="text-sm text-muted-foreground">{auth.me.githubLogin}</span>}
         <AgentsButton onClick={() => setAgentsOpen(true)} />
+        <E2eQueueButton onClick={() => setE2eOpen(true)} />
         {openBlankWindow && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -218,6 +225,7 @@ export function Workspace() {
       <CliAccessDialog open={cliOpen} onOpenChange={setCliOpen} />
       <RemoteAccessDialog open={remoteOpen} onOpenChange={setRemoteOpen} />
       <AgentsOverview open={agentsOpen} onOpenChange={setAgentsOpen} />
+      <E2eQueueDialog open={e2eOpen} onOpenChange={setE2eOpen} />
 
       {settings && (
         <SettingsDialog
