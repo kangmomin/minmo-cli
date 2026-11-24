@@ -139,13 +139,13 @@ export type UsageTokens = { input: number; output: number; cacheWrite: number; c
 export type UsageLimit = { usedPercent: number; windowMinutes: number; resetsAtMs: number }
 /** limits 는 Codex 를 마지막으로 쓴 시점(limitsAtMs)의 값이다(없으면 빈 목록·0) */
 export type CodexUsage = { tokens: UsageTokens; limits: UsageLimit[]; limitsAtMs: number }
+/** 모델 목록을 조회할 수 있는 CLI */
+export type AgentModelsKind = 'claude' | 'codex' | 'gemini'
+
 /**
  * AI 별 사용량 — 그 컴퓨터의 기록에서 읽는다. null 은 그 도구의 기록 폴더가 없다는 뜻이다(쓰지 않는 도구).
  * unavailable: 원격 호스트에 python3 이 없어 읽지 못했다
  */
-/** 모델 목록을 조회할 수 있는 CLI */
-export type AgentModelsKind = 'claude' | 'codex' | 'gemini'
-
 export type AgentUsage = { claude: UsageTokens | null; codex: CodexUsage | null; gemini: UsageTokens | null; unavailable?: 'python3' }
 
 /** 새 버전 정보(src-tauri/src/update.rs UpdateInfo) */
