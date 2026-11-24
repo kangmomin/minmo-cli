@@ -446,3 +446,23 @@ describe('상단 [E2E 큐] 버튼', () => {
     expect(button()).toHaveAccessibleName('E2E 큐 (1)')
   })
 })
+
+describe('Phase 11 결정 — 결과 파일 없음 안내(L-4·EC-25)', () => {
+  it('L-4 nofile 이면 작업 행에 "결과 파일이 아직 없음 — 패널을 보세요"를 보이고 상단 버튼을 확인 필요로 강조한다', () => {
+    useE2eQueueStore.setState({ jobs: [job({ id: 'a', status: 'running', panes: [PANE_1, null, null], notice: 'nofile' })] })
+    renderDialog()
+    renderWithDeps(
+      <TooltipProvider>
+        <E2eQueueButton onClick={vi.fn()} />
+      </TooltipProvider>,
+      makeDeps(),
+    )
+    expect(screen.getByTestId('e2e-job-notice')).toHaveTextContent('결과 파일이 아직 없음 — 패널을 보세요')
+    const button = screen.getByTestId('e2e-queue-button')
+    expect(button).toHaveAccessibleName('E2E 큐 (1) — 확인 필요')
+    expect(button).toHaveAttribute('data-attention', 'true')
+    act(() => useE2eQueueStore.getState().setNotice('a', 0, undefined))
+    expect(screen.queryByTestId('e2e-job-notice')).toBeNull()
+    expect(button).not.toHaveAttribute('data-attention')
+  })
+})

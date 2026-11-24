@@ -8,7 +8,8 @@ import { isActive, useE2eQueueStore } from './queueStore'
 import type { E2eJob } from './queueStore'
 
 /** 사용자가 패널을 봐야 하는 상태 — 'undetected' 는 결과 파일로 진행하므로 기다리기만 하면 된다 */
-const needsCheck = (j: E2eJob) => j.status === 'running' && (j.notice === 'attention' || j.notice === 'exited' || j.notice === 'unknown')
+const needsCheck = (j: E2eJob) =>
+  j.status === 'running' && (j.notice === 'attention' || j.notice === 'exited' || j.notice === 'unknown' || j.notice === 'nofile')
 
 function buttonName(active: number, check: boolean): string {
   return `E2E 큐${active > 0 ? ` (${active})` : ''}${check ? ' — 확인 필요' : ''}`

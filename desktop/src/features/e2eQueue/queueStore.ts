@@ -6,8 +6,8 @@ import { cancelLaunch } from '../agents/launchQueue'
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 /** 0 = ① E2E 실행, 1 = ② 엣지케이스 찾기, 2 = ③ 엣지케이스 기반 테스트 */
 export type JobStage = 0 | 1 | 2
-/** 실행 중 "확인 필요" 상태(EC-23) */
-export type JobNotice = 'attention' | 'exited' | 'undetected' | 'unknown'
+/** 실행 중 "확인 필요" 상태(EC-23·EC-25) */
+export type JobNotice = 'attention' | 'exited' | 'undetected' | 'unknown' | 'nofile'
 
 export type E2eJob = {
   id: string

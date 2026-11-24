@@ -64,6 +64,7 @@ const NOTICE_TEXT: Record<JobNotice, string> = {
   exited: '에이전트가 종료됨 — 결과를 보고 [다음 단계]로 넘기세요',
   undetected: '상태 감지 불가 — 결과 파일 기준',
   unknown: '에이전트 상태를 확인할 수 없음 — 패널을 보세요(ssh 인증 등)',
+  nofile: '결과 파일이 아직 없음 — 패널을 보세요',
 }
 
 function statusText(j: E2eJob): string {

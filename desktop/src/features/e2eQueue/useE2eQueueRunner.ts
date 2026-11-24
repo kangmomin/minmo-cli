@@ -23,6 +23,8 @@ const POLL_MS = 3000
 const LAUNCH_START_MS = 110_000
 /** 명령을 꺼낸 뒤 이만큼 감지도 결과 파일도 없으면 "확인 필요"(EC-12b) */
 const NO_SIGNAL_MS = 60_000
+/** 감지된 에이전트가 idle 인데 결과 파일이 없는 상태가 이만큼 이어지면 "확인 필요"(EC-25) — 자동으로 넘기지 않는다 */
+const IDLE_NO_FILE_MS = 60_000
 /** 에이전트를 감지하지 못한 단계는 결과 파일이 이만큼 그대로면 끝난 것으로 본다(AC-05 ⓒ) */
 const UNDETECTED_STABLE_MS = 20_000
 /** 감지됐던 에이전트가 이 횟수만큼 연속으로 없으면 종료로 본다 */
@@ -48,6 +50,8 @@ type Watch = {
   /** 이 단계에서 에이전트가 감지된 적 있음 */
   detected: boolean
   missing: number
+  /** 감지된 에이전트가 idle 인데 결과 파일이 없는 상태가 시작된 시각(EC-25) */
+  idleNoFileSince: number | null
   /** 결과 파일의 version(크기 초과·바이너리는 고정 표시) · 그 값을 처음 본 시각 · 연속으로 본 횟수 */
   fileKey: string | null
   fileSince: number
@@ -147,6 +151,7 @@ export function useE2eQueueRunner(): void {
         // 재마운트·단계 시작 때 지금 상태를 한 번 본다. 이후는 구독으로 기록한다
         detected: isDetected(useAgentStore.getState().panes[paneId], kind),
         missing: 0,
+        idleNoFileSince: null,
         fileKey: null,
         fileSince: 0,
         fileSeen: 0,
@@ -281,9 +286,16 @@ export function useE2eQueueRunner(): void {
 
       let notice: JobNotice | undefined
       let done = false
+      // 읽기 오류 회차는 파일 유무를 모르므로 시작 시각을 그대로 둔다
+      if (!detectedNow || agent!.activity !== 'idle' || file.kind === 'present') w.idleNoFileSince = null
+      else if (file.kind === 'none') w.idleNoFileSince ??= now
       if (detectedNow) {
         if (agent!.activity === 'attention') notice = 'attention'
-        else if (agent!.activity === 'idle') done = hasFile && stable
+        else if (agent!.activity === 'idle') {
+          done = hasFile && stable
+          // 에이전트가 쉬는데 결과를 쓰지 않았다 — 지시문을 놓쳤거나 질문 중일 수 있다(EC-25)
+          if (file.kind === 'none' && w.idleNoFileSince !== null && now - w.idleNoFileSince >= IDLE_NO_FILE_MS) notice = 'nofile'
+        }
       } else if (w.detected) {
         // 감지됐던 에이전트가 사라짐 = 종료(Ctrl+C 포함) — 미완성 결과가 넘어가지 않게 자동 완료하지 않는다
         if (w.missing >= EXIT_POLLS) notice = 'exited'
