@@ -224,9 +224,10 @@ export function useE2eQueueRunner(): void {
       }
       w.takenAt ??= now
       if (ptyId === null) {
-        // 재마운트로 queuedAt 이 늦춰진 사이 TTL 로 명령이 버려지면 입력 대기도 터미널도 없이 멈춘다 — 같은 시간 기준으로 실패시킨다(EC-12)
+        // 재마운트로 queuedAt 이 늦춰진 사이 TTL 로 명령이 버려지면 입력 대기도 터미널도 없이 멈춘다 — 같은 시간 기준으로 실패시킨다(EC-12).
+        // 터미널이 한 번 뜬 뒤 내려간 것은 재접속(#89) 중일 수 있어 기다린다(AC-05)
         w.noPtySince ??= now
-        if (now - w.noPtySince >= LAUNCH_START_MS) {
+        if (w.ptyId === null && now - w.noPtySince >= LAUNCH_START_MS) {
           failJob(job, LAUNCH_FAILED)
           return true
         }

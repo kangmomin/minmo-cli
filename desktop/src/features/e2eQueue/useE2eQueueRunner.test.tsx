@@ -583,4 +583,18 @@ describe('scope 결함 회귀(M-1·L-2·L-3)', () => {
     expect(jobOf(A).status).toBe('failed')
     expect(jobOf(A).error).toContain('터미널을 띄우지 못했습니다')
   })
+
+  it('L-3 터미널이 한 번 뜬 뒤 110초 넘게 내려가 있어도(원격 재접속 중) 실패시키지 않는다(AC-05)', async () => {
+    ready(A, PATH_A)
+    mount()
+    q().enqueue(A, '#1')
+    await tick()
+    const p0 = paneOf(A, 0)
+    terminalUp(p0, 'pty-1')
+    agent(p0, 'working')
+    await tick()
+    terminalDown(p0)
+    await tick(200_000)
+    expect(jobOf(A)).toMatchObject({ status: 'running', stage: 0 })
+  })
 })
