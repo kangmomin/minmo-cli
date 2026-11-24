@@ -64,16 +64,8 @@ pub async fn agent_models_raw(kind: String) -> Result<String, String> {
 
 /// CLAUDE_CONFIG_DIR(없으면 ~/.claude)/cache/model-catalog
 fn claude_catalog_dir() -> Option<PathBuf> {
-    let base = match std::env::var_os("CLAUDE_CONFIG_DIR") {
-        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => PathBuf::from(std::env::var_os(if cfg!(windows) {
-            "USERPROFILE"
-        } else {
-            "HOME"
-        })?)
-        .join(".claude"),
-    };
-    Some(base.join("cache").join("model-catalog"))
+    super::usage::tool_dir("CLAUDE_CONFIG_DIR", ".claude")
+        .map(|d| d.join("cache").join("model-catalog"))
 }
 
 /// 가장 최근에 바뀐 `*-cc.json` — `tok-*-ccd.json`·`published-*.json` 은 다른 용도의 캐시다

@@ -38,6 +38,8 @@ export interface E2eQueueState {
   retry(id: string): void
   remove(id: string): void
   setNotice(id: string, stage: JobStage, notice: JobNotice | undefined): void
+  /** 원격 호스트 연결 대기 표시(EC-14) — 실행 중이고 단계가 같을 때만 */
+  setWaitingHost(id: string, stage: JobStage, waiting: boolean): void
 }
 
 /** 대기·실행 중(아직 끝나지 않음) */
@@ -71,11 +73,15 @@ function update(jobs: E2eJob[], id: string, fn: (j: E2eJob) => E2eJob): E2eJob[]
   return out
 }
 
-/** 끝난 상태로 — 실행 중 표시(확인 필요·연결 대기)는 지운다 */
-const finish = (j: E2eJob, status: 'done' | 'failed' | 'cancelled', error?: string): E2eJob => {
-  const { notice: _notice, waitingHost: _waitingHost, ...rest } = j
-  return { ...rest, status, ...(error !== undefined && { error }) }
-}
+/** 단계가 끝나면 그 단계의 실행 중 표시(확인 필요·연결 대기)를 지운다 */
+const clearRunFlags = ({ notice: _notice, waitingHost: _waitingHost, ...rest }: E2eJob): E2eJob => rest
+
+/** 끝난 상태로 */
+const finish = (j: E2eJob, status: 'done' | 'failed' | 'cancelled', error?: string): E2eJob => ({
+  ...clearRunFlags(j),
+  status,
+  ...(error !== undefined && { error }),
+})
 
 export const useE2eQueueStore = create<E2eQueueState>()((set, get) => {
   /** id 의 작업 하나를 바꾼다. 목록이 그대로면 상태도 그대로 둬 구독자에게 알리지 않는다 */
@@ -108,8 +114,7 @@ export const useE2eQueueStore = create<E2eQueueState>()((set, get) => {
         // [다음 단계]와 자동 완료가 겹치면 뒤에 온 쪽은 단계가 이미 달라 무시된다(EC-13)
         if (j.status !== 'running' || j.stage !== expectedStage) return j
         if (j.stage === 2) return finish(j, 'done')
-        const { notice: _notice, waitingHost: _waitingHost, ...rest } = j
-        return { ...rest, stage: (j.stage + 1) as JobStage }
+        return { ...clearRunFlags(j), stage: (j.stage + 1) as JobStage }
       }),
     fail: (id, error) => change(id, (j) => (isActive(j) ? finish(j, 'failed', error) : j)),
     cancel: (id) => {
@@ -132,6 +137,12 @@ export const useE2eQueueStore = create<E2eQueueState>()((set, get) => {
         if (j.status !== 'running' || j.stage !== stage || j.notice === notice) return j
         const { notice: _notice, ...rest } = j
         return notice === undefined ? rest : { ...rest, notice }
+      }),
+    setWaitingHost: (id, stage, waiting) =>
+      change(id, (j) => {
+        if (j.status !== 'running' || j.stage !== stage || !!j.waitingHost === waiting) return j
+        const { waitingHost: _waitingHost, ...rest } = j
+        return waiting ? { ...rest, waitingHost: true } : rest
       }),
   }
 })

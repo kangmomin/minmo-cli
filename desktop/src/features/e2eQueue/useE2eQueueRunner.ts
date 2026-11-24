@@ -67,19 +67,6 @@ const stillAt = (id: string, stage: JobStage) => {
   return j !== undefined && j.status === 'running' && j.stage === stage
 }
 
-/** queueStore 에 액션이 없는 "연결 대기" 표시 — 실행 중이고 단계가 같을 때만 바꾼다 */
-function setWaitingHost(id: string, stage: JobStage, waiting: boolean) {
-  useE2eQueueStore.setState((s) => {
-    const i = s.jobs.findIndex((j) => j.id === id)
-    const j = s.jobs[i]
-    if (!j || j.status !== 'running' || j.stage !== stage || !!j.waitingHost === waiting) return s
-    const { waitingHost: _w, ...rest } = j
-    const jobs = s.jobs.slice()
-    jobs[i] = waiting ? { ...rest, waitingHost: true } : rest
-    return { jobs }
-  })
-}
-
 export function useE2eQueueRunner(): void {
   const hostDeps = useHostDeps()
 
@@ -115,10 +102,10 @@ export function useE2eQueueRunner(): void {
       const alias = aliasOfIssue(job.issueId)
       const deps = depsOf(job.issueId)
       if (deps === null) {
-        setWaitingHost(job.id, job.stage, true)
+        q().setWaitingHost(job.id, job.stage, true)
         return
       }
-      setWaitingHost(job.id, job.stage, false)
+      q().setWaitingHost(job.id, job.stage, false)
       const role = E2E_ROLES[job.stage]
       const ui = useUiStore.getState()
       const cfg = ui.e2eRoles[role]
@@ -236,10 +223,10 @@ export function useE2eQueueRunner(): void {
       const deps = depsOf(job.issueId)
       if (deps === null) {
         // 그 회차는 건너뛴다 — 연결 정보 없이 파일에 접근하면 이 PC 를 보게 된다(EC-14)
-        setWaitingHost(job.id, job.stage, true)
+        q().setWaitingHost(job.id, job.stage, true)
         return false
       }
-      setWaitingHost(job.id, job.stage, false)
+      q().setWaitingHost(job.id, job.stage, false)
 
       const agent = useAgentStore.getState().panes[paneId]
       const detectedNow = isDetected(agent, kind)

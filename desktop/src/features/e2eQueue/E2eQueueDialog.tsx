@@ -297,7 +297,7 @@ function RoleEditor({ role }: { role: E2eRole }) {
             />
             {invalid && (
               <p id={`${uid}-custom-error`} className="text-xs text-destructive">
-                {(draft ?? '').trim() === ''
+                {draft.trim() === ''
                   ? '모델 이름을 입력하세요 — 저장하지 않았습니다(CLI 기본값은 위에서 고릅니다)'
                   : '모델 이름은 영문·숫자로 시작하고 영문·숫자와 . _ : / [ ] - 만 쓸 수 있습니다 — 저장하지 않았습니다'}
               </p>
