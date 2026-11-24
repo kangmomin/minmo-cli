@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PtyDataEvent, PtyFound, PtyLink, PtyLinkEvent, PtyResizedEvent, RemotePty, TauriApi } from '../../lib/tauri'
 import { createFakeTauri, deferred, flush } from '../../test/fakes'
-import { LAUNCH_DELAY_MS, queueLaunch, takeLaunch } from '../agents/launchQueue'
+import { LAUNCH_DELAY_MS, cancelLaunch, queueLaunch } from '../agents/launchQueue'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { makeDeps, renderWithDeps } from '../../test/render'
@@ -1620,7 +1620,7 @@ describe('원격 터미널 재접속 (#89)', () => {
       act(() => data.emit({ id: 'pty-1', data: '$ ' }))
       await vi.waitFor(() => expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-1', 'claude\r'))
     } finally {
-      takeLaunch(P1)
+      cancelLaunch(P1)
     }
   })
 
