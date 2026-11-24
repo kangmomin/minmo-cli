@@ -16,6 +16,14 @@ export function isTerminalOpenKey(e: KeyboardEvent): boolean {
   return e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && isKey(e, 't')
 }
 
+/** 새 창 단축키(#105) */
+export const NEW_WINDOW_KEY = 'Ctrl+Shift+N'
+
+/** 새 창 열기(Ctrl+Shift+N)인가 */
+export function isNewWindowKey(e: KeyboardEvent): boolean {
+  return e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && isKey(e, 'n')
+}
+
 /** 복사·붙여넣기 — Windows Terminal 과 같게: 선택이 있으면 Ctrl+C 는 복사, Ctrl+V 는 붙여넣기 */
 export const CLIPBOARD_KEYS = { copy: 'Ctrl+C', paste: 'Ctrl+V' } as const
 
@@ -54,6 +62,24 @@ export function useTerminalOpenShortcut() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+}
+
+/**
+ * Ctrl+Shift+N: 범위 없는 새 창을 연다. open 이 null(원격 화면)이면 아무것도 하지 않는다.
+ * 대화상자·메뉴가 열려 있으면 하지 않는다(그 안의 입력을 가로채지 않게)
+ */
+export function useNewWindowShortcut(open: (() => void) | null) {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!isNewWindowKey(e) || e.repeat || e.defaultPrevented) return
+      if (document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"]')) return
+      e.preventDefault()
+      open()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
 }
 
 export interface TerminalClipboard {
@@ -111,6 +137,8 @@ export function createTerminalKeyHandler(
     if (fontSizeAction(e)) return false
     // 터미널 열기(Ctrl+T)도 앱이 처리한다(useTerminalOpenShortcut 의 window 단축키) — 셸로 ^T 를 보내지 않는다
     if (isTerminalOpenKey(e)) return false
+    // 새 창(Ctrl+Shift+N)도 앱이 처리한다(useNewWindowShortcut) — 셸로 ^N 을 보내지 않는다
+    if (isNewWindowKey(e)) return false
     if (clipboard && isKey(e, 'c')) {
       if (e.type === 'keyup') {
         const was = copying

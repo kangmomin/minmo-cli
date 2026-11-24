@@ -32,6 +32,8 @@ import { IssueRow } from './IssueRow'
 import { ISSUE_SEARCH_MIN, matchesIssue } from './issueSearch'
 import { NewTaskDialog } from './LocalRepoDialogs'
 import { NewIssueDialog } from './NewIssueDialog'
+import { useOpenWindow } from './openWindow'
+import { OpenWindowButton } from './OpenWindowButton'
 import { useOpenPublish } from './publishContext'
 import { isPublishing } from './publishRepo'
 import { unregisterLocalRepo } from './localRepos'
@@ -129,6 +131,8 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
   const [dialog, setDialog] = useState<null | 'task' | 'remove' | 'issue'>(null)
   const openPublish = useOpenPublish()
   const nodeId = `repo:${repo.owner}/${repo.name}`
+  const open = useOpenWindow()
+  const openInWindow = open && (() => open({ kind: 'repo', owner: repo.owner, repo: repo.name }, local ? label : `${repo.owner}/${label}`))
   const expanded = useUiStore((s) => !!s.expanded[nodeId])
   const setExpanded = useUiStore((s) => s.setExpanded)
   const selectedId = useUiStore((s) => s.selectedIssueId)
@@ -273,6 +277,7 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
           </ContextMenuTrigger>
           <ContextMenuContent>
             <ContextMenuItem onSelect={openSettings}>프로젝트 설정</ContextMenuItem>
+            {openInWindow && <ContextMenuItem onSelect={openInWindow}>새 창으로 열기</ContextMenuItem>}
             {!local && <ContextMenuItem onSelect={() => setDialog('issue')}>이슈 등록…</ContextMenuItem>}
             {!local && <ContextMenuItem onSelect={() => setBaseOpen(true)}>기준 저장소 폴더…</ContextMenuItem>}
             {local && <ContextMenuItem onSelect={() => setDialog('task')}>작업 추가…</ContextMenuItem>}
@@ -334,6 +339,7 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+        {openInWindow && <OpenWindowButton label={label} onClick={openInWindow} />}
         {/* 우클릭 메뉴는 키보드로 열 수 없다 → 같은 동작의 버튼을 둔다(AX-01, WCAG 2.1.1). 이름에 대상을 넣어 여러 개를 구분한다(AX-21) */}
         <Button
           size="icon-sm"

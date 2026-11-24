@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { LOCAL_OWNER, NICKNAME_MAX, repoFullNameOf, repoLabelOf, repoNicknameOf, repoShortNameOf, shortNameTaken, useReposStore } from './repos'
 
 beforeEach(() => {
-  useReposStore.setState({ added: [], local: {}, lastParent: {}, nicknames: {} })
+  useReposStore.setState({ added: [], local: {}, lastParent: {}, nicknames: {}, groups: {} })
 })
 
 describe('setNickname', () => {
@@ -74,5 +74,35 @@ describe('화면 이름', () => {
     expect(repoShortNameOf(s(), LOCAL_OWNER, id)).toBe('앱')
     expect(repoLabelOf(s(), LOCAL_OWNER, id)).toBe('앱')
     expect(repoFullNameOf(s(), LOCAL_OWNER, id)).toBe('/src/my-app')
+  })
+})
+
+// 사용자 정의 그룹(#105)
+describe('saveGroup / removeGroup', () => {
+  it('새 그룹은 id 를 만들고, 이름을 정리하고, 저장소를 대소문자 없이 한 번만 둔다', () => {
+    const id = useReposStore.getState().saveGroup(null, { name: '  백엔드  ', repos: ['Acme/api', 'acme/API', 'bad', '/x', 'x/', 'org/web'] })
+    expect(id).toMatch(/^g-[0-9a-f]{8}$/)
+    expect(useReposStore.getState().groups).toEqual({ [id!]: { name: '백엔드', repos: ['Acme/api', 'org/web'] } })
+  })
+
+  it('id 를 주면 그 그룹을 고친다', () => {
+    const { saveGroup } = useReposStore.getState()
+    const id = saveGroup(null, { name: 'a', repos: [] })!
+    expect(saveGroup(id, { name: 'b', repos: ['o/r'] })).toBe(id)
+    expect(useReposStore.getState().groups).toEqual({ [id]: { name: 'b', repos: ['o/r'] } })
+  })
+
+  it('이름이 비면 저장하지 않는다', () => {
+    expect(useReposStore.getState().saveGroup(null, { name: '   ', repos: ['o/r'] })).toBeNull()
+    expect(useReposStore.getState().groups).toEqual({})
+  })
+
+  it('removeGroup 은 그 그룹만 지운다', () => {
+    const { saveGroup, removeGroup } = useReposStore.getState()
+    const a = saveGroup(null, { name: 'a', repos: [] })!
+    const b = saveGroup(null, { name: 'b', repos: [] })!
+    removeGroup(a)
+    removeGroup('없는-id')
+    expect(Object.keys(useReposStore.getState().groups)).toEqual([b])
   })
 })

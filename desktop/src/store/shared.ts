@@ -9,14 +9,14 @@ import { bindShared, merge3 } from '../lib/sharedState'
 import type { TauriApi } from '../lib/tauri'
 import { aliasOfHostId, useHostsStore } from './hosts'
 import type { HostsState } from './hosts'
-import { normalizeNickname, useReposStore } from './repos'
+import { normalizeGroup, normalizeNickname, useReposStore } from './repos'
 import type { ReposState } from './repos'
 import { useSetupStore } from './setup'
 import type { SetupState } from './setup'
 import { useUiStore } from './ui'
 import type { IssuePanes, UiState } from './ui'
 
-type SharedRepos = Pick<ReposState, 'added' | 'local' | 'nicknames'>
+type SharedRepos = Pick<ReposState, 'added' | 'local' | 'nicknames' | 'groups'>
 /** 작업 호스트 목록·지금 고른 호스트·tmux 사용은 기기마다 다르므로 뺀다 */
 type SharedHosts = Pick<HostsState, 'baseRepos' | 'baseDirs' | 'repoHosts'>
 type SharedUi = {
@@ -95,6 +95,14 @@ export function applySharedRepos(value: unknown) {
         .map(([k, v]) => [k.toLowerCase(), typeof v === 'string' ? normalizeNickname(v) : ''] as const)
         .filter(([, v]) => v !== ''),
     )
+  // 그룹 기능 전의 값(groups 없음)이면 이 화면의 그룹을 그대로 둔다. 모양이 틀린 그룹은 버린다
+  if (isRecord(value.groups))
+    next.groups = Object.fromEntries(
+      Object.entries(value.groups)
+        .filter((e): e is [string, { name: string; repos: unknown[] }] => isRecord(e[1]) && typeof e[1].name === 'string' && Array.isArray(e[1].repos))
+        .map(([id, g]) => [id, normalizeGroup({ name: g.name, repos: g.repos.filter((r): r is string => typeof r === 'string') })] as const)
+        .filter(([, g]) => g.name !== ''),
+    )
   useReposStore.setState(next)
 }
 
@@ -140,7 +148,7 @@ export function bindSharedStores(tauri: Pick<TauriApi, 'sharedGet' | 'sharedSet'
       key: 'repos',
       pick: () => {
         const s = useReposStore.getState()
-        return { added: s.added, local: s.local, nicknames: s.nicknames }
+        return { added: s.added, local: s.local, nicknames: s.nicknames, groups: s.groups }
       },
       apply: applySharedRepos,
       subscribe: (cb) => useReposStore.subscribe(cb),

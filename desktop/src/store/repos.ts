@@ -2,8 +2,11 @@
 //  - added: GitHub 목록(내 계정·내 조직 소유)에 없지만 열어 둔 GitHub 저장소
 //  - local: GitHub 저장소가 아닌 폴더(새 프로젝트, origin 이 없거나 GitHub 가 아닌 저장소). 이슈 대신 앱 안의 "작업"을 쓴다
 //  - nicknames: 저장소 별칭(#73) — 화면에 원래 이름 대신 보이고, 경로 템플릿의 {alias} 값이 된다
+//  - groups: 사용자가 이름을 붙여 묶은 저장소(#105) — 사이드바에 노드로 보이고, 그 묶음만 보이는 새 창을 열 수 있다
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
+
+import { followOtherWindows, perWindowStorage } from '../lib/windowScope'
 
 /**
  * 로컬 저장소의 가짜 소유자. GitHub 로그인은 `_` 로 시작할 수 없어 실제 소유자와 겹치지 않고, 서버의 이름 규칙은 통과한다 —
@@ -23,6 +26,28 @@ export const clampNickname = (value: string) => Array.from(value).slice(0, NICKN
 
 /** 저장할 별칭 — 앞뒤 공백을 지우고 자른다. '' 이면 별칭 없음 */
 export const normalizeNickname = (value: string) => clampNickname(value.trim()).trim()
+
+/** 사용자 정의 그룹 — repos 는 "owner/name"(로컬 저장소는 LOCAL_OWNER/id) */
+export type RepoGroup = { name: string; repos: string[] }
+
+/** 이름은 별칭과 같은 규칙(앞뒤 공백 없음, NICKNAME_MAX 글자)으로 정리하고, 저장소는 대소문자를 가리지 않고 한 번만 둔다 */
+export function normalizeGroup(group: RepoGroup): RepoGroup {
+  const seen = new Set<string>()
+  const repos = group.repos.filter((r) => {
+    const i = r.indexOf('/')
+    const key = r.toLowerCase()
+    if (i <= 0 || i === r.length - 1 || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  return { name: normalizeNickname(group.name), repos }
+}
+
+export function newGroupId(random: () => number = Math.random): string {
+  return `g-${Math.floor(random() * 0x100000000)
+    .toString(16)
+    .padStart(8, '0')}`
+}
 
 export type LocalTask = { number: number; title: string; state: 'open' | 'closed' }
 
@@ -49,6 +74,8 @@ export interface ReposState {
   lastParent: Record<string, string>
   /** 저장소 별칭: repoKey → 별칭(앞뒤 공백 없음, 비지 않음) */
   nicknames: Record<string, string>
+  /** 그룹 id → 그룹. 목록이 아니라 id 로 둔다 — 다른 기기와 맞출 때 그룹 단위로 합쳐진다(lib/sharedState merge3) */
+  groups: Record<string, RepoGroup>
 
   addGitHub(owner: string, name: string): void
   removeGitHub(owner: string, name: string): void
@@ -61,6 +88,9 @@ export interface ReposState {
   setLastParent(hostId: string, path: string): void
   /** 앞뒤 공백을 지우고 NICKNAME_MAX 글자로 자른다. 비거나 null 이면 별칭을 지운다 */
   setNickname(owner: string, repo: string, nickname: string | null): void
+  /** 그룹을 만들거나(id 가 null) 고친다. 이름이 비면 저장하지 않고 null. 저장한 그룹의 id 를 돌려준다 */
+  saveGroup(id: string | null, group: RepoGroup): string | null
+  removeGroup(id: string): void
 }
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
@@ -89,6 +119,7 @@ export const useReposStore = create<ReposState>()(
       local: {},
       lastParent: {},
       nicknames: {},
+      groups: {},
       addGitHub: (owner, name) =>
         set((s) => {
           const full = `${owner}/${name}`
@@ -146,10 +177,28 @@ export const useReposStore = create<ReposState>()(
           else nicknames[key] = value
           return { nicknames }
         }),
+      saveGroup: (id, group) => {
+        const value = normalizeGroup(group)
+        if (value.name === '') return null
+        let key = id
+        while (key === null || (id === null && get().groups[key])) key = newGroupId()
+        const saved = key
+        set((s) => ({ groups: { ...s.groups, [saved]: value } }))
+        return saved
+      },
+      removeGroup: (id) =>
+        set((s) => {
+          if (!(id in s.groups)) return s
+          const groups = { ...s.groups }
+          delete groups[id]
+          return { groups }
+        }),
     }),
-    { name: 'minmo-repos', storage: createJSONStorage(() => localStorage) },
+    // 창이 여럿이어도 이 창이 바꾼 값만 쓴다(#105)
+    { name: 'minmo-repos', storage: createJSONStorage(() => perWindowStorage([])) },
   ),
 )
+followOtherWindows('minmo-repos', () => useReposStore.persist.rehydrate())
 
 /** "owner/name" → [owner, name] */
 export function splitFullName(full: string): [string, string] {

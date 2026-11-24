@@ -9,6 +9,8 @@ import type { GitHubOwner, GitHubRepo } from '@minmo/core'
 import { isLocalOwner } from '../../store/repos'
 import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
+import { useOpenWindow } from './openWindow'
+import { OpenWindowButton } from './OpenWindowButton'
 import { RepoNode } from './RepoNode'
 import { githubErrorMessage, useRepos } from './useTree'
 import { useRepoFilter } from './useVisibleRepos'
@@ -21,6 +23,8 @@ export interface OrgNodeProps {
   fixed?: boolean
   /** 표시 이름(기본: login) */
   label?: string
+  /** true 면 "보이는 저장소" 필터를 쓰지 않는다 — 그 조직만 보는 창(#105)은 사용자가 고른 조직 전체를 보인다 */
+  unfiltered?: boolean
   onOpenSettings(scope: SettingsScope, preview: PreviewIssue | null): void
 }
 
@@ -28,7 +32,7 @@ export interface OrgNodeProps {
  * 조직(개인 계정 포함) 노드 — ⚙ 버튼·컨텍스트 메뉴 "조직 설정" (개인 계정의 org scope = 사용자 login).
  * 트리는 disclosure 패턴(버튼 aria-expanded + aria-controls)으로 탐색한다.
  */
-export function OrgNode({ owner, extra, fixed = false, label = owner.login, onOpenSettings }: OrgNodeProps) {
+export function OrgNode({ owner, extra, fixed = false, label = owner.login, unfiltered = false, onOpenSettings }: OrgNodeProps) {
   const nodeId = `org:${owner.login}`
   const expanded = useUiStore((s) => !!s.expanded[nodeId])
   const setExpanded = useUiStore((s) => s.setExpanded)
@@ -37,7 +41,7 @@ export function OrgNode({ owner, extra, fixed = false, label = owner.login, onOp
   const isExtra = (r: GitHubRepo) => !!extra?.some((x) => x.name.toLowerCase() === r.name.toLowerCase())
   const listed = fixed ? [] : repos.data
   const shown = listed && [
-    ...listed.filter((r) => !isExtra(r)).map((r) => ({ repo: r, ...repoFilter(r.owner, r.name) })),
+    ...listed.filter((r) => !isExtra(r)).map((r) => ({ repo: r, ...(unfiltered ? { show: true, hidden: false } : repoFilter(r.owner, r.name)) })),
     ...(extra ?? []).map((r) => ({ repo: r, show: true, hidden: false })),
   ]
     .filter((x) => x.show)
@@ -48,6 +52,8 @@ export function OrgNode({ owner, extra, fixed = false, label = owner.login, onOp
   const childrenId = useId()
   const openSettings = () => onOpenSettings({ kind: 'org', owner: owner.login }, null)
   const settingsLabel = local ? '로컬 저장소 공통 설정' : '조직 설정'
+  const open = useOpenWindow()
+  const openInWindow = open && (() => open({ kind: 'org', owner: owner.login }, label))
 
   return (
     <div>
@@ -71,8 +77,10 @@ export function OrgNode({ owner, extra, fixed = false, label = owner.login, onOp
           </ContextMenuTrigger>
           <ContextMenuContent>
             <ContextMenuItem onSelect={openSettings}>{settingsLabel}</ContextMenuItem>
+            {openInWindow && <ContextMenuItem onSelect={openInWindow}>새 창으로 열기</ContextMenuItem>}
           </ContextMenuContent>
         </ContextMenu>
+        {openInWindow && <OpenWindowButton label={label} onClick={openInWindow} />}
         {/* 우클릭 메뉴는 키보드로 열 수 없다 → 같은 동작의 버튼을 둔다(AX-01, WCAG 2.1.1). 이름에 대상을 넣어 여러 개를 구분한다(AX-21) */}
         <Button
           size="icon-sm"
