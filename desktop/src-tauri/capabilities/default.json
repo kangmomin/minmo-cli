@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "minmo 메인 창 권한",
-  "windows": ["main"],
+  "description": "minmo 메인 창과 보조 창(ws-*, 같은 앱 화면) 권한 — 다른 PC 의 화면 창(peer-*)은 넣지 않는다",
+  "windows": ["main", "ws-*"],
   "permissions": [
     "core:default",
     "dialog:allow-open",

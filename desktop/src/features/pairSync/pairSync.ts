@@ -9,6 +9,7 @@ import type { ApiClient, PairPayload, PairSyncClient, SyncDoc } from '@minmo/api
 
 import { KEYCHAIN_KEYS } from '../../lib/tauri'
 import type { TauriApi } from '../../lib/tauri'
+import { ownsAppTasks } from '../../lib/windowScope'
 import { usePairStore } from '../../store/pairSync'
 import { splitFullName, useReposStore } from '../../store/repos'
 import { planSync, unionRepos } from '../remote/peerSync'
@@ -130,7 +131,7 @@ export async function runPairSync(deps: PairRunDeps): Promise<void> {
 export function usePairSync(tauri: TauriApi, deps: Omit<PairRunDeps, 'tauri'>) {
   const pairId = usePairStore((s) => s.pairId)
   useEffect(() => {
-    if (tauri.runtime !== 'native' || !pairId) return
+    if (!ownsAppTasks(tauri) || !pairId) return
     const run = () => void runPairSync({ ...deps, tauri })
     run()
     const t = setInterval(run, PAIR_SYNC_INTERVAL_MS)

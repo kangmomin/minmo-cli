@@ -8,6 +8,7 @@ import type { E2eRole, E2eRoles, RoleConfig } from '../features/e2eQueue/roles'
 import { closePane, leaf, leafIds, splitPane } from '../features/terminal/panes'
 import type { PaneNode, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
+import { followOtherWindows, perWindowStorage } from '../lib/windowScope'
 
 export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes'
 /** ghostty = Ghostty 터미널의 기본 색(기본값) */
@@ -84,6 +85,8 @@ export interface UiState {
   launchRequest: string | null
   /** 트리에 에이전트가 있는 이슈만 보인다(저장하지 않는다 — 에이전트 현황은 실행 중에만 있다) */
   treeAgentsOnly: boolean
+  /** 트리의 이슈를 에이전트 상태가 급한 순으로 놓는다(#98, persist) */
+  treeSortByStatus: boolean
   panes: Record<string, IssuePanes>
   /**
    * 터미널을 띄우기로 한 이슈. 이슈를 고르기만 해서는 터미널(셸 프로세스)을 만들지 않는다 — 잘못 고른 이슈마다 터미널이 생기지 않게,
@@ -110,6 +113,7 @@ export interface UiState {
   setShowUsage(v: boolean): void
   setAgentsView(patch: Partial<AgentsView>): void
   setTreeAgentsOnly(v: boolean): void
+  setTreeSortByStatus(v: boolean): void
   setAgentCommand(kind: LaunchKind, command: string): void
   setE2eRole(role: E2eRole, cfg: RoleConfig): void
   setLastLaunchKind(kind: LaunchKind): void
@@ -165,6 +169,7 @@ export const useUiStore = create<UiState>()(
       showUsage: true,
       agentsView: DEFAULT_AGENTS_VIEW,
       treeAgentsOnly: false,
+      treeSortByStatus: false,
       agentCommands: DEFAULT_AGENT_COMMANDS,
       e2eRoles: DEFAULT_ROLES,
       lastLaunchKind: 'claude',
@@ -202,6 +207,7 @@ export const useUiStore = create<UiState>()(
       setShowUsage: (showUsage) => set({ showUsage }),
       setAgentsView: (patch) => set((s) => ({ agentsView: { ...s.agentsView, ...patch } })),
       setTreeAgentsOnly: (treeAgentsOnly) => set({ treeAgentsOnly }),
+      setTreeSortByStatus: (treeSortByStatus) => set({ treeSortByStatus }),
       setAgentCommand: (kind, command) => set((s) => ({ agentCommands: { ...s.agentCommands, [kind]: command } })),
       setE2eRole: (role, cfg) => set((s) => ({ e2eRoles: { ...s.e2eRoles, [role]: cfg } })),
       setLastLaunchKind: (lastLaunchKind) => set({ lastLaunchKind }),
@@ -348,7 +354,8 @@ export const useUiStore = create<UiState>()(
     }),
     {
       name: 'minmo-ui',
-      storage: createJSONStorage(() => localStorage),
+      // 창마다 다른 값(지금 보는 이슈·펼친 노드·탭)은 보조 창이 덮지 않는다. 보조 창은 고른 이슈 없이 시작한다(#105)
+      storage: createJSONStorage(() => perWindowStorage(['selectedIssueId', 'expanded', 'tab'], ['selectedIssueId'])),
       // Plan 은 terminal ids 도 persist 였으나 PTY 세션 id 는 프로세스 수명과 같아 재시작 후 의미가 없다 → 영속 대상에서 제외
       partialize: (s) => ({
         expanded: s.expanded,
@@ -361,6 +368,7 @@ export const useUiStore = create<UiState>()(
         agentNotify: s.agentNotify,
         showUsage: s.showUsage,
         agentsView: s.agentsView,
+        treeSortByStatus: s.treeSortByStatus,
         agentCommands: s.agentCommands,
         e2eRoles: s.e2eRoles,
         lastLaunchKind: s.lastLaunchKind,
@@ -380,6 +388,8 @@ export const useUiStore = create<UiState>()(
           sidebarWidth: state.sidebarWidth === undefined ? current.sidebarWidth : clampSidebarWidth(state.sidebarWidth),
           // 예전 버전의 저장 값에는 없거나 모양이 다를 수 있다 — 기본값 위에 얹는다
           agentsView: { ...current.agentsView, ...(typeof state.agentsView === 'object' && state.agentsView !== null ? state.agentsView : {}) },
+          // 글자 "false" 같은 값이 정렬을 켜지 않게 boolean 만 받는다
+          treeSortByStatus: typeof state.treeSortByStatus === 'boolean' ? state.treeSortByStatus : current.treeSortByStatus,
           // 저장된 값이 글자가 아니면 버린다(대화상자가 그 값을 명령으로 쓴다)
           agentCommands: {
             ...current.agentCommands,
@@ -393,6 +403,7 @@ export const useUiStore = create<UiState>()(
     },
   ),
 )
+followOtherWindows('minmo-ui', () => useUiStore.persist.rehydrate())
 
 /** 패널 id: 이슈 안에서 단조 증가하는 번호 */
 export const paneIdOf = (issueId: string, seq: number) => `${issueId}::${seq}`

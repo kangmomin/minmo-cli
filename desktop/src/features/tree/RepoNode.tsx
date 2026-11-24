@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderInputIcon, MoreHorizontalIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 
 import { normalizePath } from '@minmo/api-client'
 import type { SettingsScope } from '@minmo/api-client'
@@ -26,11 +27,13 @@ import { useUiStore } from '../../store/ui'
 import type { PreviewIssue } from '../settings/SettingsDialog'
 import { shrinkBadge } from './badgeClasses'
 import { BaseRepoDialog } from './BaseRepoDialog'
-import { issueStatus, useAgentStore } from '../agents/agentStore'
+import { issueStatuses, statusRank, useAgentStore } from '../agents/agentStore'
 import { IssueRow } from './IssueRow'
 import { ISSUE_SEARCH_MIN, matchesIssue } from './issueSearch'
 import { NewTaskDialog } from './LocalRepoDialogs'
 import { NewIssueDialog } from './NewIssueDialog'
+import { useOpenWindow } from './openWindow'
+import { OpenWindowButton } from './OpenWindowButton'
 import { useOpenPublish } from './publishContext'
 import { isPublishing } from './publishRepo'
 import { unregisterLocalRepo } from './localRepos'
@@ -128,6 +131,8 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
   const [dialog, setDialog] = useState<null | 'task' | 'remove' | 'issue'>(null)
   const openPublish = useOpenPublish()
   const nodeId = `repo:${repo.owner}/${repo.name}`
+  const open = useOpenWindow()
+  const openInWindow = open && (() => open({ kind: 'repo', owner: repo.owner, repo: repo.name }, local ? label : `${repo.owner}/${label}`))
   const expanded = useUiStore((s) => !!s.expanded[nodeId])
   const setExpanded = useUiStore((s) => s.setExpanded)
   const selectedId = useUiStore((s) => s.selectedIssueId)
@@ -143,14 +148,28 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
   const hasAnyWorktree = entries.some(([, e]) => e !== undefined)
   // "에이전트가 있는 이슈만" 필터 — 켜면 터미널에서 에이전트가 도는 이슈만 남긴다
   const agentsOnly = useUiStore((s) => s.treeAgentsOnly)
-  const agentPanes = useAgentStore((s) => (agentsOnly ? s.panes : null))
-  // 지금 보고 있는 이슈는 에이전트가 없어도 남긴다(누른 줄이 사라지지 않게)
-  const agentEntries = agentPanes
-    ? entries.filter(([i]) => {
-        const id = worktreeId(repo.owner, repo.name, i.key)
-        return id === selectedId || issueStatus(agentPanes, id) !== null
-      })
-    : entries
+  // "상태 순 정렬"(#98) — 켜면 입력 대기 → 끝남 → 작업 중 → 대기 중 → 에이전트 없음 순으로 놓는다
+  const sortByStatus = useUiStore((s) => s.treeSortByStatus)
+  // 줄마다의 상태만 구독한다(useShallow) — 에이전트가 출력할 때마다 panes 가 바뀌어도 상태가 그대로면 다시 그리지 않는다
+  const watchAgents = expanded && (agentsOnly || sortByStatus)
+  const entryStatuses = useAgentStore(
+    useShallow((s) => {
+      if (!watchAgents) return null
+      const byIssue = issueStatuses(s.panes)
+      return entries.map(([i]) => byIssue.get(worktreeId(repo.owner, repo.name, i.key)) ?? null)
+    }),
+  )
+  // 정렬만 켰을 때는 선택이 바뀌어도 다시 계산하지 않게 agentsOnly 일 때만 선택 이슈를 본다
+  const keepId = agentsOnly ? selectedId : null
+  const agentEntries = useMemo(() => {
+    if (!entryStatuses) return entries
+    let ranked = entries.map((entry, idx) => ({ entry, status: entryStatuses[idx] }))
+    // 지금 보고 있는 이슈는 에이전트가 없어도 남긴다(누른 줄이 사라지지 않게)
+    if (agentsOnly) ranked = ranked.filter(({ entry: [i], status }) => status !== null || worktreeId(repo.owner, repo.name, i.key) === keepId)
+    // sort 는 안정 정렬 — 같은 상태 안에서는 기존 순서(worktree 먼저, 최신 번호 순)를 지킨다
+    if (sortByStatus) ranked.sort((a, b) => statusRank(a.status) - statusRank(b.status))
+    return ranked.map(({ entry }) => entry)
+  }, [entryStatuses, agentsOnly, sortByStatus, entries, keepId, repo.owner, repo.name, worktreeId])
   // 이슈 검색(번호·제목) — 이슈가 많은 저장소에서만 칸을 보인다. 검색어가 남아 있으면 이슈가 줄어도 칸을 둔다(지울 수 있게)
   const [search, setSearch] = useState('')
   const searching = search.trim() !== ''
@@ -258,6 +277,7 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
           </ContextMenuTrigger>
           <ContextMenuContent>
             <ContextMenuItem onSelect={openSettings}>프로젝트 설정</ContextMenuItem>
+            {openInWindow && <ContextMenuItem onSelect={openInWindow}>새 창으로 열기</ContextMenuItem>}
             {!local && <ContextMenuItem onSelect={() => setDialog('issue')}>이슈 등록…</ContextMenuItem>}
             {!local && <ContextMenuItem onSelect={() => setBaseOpen(true)}>기준 저장소 폴더…</ContextMenuItem>}
             {local && <ContextMenuItem onSelect={() => setDialog('task')}>작업 추가…</ContextMenuItem>}
@@ -319,6 +339,7 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+        {openInWindow && <OpenWindowButton label={label} onClick={openInWindow} />}
         {/* 우클릭 메뉴는 키보드로 열 수 없다 → 같은 동작의 버튼을 둔다(AX-01, WCAG 2.1.1). 이름에 대상을 넣어 여러 개를 구분한다(AX-21) */}
         <Button
           size="icon-sm"

@@ -1,0 +1,58 @@
+// 창 사이에서 "지금 보는 이슈"를 알린다(#105).
+// OS 알림은 주 창만 띄운다. 그런데 사용자가 보조 창에서 그 이슈의 터미널을 보고 있으면 알리면 안 된다 —
+// 그래서 포커스를 가진 창이 자기가 보는 이슈를 localStorage(모든 창이 함께 씀)에 적어 둔다.
+import { useEffect } from 'react'
+
+import { useUiStore } from '../../store/ui'
+
+const KEY = 'minmo-window-view'
+/** 이 화면(창)의 id — 새로 고치면 바뀐다 */
+const ME = Math.random().toString(36).slice(2)
+
+type View = { by: string; issueId: string | null; terminal: boolean }
+
+function readView(): View | null {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(KEY) ?? 'null')
+    return typeof v === 'object' && v !== null && typeof (v as View).by === 'string' ? (v as View) : null
+  } catch {
+    return null
+  }
+}
+
+/** 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 */
+export function viewedInOtherWindow(issueId: string): boolean {
+  const v = readView()
+  return v !== null && v.by !== ME && v.issueId === issueId && v.terminal
+}
+
+/** 이 창이 포커스를 가진 동안 보는 이슈를 적어 두고, 포커스를 잃거나 닫히면 지운다 */
+export function useWindowViewBroadcast() {
+  const issueId = useUiStore((s) => s.selectedIssueId)
+  const terminal = useUiStore((s) => s.tab === 'terminal')
+  useEffect(() => {
+    const write = () => {
+      try {
+        if (document.hasFocus()) localStorage.setItem(KEY, JSON.stringify({ by: ME, issueId, terminal } satisfies View))
+      } catch {
+        // 저장소를 쓸 수 없으면 알리지 않는다(주 창이 알림을 한 번 더 띄울 뿐이다)
+      }
+    }
+    const clear = () => {
+      try {
+        if (readView()?.by === ME) localStorage.removeItem(KEY)
+      } catch {
+        // 위와 같다
+      }
+    }
+    write()
+    window.addEventListener('focus', write)
+    window.addEventListener('blur', clear)
+    window.addEventListener('pagehide', clear)
+    return () => {
+      window.removeEventListener('focus', write)
+      window.removeEventListener('blur', clear)
+      window.removeEventListener('pagehide', clear)
+    }
+  }, [issueId, terminal])
+}

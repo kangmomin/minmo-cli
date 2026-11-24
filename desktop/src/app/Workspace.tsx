@@ -1,6 +1,6 @@
-import { ListTreeIcon, LogOutIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
+import { AppWindowIcon, ListTreeIcon, LogOutIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import type { SettingsScope } from '@minmo/api-client'
 
@@ -13,6 +13,7 @@ import { useAgentTracker } from '../features/agents/useAgentTracker'
 import { E2eQueueButton } from '../features/e2eQueue/E2eQueueButton'
 import { E2eQueueDialog } from '../features/e2eQueue/E2eQueueDialog'
 import { useE2eQueueRunner } from '../features/e2eQueue/useE2eQueueRunner'
+import { useWindowViewBroadcast } from '../features/agents/windowView'
 import { useDeepLinkOpen } from '../features/remote/deepLink'
 import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
 import { usePeerSync } from '../features/remote/peerSync'
@@ -30,7 +31,8 @@ import { SettingsDialog } from '../features/settings/SettingsDialog'
 import type { PreviewIssue } from '../features/settings/SettingsDialog'
 import { Sidebar } from '../features/tree/Sidebar'
 import { UsageBar } from '../features/usage/UsageBar'
-import { useTerminalOpenShortcut } from '../features/terminal/keys'
+import { NEW_WINDOW_KEY, useNewWindowShortcut, useTerminalOpenShortcut } from '../features/terminal/keys'
+import { openWindow } from '../features/tree/openWindow'
 import { useFontSizeShortcuts } from '../lib/fontSize'
 import { openServerSettings } from '../store/server'
 import { HostStatusNotice } from './HostGate'
@@ -72,6 +74,9 @@ export function Workspace() {
   useSharedTerminals(baseTauri)
   // 원격으로 붙은 화면에서는 이 PC 전용 설정(원격 접속·서버·원격 CLI)을 보이지 않는다
   const isHost = baseTauri.runtime !== 'remote'
+  // 범위 없는 새 창(#105) — 원격 화면에서는 띄우지 않는다
+  const openBlankWindow = useMemo(() => (isHost ? () => openWindow(baseTauri, null, null) : null), [isHost, baseTauri])
+  useNewWindowShortcut(openBlankWindow)
   // 여러 PC: 등록한 다른 PC 의 현황을 받아 합치고, 이 PC 의 현황은 올려 둔다
   usePeerAgents(baseTauri)
   useAgentPublisher(baseTauri, useLocalRows())
@@ -82,6 +87,8 @@ export function Workspace() {
   useAgentTracker()
   // E2E 큐 — 차례가 된 작업의 단계를 그 이슈의 터미널 패널에서 실행한다(앱에 한 번만)
   useE2eQueueRunner()
+  // 이 창이 보는 이슈를 다른 창(알림을 띄우는 주 창)에 알린다
+  useWindowViewBroadcast()
   // 그 알림을 누르면 해당 터미널로 간다
   useNotifyClick()
   const connection = useHostConnection()
@@ -106,6 +113,16 @@ export function Workspace() {
         {auth.me && <span className="text-sm text-muted-foreground">{auth.me.githubLogin}</span>}
         <AgentsButton onClick={() => setAgentsOpen(true)} />
         <E2eQueueButton onClick={() => setE2eOpen(true)} />
+        {openBlankWindow && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="새 창" onClick={openBlankWindow}>
+                <AppWindowIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>새 창 ({NEW_WINDOW_KEY})</TooltipContent>
+          </Tooltip>
+        )}
         <ThemeToggle />
         {isHost && (
           <Tooltip>

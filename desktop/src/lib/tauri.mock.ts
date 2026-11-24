@@ -13,6 +13,8 @@ export interface MinmoMockHandle {
   openedUrls: string[]
   /** peerOpen 으로 연 다른 PC(와 열 곳) */
   openedPeers: { id: string; open: unknown }[]
+  /** windowOpen 으로 연 새 창(범위·제목) */
+  openedWindows: { scope: string | null; title: string | null }[]
   readonly keychain: Record<string, string>
   /** 창 닫기 버튼을 누른 것처럼 close-requested 를 보낸다 */
   emitCloseRequested(): void
@@ -190,6 +192,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   const handle: MinmoMockHandle = {
     openedUrls: [],
     openedPeers: [],
+    openedWindows: [],
     get keychain() {
       return Object.fromEntries(keychain)
     },
@@ -404,6 +407,9 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     onSyncApplied: async () => () => {},
     peerOpen: async (id, open) => {
       handle.openedPeers.push({ id, open: open ?? null })
+    },
+    windowOpen: async (scope, title) => {
+      handle.openedWindows.push({ scope, title })
     },
     tailscaleStatus: async () => {
       if (tailscaleLoginPending) {

@@ -4,6 +4,7 @@ import type { Platform } from '@minmo/api-client'
 import type { CmdResult, GhHost, IssueTarget, RunOptions, ScriptLogEvent, ScriptRunRequest, ScriptRunResult, Unlisten, WorktreeHost } from '@minmo/core'
 
 import { createTauriMock } from './tauri.mock'
+import { isPrimaryWindow } from './windowScope'
 
 export type { Platform }
 // 호스트 공통 타입은 원격 CLI 와 함께 쓰도록 @minmo/core 에 있다
@@ -215,6 +216,8 @@ export interface TauriApi extends WorktreeHost, GhHost {
   peerRemove(id: string): Promise<Peer[]>
   /** 그 PC 의 화면을 별도 창으로 연다(이미 열려 있으면 앞으로). open 이 있으면 그 이슈의 터미널로 간다 */
   peerOpen(id: string, open?: PeerOpen): Promise<void>
+  /** 같은 앱 화면을 새 창으로 연다(#105). scope 는 encodeScope 로 인코딩한 범위, title 은 창 제목에 붙일 이름 */
+  windowOpen(scope: string | null, title: string | null): Promise<void>
   /** 이 PC 의 에이전트 현황(줄 목록)을 올려 둔다 — 이 PC 를 등록한 다른 PC 가 받아 간다 */
   agentsPublish(rows: unknown[]): Promise<void>
   /** 다른 PC 와의 동기화로 이 PC 서버의 설정·메모가 바뀌었다 — 화면이 다시 읽는다 */
@@ -391,6 +394,7 @@ export const TAURI_COMMANDS = {
   peerAdd: 'peer_add',
   peerRemove: 'peer_remove',
   peerOpen: 'peer_open',
+  windowOpen: 'window_open',
   tailscaleStatus: 'tailscale_status',
   tailscaleInstall: 'tailscale_install',
   tailscaleInstallCancel: 'tailscale_install_cancel',
@@ -453,6 +457,7 @@ export function createTauriApi(): TauriApi {
     peerAdd: (input) => call(C.peerAdd, { input }),
     peerRemove: (id) => call(C.peerRemove, { id }),
     peerOpen: (id, open) => call(C.peerOpen, { id, open: open ?? null }),
+    windowOpen: (scope, title) => call(C.windowOpen, { scope, title }),
     tailscaleStatus: () => call(C.tailscaleStatus),
     tailscaleInstall: () => call(C.tailscaleInstall),
     tailscaleInstallCancel: () => call(C.tailscaleInstallCancel),
@@ -506,6 +511,8 @@ export function createTauriApi(): TauriApi {
     agentUsage: (sinceMs) => call(C.agentUsage, { sinceMs: Math.max(0, Math.floor(sinceMs)) }),
     agentModelsRaw: (kind) => call(C.agentModelsRaw, { kind }),
     notify: async (title, body, target) => {
+      // 모든 창이 에이전트 상태를 추적한다 — OS 알림은 주 창만 띄워 한 번만 뜨게 한다(#105)
+      if (!isPrimaryWindow()) return
       const n = await import('@tauri-apps/plugin-notification')
       let granted = await n.isPermissionGranted()
       if (!granted) granted = (await n.requestPermission()) === 'granted'

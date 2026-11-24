@@ -11,6 +11,8 @@ export type AgentStatus = 'working' | 'attention' | 'done' | 'idle'
 export const STATUS_LABEL: Record<AgentStatus, string> = { working: '작업 중', attention: '입력 대기', done: '끝남', idle: '대기 중' }
 /** 급한 순서 — 이슈의 여러 패널을 하나로 합칠 때와 정렬에 쓴다 */
 export const STATUS_ORDER: readonly AgentStatus[] = ['attention', 'done', 'working', 'idle']
+/** 정렬 순위(작을수록 급함). 에이전트가 없으면(null) 맨 뒤 */
+export const statusRank = (status: AgentStatus | null): number => (status === null ? STATUS_ORDER.length : STATUS_ORDER.indexOf(status))
 
 export type PaneAgent = {
   paneId: string
@@ -149,6 +151,18 @@ export function issueStatus(panes: Record<string, PaneAgent>, issueId: string): 
     if (best === null || STATUS_ORDER.indexOf(st) < STATUS_ORDER.indexOf(best)) best = st
   }
   return best
+}
+
+/** 모든 이슈의 가장 급한 상태를 한 번에(issueStatus 와 같은 규칙) — 이슈마다 issueStatus 를 부르면 패널을 매번 다 훑는다 */
+export function issueStatuses(panes: Record<string, PaneAgent>): Map<string, AgentStatus> {
+  const out = new Map<string, AgentStatus>()
+  for (const p of Object.values(panes)) {
+    if (p.agent === 'other') continue
+    const st = statusOf(p)
+    const cur = out.get(p.issueId)
+    if (cur === undefined || statusRank(st) < statusRank(cur)) out.set(p.issueId, st)
+  }
+  return out
 }
 
 export function useIssueAgentStatus(issueId: string): AgentStatus | null {

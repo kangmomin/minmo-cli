@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
 import type { SshError, SshProbe } from '../lib/tauri'
+import { followOtherWindows, perWindowStorage } from '../lib/windowScope'
 import { isLocalOwner, repoKey, useReposStore } from './repos'
 import type { LocalRepo } from './repos'
 
@@ -175,8 +176,10 @@ export const useHostsStore = create<HostsState>()(
     }),
     {
       name: 'minmo-hosts',
-      storage: createJSONStorage(() => localStorage),
+      // 사이드바에서 고른 호스트는 창마다 다르다 — 보조 창은 주 창의 선택을 이어받되 덮지 않는다(#105)
+      storage: createJSONStorage(() => perWindowStorage(['selected'])),
       partialize: (s) => ({ aliases: s.aliases, selected: s.selected, baseRepos: s.baseRepos, baseDirs: s.baseDirs, repoHosts: s.repoHosts, useTmux: s.useTmux }),
     },
   ),
 )
+followOtherWindows('minmo-hosts', () => useHostsStore.persist.rehydrate())

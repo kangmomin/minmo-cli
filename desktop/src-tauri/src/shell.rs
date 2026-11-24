@@ -1,11 +1,12 @@
 // 트레이와 창 닫기 — 창을 닫을 때 트레이로 숨길지(서버 유지, 원격 CLI 계속 사용) 앱을 끝낼지 사용자가 고른다.
 // 고른 방식은 server.json 의 closeAction(ask·tray·quit)에 두고, ask 면 웹뷰에 물어본다(close-requested 이벤트).
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-use tauri::{AppHandle, Emitter, Manager, Window, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent};
 
 use crate::server::{CloseAction, ServerManager, State, Status};
 
@@ -112,7 +113,8 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             if ask_again(&mut lock_last_ask(), Instant::now()) {
                 quit(app);
             } else {
-                let _ = window.emit(CLOSE_REQUESTED_EVENT, ());
+                // 대화상자는 main 창만 띄운다(emit 은 모든 창에 가므로 보조 창까지 대화상자를 띄운다)
+                let _ = window.emit_to("main", CLOSE_REQUESTED_EVENT, ());
             }
         }
     }
@@ -188,5 +190,82 @@ mod tests {
             "minmo — 서버 실행 중 (127.0.0.1:18787)"
         );
         assert_eq!(tooltip(&s(State::Failed)), "minmo — 서버 오류");
+    }
+}
+
+/// 보조 창(같은 앱 화면을 하나 더 띄운 창)의 label 접두어 — capabilities 의 "ws-*" 와 맞춘다
+pub const SECONDARY_PREFIX: &str = "ws-";
+static NEXT_WINDOW: AtomicU32 = AtomicU32::new(1);
+
+/// 화면이 넘긴 범위 값은 URL 에 그대로 붙이므로 퍼센트 인코딩된 문자만 받는다(다른 쿼리·경로를 끼워 넣지 못하게)
+fn valid_scope(scope: &str) -> bool {
+    scope.len() <= 1024
+        && scope
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'%' | b'-' | b'_' | b'.' | b'~'))
+}
+
+fn window_title(title: Option<&str>) -> String {
+    match title.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => format!("minmo — {}", t.chars().take(80).collect::<String>()),
+        None => "minmo".to_string(),
+    }
+}
+
+/// 같은 앱 화면을 새 창으로 연다(이슈 #105). scope 가 있으면 그 조직·저장소·그룹만 보인다.
+/// 누를 때마다 새 창을 연다. async 여야 한다 — Windows 에서는 메인 스레드(동기 명령)에서 창을 만들면 멈춘다.
+#[tauri::command]
+pub async fn window_open(app: AppHandle, scope: Option<String>, title: Option<String>) -> Result<(), String> {
+    let mut url = String::from("index.html?window=ws");
+    if let Some(scope) = scope.as_deref().filter(|s| !s.is_empty()) {
+        if !valid_scope(scope) {
+            return Err("창 범위가 올바르지 않습니다".into());
+        }
+        url.push_str("&scope=");
+        url.push_str(scope);
+    }
+    // 앞서 연 창이 아직 그 label 을 쓰고 있으면 다음 번호로 넘어간다
+    let label = loop {
+        let label = format!("{SECONDARY_PREFIX}{}", NEXT_WINDOW.fetch_add(1, Ordering::Relaxed));
+        if app.get_webview_window(&label).is_none() {
+            break label;
+        }
+    };
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+        .title(window_title(title.as_deref()))
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(900.0, 600.0)
+        // main 과 같게 — 가려진 창에서도 터미널·에이전트 추적의 타이머가 느려지지 않게
+        .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// 보조 창이 하나라도 떠 있는가 — main 을 새로 고칠 때 그 창들의 터미널을 끝내지 않기 위해
+pub fn has_secondary_windows(app: &AppHandle) -> bool {
+    app.webview_windows().keys().any(|l| l.starts_with(SECONDARY_PREFIX))
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn scope_accepts_only_percent_encoded() {
+        assert!(valid_scope("org%3Aacme"));
+        assert!(valid_scope("repo%3Aacme%2Fapi.v2"));
+        assert!(!valid_scope("org:acme"));
+        assert!(!valid_scope("a&window=main"));
+        assert!(!valid_scope("../x"));
+        assert!(!valid_scope(&"a".repeat(1025)));
+    }
+
+    #[test]
+    fn title_falls_back_and_truncates() {
+        assert_eq!(window_title(None), "minmo");
+        assert_eq!(window_title(Some("  ")), "minmo");
+        assert_eq!(window_title(Some("acme")), "minmo — acme");
+        assert_eq!(window_title(Some(&"x".repeat(100))).chars().count(), "minmo — ".chars().count() + 80);
     }
 }

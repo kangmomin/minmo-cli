@@ -6,6 +6,7 @@ import { create } from 'zustand'
 import type { Peer, TauriApi } from '../../lib/tauri'
 import { TAURI_EVENTS } from '../../lib/tauri'
 import { RemoteConnection } from '../../lib/tauri.remote'
+import { ownsAppTasks } from '../../lib/windowScope'
 import { usePeersStore } from '../../store/peers'
 import { useUiStore } from '../../store/ui'
 import { STATUS_LABEL } from '../agents/agentStore'
@@ -186,7 +187,7 @@ export function useAgentPublisher(tauri: TauriApi, rows: AgentRow[]) {
   // 내용이 같으면(뭉친 뒤) 다시 올리지 않는다
   const json = JSON.stringify(forPublish(rows))
   useEffect(() => {
-    if (tauri.runtime !== 'native') return
+    if (!ownsAppTasks(tauri)) return
     const t = setTimeout(() => void tauri.agentsPublish(JSON.parse(json) as unknown[]).catch(() => undefined), PUBLISH_DELAY_MS)
     return () => clearTimeout(t)
   }, [tauri, json])
