@@ -80,6 +80,8 @@ export interface UiState {
   launchRequest: string | null
   /** 트리에 에이전트가 있는 이슈만 보인다(저장하지 않는다 — 에이전트 현황은 실행 중에만 있다) */
   treeAgentsOnly: boolean
+  /** 트리의 이슈를 에이전트 상태가 급한 순으로 놓는다(#98, persist) */
+  treeSortByStatus: boolean
   panes: Record<string, IssuePanes>
   /**
    * 터미널을 띄우기로 한 이슈. 이슈를 고르기만 해서는 터미널(셸 프로세스)을 만들지 않는다 — 잘못 고른 이슈마다 터미널이 생기지 않게,
@@ -106,6 +108,7 @@ export interface UiState {
   setShowUsage(v: boolean): void
   setAgentsView(patch: Partial<AgentsView>): void
   setTreeAgentsOnly(v: boolean): void
+  setTreeSortByStatus(v: boolean): void
   setAgentCommand(kind: LaunchKind, command: string): void
   setLastLaunchKind(kind: LaunchKind): void
   setPeerSync(v: boolean): void
@@ -159,6 +162,7 @@ export const useUiStore = create<UiState>()(
       showUsage: true,
       agentsView: DEFAULT_AGENTS_VIEW,
       treeAgentsOnly: false,
+      treeSortByStatus: false,
       agentCommands: DEFAULT_AGENT_COMMANDS,
       lastLaunchKind: 'claude',
       peerSync: true,
@@ -195,6 +199,7 @@ export const useUiStore = create<UiState>()(
       setShowUsage: (showUsage) => set({ showUsage }),
       setAgentsView: (patch) => set((s) => ({ agentsView: { ...s.agentsView, ...patch } })),
       setTreeAgentsOnly: (treeAgentsOnly) => set({ treeAgentsOnly }),
+      setTreeSortByStatus: (treeSortByStatus) => set({ treeSortByStatus }),
       setAgentCommand: (kind, command) => set((s) => ({ agentCommands: { ...s.agentCommands, [kind]: command } })),
       setLastLaunchKind: (lastLaunchKind) => set({ lastLaunchKind }),
       setPeerSync: (peerSync) => set({ peerSync }),
@@ -349,6 +354,7 @@ export const useUiStore = create<UiState>()(
         agentNotify: s.agentNotify,
         showUsage: s.showUsage,
         agentsView: s.agentsView,
+        treeSortByStatus: s.treeSortByStatus,
         agentCommands: s.agentCommands,
         lastLaunchKind: s.lastLaunchKind,
         peerSync: s.peerSync,
@@ -367,6 +373,8 @@ export const useUiStore = create<UiState>()(
           sidebarWidth: state.sidebarWidth === undefined ? current.sidebarWidth : clampSidebarWidth(state.sidebarWidth),
           // 예전 버전의 저장 값에는 없거나 모양이 다를 수 있다 — 기본값 위에 얹는다
           agentsView: { ...current.agentsView, ...(typeof state.agentsView === 'object' && state.agentsView !== null ? state.agentsView : {}) },
+          // 글자 "false" 같은 값이 정렬을 켜지 않게 boolean 만 받는다
+          treeSortByStatus: typeof state.treeSortByStatus === 'boolean' ? state.treeSortByStatus : current.treeSortByStatus,
           // 저장된 값이 글자가 아니면 버린다(대화상자가 그 값을 명령으로 쓴다)
           agentCommands: {
             ...current.agentCommands,

@@ -1,4 +1,4 @@
-import { BotIcon, ListFilterIcon, ServerCogIcon } from 'lucide-react'
+import { ArrowDownWideNarrowIcon, BotIcon, ListFilterIcon, ServerCogIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import type { GitHubOwner, GitHubRepo } from '@minmo/core'
@@ -55,6 +55,8 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
   const [filterOpen, setFilterOpen] = useState(false)
   const agentsOnly = useUiStore((s) => s.treeAgentsOnly)
   const setAgentsOnly = useUiStore((s) => s.setTreeAgentsOnly)
+  const sortByStatus = useUiStore((s) => s.treeSortByStatus)
+  const setSortByStatus = useUiStore((s) => s.setTreeSortByStatus)
   const [publishId, setPublishId] = useState<string | null>(null)
   const host = useHost()
   const added = useReposStore((s) => s.added)
@@ -157,6 +159,16 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
           onClick={() => setAgentsOnly(!agentsOnly)}
         >
           <BotIcon />
+        </Button>
+        <Button
+          variant={sortByStatus ? 'secondary' : 'ghost'}
+          size="icon-sm"
+          aria-label="에이전트 상태 순으로 정렬"
+          aria-pressed={sortByStatus}
+          title={sortByStatus ? '에이전트 상태 순(입력 대기 → 끝남 → 작업 중 → 대기 중)으로 보는 중 — 누르면 기본 순서' : '에이전트 상태 순으로 정렬'}
+          onClick={() => setSortByStatus(!sortByStatus)}
+        >
+          <ArrowDownWideNarrowIcon />
         </Button>
         <AddRepoMenu />
         <RefreshButton />
