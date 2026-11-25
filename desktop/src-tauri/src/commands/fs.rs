@@ -67,12 +67,17 @@ fn has_parent_dir(p: &Path) -> bool {
 
 /// 보관·복사 대상 루트는 `..` 없는 절대 경로이고 구성 요소가 3개 이상이어야 한다(remove_dir 과 같은 기준)
 fn guard_root(path: &str) -> Result<&Path, String> {
+    guard_root_min(path, 3)
+}
+
+/// guard_root 와 같되 폴더 단계 하한을 정한다
+fn guard_root_min(path: &str, min_depth: usize) -> Result<&Path, String> {
     let p = Path::new(path);
     let depth = p
         .components()
         .filter(|c| matches!(c, Component::Normal(_)))
         .count();
-    if !p.is_absolute() || depth < 3 || has_parent_dir(p) {
+    if !p.is_absolute() || depth < min_depth || has_parent_dir(p) {
         return Err(format!("허용되지 않는 경로입니다: {path}"));
     }
     Ok(p)
@@ -284,7 +289,8 @@ pub async fn copy_paths(
     rels: Vec<String>,
     skip_names: Vec<String>,
 ) -> Result<u32, String> {
-    let src = guard_root(&src)?.to_path_buf();
+    // 원본은 읽기만 하고 rels 는 safe_rel 로 원본 안만 가리킨다 — 얕은 기준 저장소(D:\work\repo)도 허용한다(#110)
+    let src = guard_root_min(&src, 1)?.to_path_buf();
     let dst = guard_root(&dst)?.to_path_buf();
     let rels = rels
         .iter()
@@ -732,6 +738,33 @@ mod tests {
         );
         let shallow = if cfg!(windows) { r"C:\a" } else { "/a" };
         assert!(guard_root(shallow).is_err());
+    }
+
+    #[test]
+    fn guard_root_min_one_allows_shallow_source_but_not_root() {
+        // #110: 얕은 기준 저장소(D:\work\repo, /srv/repo)도 복사 원본으로 쓸 수 있다
+        let (two, one, root, rel) = if cfg!(windows) {
+            (r"D:\work\repo", r"D:\repo", r"C:\", r"C:repo")
+        } else {
+            ("/srv/repo", "/repo", "/", "srv/repo")
+        };
+        assert!(guard_root_min(two, 1).is_ok());
+        assert!(guard_root_min(one, 1).is_ok());
+        assert!(guard_root_min(root, 1).is_err(), "루트는 거부");
+        assert!(guard_root_min(rel, 1).is_err(), "상대 경로는 거부");
+        let up = std::env::temp_dir().join("a/../b");
+        assert!(
+            guard_root_min(&up.to_string_lossy(), 1).is_err(),
+            "`..` 는 거부"
+        );
+        assert!(guard_root(two).is_err(), "다른 명령의 기준(3단계)은 그대로");
+        if cfg!(windows) {
+            // 공유·장치 루트는 단계가 0 이라 거부, 공유 안의 폴더는 허용
+            for bad in [r"\\server\share", r"\\?\C:\", r"\repo"] {
+                assert!(guard_root_min(bad, 1).is_err(), "{bad} 는 거부돼야 한다");
+            }
+            assert!(guard_root_min(r"\\server\share\repo", 1).is_ok());
+        }
     }
 
     #[test]
