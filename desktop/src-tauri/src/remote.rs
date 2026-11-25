@@ -60,7 +60,6 @@ const ALLOWED: &[&str] = &[
     "ptyProcesses",
     "claudeSubagents",
     "agentUsage",
-    "agentModelsRaw",
     "scriptRun",
     "scriptCancel",
     "sshHosts",
@@ -620,11 +619,18 @@ pub struct SharedValue {
     rev: u64,
 }
 
+/// 지운 기능(E2E 큐, #92)이 남긴 공유 상태 파일을 지운다(#111). 읽는 곳이 없어 실패해도 넘어간다 —
+/// 이전 버전 기기가 붙어 다시 써도 다음 시작 때 다시 지운다
+fn remove_retired_shared(config_dir: &Path) {
+    let _ = std::fs::remove_file(config_dir.join("shared").join("e2e.json"));
+}
+
 /// 앱 시작 시: 설정을 읽고, 이벤트 전달과 주기적인 주소 확인을 건다
 pub fn init(app: &AppHandle) {
     let Ok(dirs) = profile::dirs(app) else {
         return;
     };
+    remove_retired_shared(&dirs.config);
     app.manage(RemoteManager::new(&dirs.config));
     if cfg!(debug_assertions) {
         if let Ok(code) = std::env::var("MINMO_REMOTE_TEST_PAIR_CODE") {
@@ -1996,6 +2002,27 @@ mod tests {
         ] {
             assert!(!api_request_allowed(m, p), "{m} {p}");
         }
+    }
+
+    // CT-02 (#111) — 이전 버전(E2E 큐)이 남긴 공유 파일만 지우고, 다른 공유 상태는 남긴다
+    #[test]
+    fn retired_shared_e2e_file_is_removed_and_others_kept() {
+        let dir = std::env::temp_dir().join(format!("minmo-e2e-cleanup-test-{}", now_ms()));
+        let shared = dir.join("shared");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(shared.join("e2e.json"), "{}").unwrap();
+        std::fs::write(shared.join("repos.json"), "{}").unwrap();
+        remove_retired_shared(&dir);
+        assert!(!shared.join("e2e.json").exists());
+        assert!(shared.join("repos.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retired_shared_cleanup_without_shared_dir_does_not_panic() {
+        let dir = std::env::temp_dir().join(format!("minmo-e2e-cleanup-test-none-{}", now_ms()));
+        remove_retired_shared(&dir);
+        assert!(!dir.exists());
     }
 
     #[test]

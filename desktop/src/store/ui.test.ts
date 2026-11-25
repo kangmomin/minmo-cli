@@ -1,7 +1,6 @@
 // UI store — 트리에서 이슈를 눌렀을 때의 터미널 포커스 요청(#78)·이슈 선택 번호
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { DEFAULT_ROLES } from '../features/e2eQueue/roles'
 import { useUiStore } from './ui'
 
 const ID = 'o/r#1'
@@ -107,61 +106,19 @@ describe('selectIssue', () => {
   })
 })
 
-// #92 E2E 큐 — 큐가 연 패널은 포커스를 옮기지 않는다(A-12)
-describe('launchPane — focus:false (#92 A-12)', () => {
-  // A-12
-  it('A-12 focus:false 면 새 패널을 만들되 포커스 요청과 그 이슈의 포커스 패널을 바꾸지 않는다', () => {
-    useUiStore.setState({ panes: { [ID]: { ...SPLIT, focused: P1 } }, terminalIds: { [P1]: 'pty-1', [P2]: 'pty-2' }, startedTerminals: { [ID]: true }, focusRequest: { paneId: P1, token: 4 } })
-    const id = useUiStore.getState().launchPane(ID, false, { focus: false })
-    expect(id).toBe(`${ID}::3`)
-    const s = useUiStore.getState()
-    expect(s.focusRequest).toEqual({ paneId: P1, token: 4 })
-    expect(s.panes[ID].focused).toBe(P1)
-    expect(s.panes[ID].seq).toBe(3)
-  })
+// #111 CT-04 — 지운 기능(E2E 큐)이 저장해 둔 역할 설정은 다시 읽을 때 상태와 저장소에서 모두 없어진다
+describe('지운 기능의 저장 값 (#111)', () => {
+  beforeEach(() => localStorage.clear())
 
-  // A-12 — 패널이 없을 때도 포커스 요청은 만들지 않는다
-  it('A-12 패널이 없는 이슈에서도 focus:false 면 포커스 요청을 만들지 않는다', () => {
-    useUiStore.getState().launchPane(ID, true, { focus: false })
-    expect(useUiStore.getState().focusRequest).toBeNull()
-  })
-})
-
-// #92 E2E 큐 — 역할 설정 저장(minmo-ui)
-describe('e2eRoles 저장 (#92)', () => {
-  const ROLES = {
-    run: { kind: 'codex' as const, model: 'gpt-5', prompt: '실행 {out}' },
-    edge: { kind: 'gemini' as const, model: '', prompt: '찾기 {prev} {out}' },
-    verify: { kind: 'claude' as const, model: 'opus', prompt: '검증 {prev} {out}' },
-  }
-
-  beforeEach(() => {
-    localStorage.clear()
-    useUiStore.setState({ e2eRoles: DEFAULT_ROLES })
-  })
-
-  // AC-10
-  it('AC-10 역할 설정은 minmo-ui 에 저장되고 다시 켜면 그대로 읽는다', async () => {
-    useUiStore.setState({ e2eRoles: ROLES })
-    expect(JSON.parse(localStorage.getItem('minmo-ui') ?? '{}').state?.e2eRoles).toEqual(ROLES)
-    const raw = localStorage.getItem('minmo-ui')!
-    useUiStore.setState({ e2eRoles: DEFAULT_ROLES })
-    localStorage.setItem('minmo-ui', raw)
+  it('CT-04 예전 저장 값의 e2eRoles 는 상태·저장소 모두에서 없어지고, 다시 읽어도 돌아오지 않는다', async () => {
+    localStorage.setItem('minmo-ui', JSON.stringify({ state: { theme: 'light', e2eRoles: { run: { kind: 'codex' } } }, version: 1 }))
     await useUiStore.persist.rehydrate()
-    expect(useUiStore.getState().e2eRoles).toEqual(ROLES)
-  })
-
-  // EC-11
-  it('EC-11 저장 값의 모양이 잘못됐으면 역할별로 유효 값만 받고 나머지는 기본값(모델 패턴 검사 포함)', async () => {
-    localStorage.setItem(
-      'minmo-ui',
-      JSON.stringify({ state: { e2eRoles: { run: { kind: 'codex', model: 'gpt-5', prompt: 'p' }, edge: { kind: 'nope', model: '-x', prompt: 3 }, verify: 'bad' } }, version: 1 }),
-    )
+    expect(useUiStore.getState()).not.toHaveProperty('e2eRoles')
+    const raw = JSON.parse(localStorage.getItem('minmo-ui') ?? '{}') as { state: Record<string, unknown>; version: number }
+    expect(raw.version).toBe(2)
+    expect(raw.state).not.toHaveProperty('e2eRoles')
+    expect(raw.state.theme).toBe('light')
     await useUiStore.persist.rehydrate()
-    expect(useUiStore.getState().e2eRoles).toEqual({ run: { kind: 'codex', model: 'gpt-5', prompt: 'p' }, edge: DEFAULT_ROLES.edge, verify: DEFAULT_ROLES.verify })
-
-    localStorage.setItem('minmo-ui', JSON.stringify({ state: { e2eRoles: 'garbage' }, version: 1 }))
-    await useUiStore.persist.rehydrate()
-    expect(useUiStore.getState().e2eRoles).toEqual(DEFAULT_ROLES)
+    expect(useUiStore.getState()).not.toHaveProperty('e2eRoles')
   })
 })

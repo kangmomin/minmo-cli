@@ -1,4 +1,4 @@
-import { BotIcon, FileKeyIcon, FlaskConicalIcon, GitBranchIcon, Loader2Icon, ServerIcon, StarIcon } from 'lucide-react'
+import { BotIcon, FileKeyIcon, GitBranchIcon, Loader2Icon, ServerIcon, StarIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { useHost } from '../../app/host'
@@ -9,7 +9,6 @@ import { useRepoFullNameIfNicknamed, useRepoLabel } from '../../store/repos'
 import type { IssueOpenState } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { LaunchAgentDialog } from '../agents/LaunchAgentDialog'
-import { ALREADY_QUEUED_TEXT, useE2eQueueStore } from '../e2eQueue/queueStore'
 import { IssueManageActions } from './IssueManageActions'
 import { LocalFilesDialog } from './LocalFilesDialog'
 import { useIssueActions } from './useWorktree'
@@ -28,13 +27,6 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
   const repoFullName = useRepoFullNameIfNicknamed(target.owner, target.repo)
   const issueId = host.issueId(target.owner, target.repo, target.key)
   const [launchOpen, setLaunchOpen] = useState(false)
-  // [E2E 큐에 추가] 결과 안내 — 다른 이슈로 옮기면 보이지 않게 이슈 id 와 함께 둔다
-  const [queued, setQueued] = useState<{ issueId: string; added: boolean } | null>(null)
-  useEffect(() => {
-    if (queued === null) return
-    const t = setTimeout(() => setQueued(null), 4000)
-    return () => clearTimeout(t)
-  }, [queued])
   // 트리 메뉴의 [에이전트 실행] — 작업 폴더가 준비되면 대화상자를 연다
   const launchRequest = useUiStore((s) => s.launchRequest)
   const phase = state?.phase
@@ -90,20 +82,6 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
             <BotIcon /> 에이전트 실행
           </Button>
           <LaunchAgentDialog issueId={issueId} target={target} open={launchOpen} onOpenChange={setLaunchOpen} />
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              const name = target.number === null ? `${repoLabel} 기타` : `${repoLabel} #${target.number} ${target.title}`
-              // 같은 이슈가 이미 대기·실행 중이면 넣지 않는다(EC-04)
-              setQueued({ issueId, added: useE2eQueueStore.getState().enqueue(issueId, name) })
-            }}
-          >
-            <FlaskConicalIcon /> E2E 큐에 추가
-          </Button>
-          <span role="status" className="text-xs text-muted-foreground" data-testid="e2e-enqueue-status">
-            {queued?.issueId === issueId && (queued.added ? 'E2E 큐에 추가했습니다' : ALREADY_QUEUED_TEXT)}
-          </span>
           <Button size="sm" variant="ghost" onClick={() => setLocalOpen(true)}>
             <FileKeyIcon /> 로컬 파일
           </Button>

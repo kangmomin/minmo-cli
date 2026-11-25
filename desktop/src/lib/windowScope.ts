@@ -74,16 +74,19 @@ export function encodeScope(scope: WindowScope): string {
  * 그래서 이 창이 마지막으로 읽거나 쓴 값과 비교해 **이 창이 바꾼 키만** 저장된 값 위에 쓴다.
  * - own: 창마다 다른 값(지금 보는 이슈 등). 보조 창은 쓰지 않고, 시작한 뒤에는 다른 창의 값으로 바꾸지 않는다
  * - fresh: 보조 창이 처음 읽을 때 비운다(기본값으로 시작). own 의 일부여야 한다
+ * - opts.retired: 지운 기능이 남긴 키 — 읽을 때 빼고, 쓸 때 저장소에서도 지운다(위 규칙은 저장된 키를 남기므로)
  */
-export function perWindowStorage(own: string[], fresh: string[] = [], primary: boolean = isPrimaryWindow()): StateStorage {
+export function perWindowStorage(own: string[], fresh: string[] = [], primary: boolean = isPrimaryWindow(), opts: { retired?: string[] } = {}): StateStorage {
   const base = new Map<string, Record<string, unknown>>()
   const read = new Set<string>()
+  const retired = opts.retired ?? []
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
   return {
     getItem: (name) => {
       const raw = localStorage.getItem(name)
       const parsed = parse(raw)
       if (!parsed) return raw
+      for (const k of retired) delete parsed.state[k]
       base.set(name, { ...parsed.state })
       if (!primary) for (const k of read.has(name) ? own : fresh) delete parsed.state[k]
       read.add(name)
@@ -100,6 +103,7 @@ export function perWindowStorage(own: string[], fresh: string[] = [], primary: b
         if (!primary && own.includes(k)) continue
         if (!prev || !(k in state) || !same(v, prev[k])) state[k] = v
       }
+      for (const k of retired) delete state[k]
       base.set(name, { ...next.state })
       const out = JSON.stringify({ ...next, state })
       // 같은 값이면 쓰지 않는다 — 다른 창의 storage 이벤트(→ 다시 읽기 → 다시 쓰기)가 끝없이 오가지 않게

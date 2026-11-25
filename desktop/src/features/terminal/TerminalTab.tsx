@@ -14,7 +14,7 @@ import type { PtyTmux, TauriApi, WindowsPty } from '../../lib/tauri'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
 import type { UiState } from '../../store/ui'
-import { LAUNCH_DELAY_MS, consumeLaunch, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
+import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
 import { muteTerminalActivity, noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, EDIT_KEYS, MOUSE_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
@@ -497,8 +497,6 @@ function TerminalSession({
           if (looksLikeAuthPrompt(line)) return
           const cmd = launchCmd
           launchCmd = undefined
-          // 꺼낸 뒤 취소됐거나(E2E 큐 [취소]) 같은 패널에 새 명령이 맡겨졌으면 넣지 않는다
-          if (!consumeLaunch(paneId)) return
           tauri.ptyWrite(id, `${cmd}\r`).catch(state.end)
         }, LAUNCH_DELAY_MS)
       }

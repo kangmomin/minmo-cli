@@ -86,6 +86,15 @@ describe('perWindowStorage', () => {
     expect(spy).not.toHaveBeenCalled()
   })
 
+  // #111 CT-04 — 지운 기능이 남긴 키는 읽을 때 빼고, 쓸 때 저장소에서도 지운다
+  it.each([true, false])('retired 키는 읽은 값에 없고, 쓰면 저장소에서도 지워진다(주 창=%s)', (primary) => {
+    localStorage.setItem('k', blob({ old: { a: 1 }, theme: 'light' }))
+    const s = perWindowStorage([], [], primary, { retired: ['old'] })
+    expect(JSON.parse(s.getItem('k') as string).state).toEqual({ theme: 'light' })
+    s.setItem('k', blob({ theme: 'light', font: 15 }))
+    expect(stored().state).toEqual({ theme: 'light', font: 15 })
+  })
+
   it('보조 창은 저장소를 지우지 않는다', () => {
     localStorage.setItem('k', blob({ sel: 'a' }))
     perWindowStorage(['sel'], [], false).removeItem('k')

@@ -3,8 +3,6 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 
 import { DEFAULT_AGENT_COMMANDS, LAUNCH_KINDS } from '../features/agents/launch'
 import type { LaunchKind } from '../features/agents/launch'
-import { DEFAULT_ROLES, sanitizeRoles } from '../features/e2eQueue/roles'
-import type { E2eRole, E2eRoles, RoleConfig } from '../features/e2eQueue/roles'
 import { closePane, leaf, leafIds, splitPane } from '../features/terminal/panes'
 import type { PaneNode, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
@@ -75,8 +73,6 @@ export interface UiState {
   agentsView: AgentsView
   /** 에이전트별 실행 명령 틀(persist) — [에이전트 실행] 에서 고치면 저장된다 */
   agentCommands: Record<LaunchKind, string>
-  /** E2E 큐의 역할별 CLI·모델·지시문(persist + 공유 키 `e2e`) */
-  e2eRoles: E2eRoles
   /** 마지막으로 실행한 에이전트(persist) */
   lastLaunchKind: LaunchKind
   /** 등록한 다른 PC 와 저장소 목록·설정·메모·에이전트 명령을 맞춘다(persist) */
@@ -115,7 +111,6 @@ export interface UiState {
   setTreeAgentsOnly(v: boolean): void
   setTreeSortByStatus(v: boolean): void
   setAgentCommand(kind: LaunchKind, command: string): void
-  setE2eRole(role: E2eRole, cfg: RoleConfig): void
   setLastLaunchKind(kind: LaunchKind): void
   setPeerSync(v: boolean): void
   setLaunchRequest(issueId: string | null): void
@@ -124,9 +119,8 @@ export interface UiState {
    * 이미 쓰는 패널이 있으면 오른쪽에 새 패널을 만든다(쓰던 터미널에 명령을 끼워 넣지 않는다).
    * keepFirst: 첫 패널을 쓰지 않는다 — 원격 호스트의 첫 패널은 앱을 꺼도 남는 tmux 세션에 다시 붙으므로,
    * 거기서 돌고 있을지 모르는 프로그램에 명령이 입력되지 않게 항상 새 패널을 만든다.
-   * opts.focus=false: 포커스 요청과 그 이슈의 포커스 패널을 바꾸지 않는다(E2E 큐 — 사용자가 쓰는 패널을 뺏지 않게)
    */
-  launchPane(issueId: string, keepFirst?: boolean, opts?: { focus?: boolean }): string
+  launchPane(issueId: string, keepFirst?: boolean): string
   /** 이슈의 터미널을 연다(Ctrl+T·[터미널 열기]): 아직 없으면 첫 터미널을 시작하고, 이미 있으면 오른쪽에 새 패널을 만든다 */
   openTerminal(issueId: string): void
   /** 이미 떠 있는 터미널에 붙을 때 — 패널 구성·포커스는 건드리지 않고 터미널만 보이게 한다 */
@@ -171,7 +165,6 @@ export const useUiStore = create<UiState>()(
       treeAgentsOnly: false,
       treeSortByStatus: false,
       agentCommands: DEFAULT_AGENT_COMMANDS,
-      e2eRoles: DEFAULT_ROLES,
       lastLaunchKind: 'claude',
       peerSync: true,
       launchRequest: null,
@@ -209,23 +202,18 @@ export const useUiStore = create<UiState>()(
       setTreeAgentsOnly: (treeAgentsOnly) => set({ treeAgentsOnly }),
       setTreeSortByStatus: (treeSortByStatus) => set({ treeSortByStatus }),
       setAgentCommand: (kind, command) => set((s) => ({ agentCommands: { ...s.agentCommands, [kind]: command } })),
-      setE2eRole: (role, cfg) => set((s) => ({ e2eRoles: { ...s.e2eRoles, [role]: cfg } })),
       setLastLaunchKind: (lastLaunchKind) => set({ lastLaunchKind }),
       setPeerSync: (peerSync) => set({ peerSync }),
       setLaunchRequest: (launchRequest) => set({ launchRequest }),
-      launchPane: (issueId, keepFirst = false, opts) => {
+      launchPane: (issueId, keepFirst = false) => {
         const s = get()
         let cur = s.panes[issueId]
         const leaves = leafIds(cur?.tree ?? null)
-        const focus = opts?.focus ?? true
-        const prevFocused = cur?.focused ?? null
         const commit = (next: NonNullable<typeof cur>, id: string) => {
-          // 포커스하지 않으면 이 이슈에서 쓰던 패널을 그대로 둔다 — 쓰던 패널이 없을 때만 새 패널
-          const focused = !focus && prevFocused !== null && leafIds(next.tree).includes(prevFocused) ? prevFocused : next.focused
           set({
-            panes: { ...s.panes, [issueId]: { ...next, focused } },
+            panes: { ...s.panes, [issueId]: next },
             startedTerminals: { ...s.startedTerminals, [issueId]: true },
-            ...(focus && { focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 } }),
+            focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 },
           })
           return id
         }
@@ -355,7 +343,8 @@ export const useUiStore = create<UiState>()(
     {
       name: 'minmo-ui',
       // 창마다 다른 값(지금 보는 이슈·펼친 노드·탭)은 보조 창이 덮지 않는다. 보조 창은 고른 이슈 없이 시작한다(#105)
-      storage: createJSONStorage(() => perWindowStorage(['selectedIssueId', 'expanded', 'tab'], ['selectedIssueId'])),
+      // e2eRoles: 지운 E2E 큐(#92)의 역할 설정 — 저장소에서도 지운다(#111)
+      storage: createJSONStorage(() => perWindowStorage(['selectedIssueId', 'expanded', 'tab'], ['selectedIssueId'], undefined, { retired: ['e2eRoles'] })),
       // Plan 은 terminal ids 도 persist 였으나 PTY 세션 id 는 프로세스 수명과 같아 재시작 후 의미가 없다 → 영속 대상에서 제외
       partialize: (s) => ({
         expanded: s.expanded,
@@ -370,13 +359,13 @@ export const useUiStore = create<UiState>()(
         agentsView: s.agentsView,
         treeSortByStatus: s.treeSortByStatus,
         agentCommands: s.agentCommands,
-        e2eRoles: s.e2eRoles,
         lastLaunchKind: s.lastLaunchKind,
         peerSync: s.peerSync,
       }),
       // v1: Ghostty 가 새 기본 테마다. 예전에는 고른 적이 없어도 기본값 'black' 이 저장돼 있었으므로, 저장된 'black' 을
       // 한 번만 Ghostty 로 옮긴다(직접 고른 'light' 는 그대로 둔다). 그 뒤에 고른 블랙은 유지된다
-      version: 1,
+      // v2: e2eRoles 를 뺀 값을 한 번 다시 저장하게 버전을 올린다(키 삭제는 저장소의 retired 가 맡는다, #111)
+      version: 2,
       migrate: (persisted, version) => {
         const state = (persisted ?? {}) as Partial<UiState>
         return version < 1 && state.theme === 'black' ? { ...state, theme: 'ghostty' as const } : state
@@ -396,8 +385,6 @@ export const useUiStore = create<UiState>()(
             ...Object.fromEntries(Object.entries(typeof state.agentCommands === 'object' && state.agentCommands !== null ? state.agentCommands : {}).filter(([k, v]) => LAUNCH_KINDS.includes(k as LaunchKind) && typeof v === 'string')),
           },
           lastLaunchKind: LAUNCH_KINDS.includes(state.lastLaunchKind as LaunchKind) ? (state.lastLaunchKind as LaunchKind) : current.lastLaunchKind,
-          // 역할 설정은 명령으로 쓰인다 — 역할별로 유효 값만 받는다(EC-11)
-          e2eRoles: state.e2eRoles === undefined ? current.e2eRoles : sanitizeRoles(state.e2eRoles),
         }
       },
     },
