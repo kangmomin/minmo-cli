@@ -106,9 +106,18 @@ describe('createSshOps', () => {
     expect(await ops.copyPaths('/ws/o/r/main', '/ws/o/r/t', [], [])).toBe(0)
     for (const bad of ['a/b', 'a\nb', '']) await expect(ops.copyPaths('/ws/o/r/main', '/ws/o/r/t', ['.env'], [bad])).rejects.toThrow('제외 이름')
     for (const bad of ['../x', '/abs', 'a/../b', 'a\nb', 'a\\b', '']) await expect(ops.copyPaths('/ws/o/r/main', '/ws/o/r/t', [bad], [])).rejects.toThrow('상대 경로')
-    await expect(ops.copyPaths('/home/dev', '/ws/o/r/t', ['.env'], [])).rejects.toThrow('사용할 수 없는 폴더')
+    // EC-05: 원본이 루트·상대·.. 면 거부. 받는 쪽은 얕으면 거부
+    for (const bad of ['/', 'srv/repo', '/srv/../repo']) await expect(ops.copyPaths(bad, '/ws/o/r/t', ['.env'], [])).rejects.toThrow('사용할 수 없는 폴더')
     await expect(ops.copyPaths('/ws/o/r/main', '/', ['.env'], [])).rejects.toThrow('사용할 수 없는 폴더')
+    await expect(ops.copyPaths('/ws/o/r/main', '/home/dev', ['.env'], [])).rejects.toThrow('사용할 수 없는 폴더')
     expect(tauri.sshExec).not.toHaveBeenCalled()
+  })
+
+  it('AC-05 copyPaths: 원본이 얕은 기준 저장소(/srv/repo·/home/dev)여도 복사한다 (#110)', async () => {
+    const { tauri, ops } = setup(PROBE, { sshExec: async () => ok('1\n') })
+    expect(await ops.copyPaths('/srv/repo', '/ws/o/r/t', ['.env'], [])).toBe(1)
+    expect(await ops.copyPaths('/home/dev', '/ws/o/r/t', ['.env'], [])).toBe(1)
+    expect(tauri.sshExec.mock.calls[0][1]).toEqual(['sh', '-s', '--', '/srv/repo', '/ws/o/r/t'])
   })
 
   it('copyPaths: 복사에 실패한 파일이 있으면 원격의 오류로 실패한다', async () => {

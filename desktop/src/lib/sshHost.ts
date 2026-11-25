@@ -302,10 +302,10 @@ export function gitSubcommand(args: string[]): string | null {
 
 const byName = (a: DirEntry, b: DirEntry) => Number(a.kind !== 'dir') - Number(b.kind !== 'dir') || a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.name.localeCompare(b.name)
 
-/** 파일 작업의 기준 폴더 — 로컬 guard_root(fs.rs)처럼 얕은 경로(홈·루트 등)에서는 하지 않는다 */
-export function assertRoot(root: string): void {
+/** 파일 작업의 기준 폴더 — 로컬 guard_root(fs.rs)처럼 얕은 경로(홈·루트 등)에서는 하지 않는다. min = 폴더 단계 하한 */
+export function assertRoot(root: string, min = 3): void {
   const parts = root.split('/').filter(Boolean)
-  if (!root.startsWith('/') || parts.includes('..') || parts.includes('.') || parts.length < 3) throw new Error(`사용할 수 없는 폴더입니다: ${root}`)
+  if (!root.startsWith('/') || parts.includes('..') || parts.includes('.') || parts.length < min) throw new Error(`사용할 수 없는 폴더입니다: ${root}`)
 }
 
 /** 보관 파일의 상대 경로 — 폴더 밖을 가리키지 못하게 한다 */
@@ -353,7 +353,9 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
       return Number(must(await script(COPY_TREE, [src, dst]), '파일 복사').stdout.trim()) || 0
     },
     copyPaths: async (src, dst, rels, skipNames) => {
-      inRoot(src, ...rels)
+      // 원본은 읽기만 하고 rels 는 원본 안만 가리킨다 — 얕은 기준 저장소(/srv/repo)도 허용한다(#110)
+      assertRoot(src, 1)
+      for (const rel of rels) assertRelative(rel)
       assertRoot(dst)
       // 이름 하나씩만(경로·줄바꿈 불가) — 스크립트 본문에 싣기 때문이다
       for (const n of skipNames) if (n === '' || /[/\n\r\0]/.test(n)) throw new Error(`제외 이름이 올바르지 않습니다: ${n}`)
