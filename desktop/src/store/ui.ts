@@ -343,7 +343,8 @@ export const useUiStore = create<UiState>()(
     {
       name: 'minmo-ui',
       // 창마다 다른 값(지금 보는 이슈·펼친 노드·탭)은 보조 창이 덮지 않는다. 보조 창은 고른 이슈 없이 시작한다(#105)
-      storage: createJSONStorage(() => perWindowStorage(['selectedIssueId', 'expanded', 'tab'], ['selectedIssueId'])),
+      // e2eRoles: 지운 E2E 큐(#92)의 역할 설정 — 저장소에서도 지운다(#111)
+      storage: createJSONStorage(() => perWindowStorage(['selectedIssueId', 'expanded', 'tab'], ['selectedIssueId'], undefined, { retired: ['e2eRoles'] })),
       // Plan 은 terminal ids 도 persist 였으나 PTY 세션 id 는 프로세스 수명과 같아 재시작 후 의미가 없다 → 영속 대상에서 제외
       partialize: (s) => ({
         expanded: s.expanded,
@@ -363,7 +364,8 @@ export const useUiStore = create<UiState>()(
       }),
       // v1: Ghostty 가 새 기본 테마다. 예전에는 고른 적이 없어도 기본값 'black' 이 저장돼 있었으므로, 저장된 'black' 을
       // 한 번만 Ghostty 로 옮긴다(직접 고른 'light' 는 그대로 둔다). 그 뒤에 고른 블랙은 유지된다
-      version: 1,
+      // v2: e2eRoles 를 뺀 값을 한 번 다시 저장하게 버전을 올린다(키 삭제는 저장소의 retired 가 맡는다, #111)
+      version: 2,
       migrate: (persisted, version) => {
         const state = (persisted ?? {}) as Partial<UiState>
         return version < 1 && state.theme === 'black' ? { ...state, theme: 'ghostty' as const } : state

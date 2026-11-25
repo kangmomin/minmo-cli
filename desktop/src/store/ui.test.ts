@@ -105,3 +105,20 @@ describe('selectIssue', () => {
     expect(useUiStore.getState()).toMatchObject({ selectedIssueId: ID, selectSeq: 2 })
   })
 })
+
+// #111 CT-04 — 지운 기능(E2E 큐)이 저장해 둔 역할 설정은 다시 읽을 때 상태와 저장소에서 모두 없어진다
+describe('지운 기능의 저장 값 (#111)', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('CT-04 예전 저장 값의 e2eRoles 는 상태·저장소 모두에서 없어지고, 다시 읽어도 돌아오지 않는다', async () => {
+    localStorage.setItem('minmo-ui', JSON.stringify({ state: { theme: 'light', e2eRoles: { run: { kind: 'codex' } } }, version: 1 }))
+    await useUiStore.persist.rehydrate()
+    expect(useUiStore.getState()).not.toHaveProperty('e2eRoles')
+    const raw = JSON.parse(localStorage.getItem('minmo-ui') ?? '{}') as { state: Record<string, unknown>; version: number }
+    expect(raw.version).toBe(2)
+    expect(raw.state).not.toHaveProperty('e2eRoles')
+    expect(raw.state.theme).toBe('light')
+    await useUiStore.persist.rehydrate()
+    expect(useUiStore.getState()).not.toHaveProperty('e2eRoles')
+  })
+})
