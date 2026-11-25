@@ -11,6 +11,7 @@ import { AgentsButton, AgentsOverview, useLocalRows } from '../features/agents/A
 import { useNotifyClick } from '../features/agents/navigate'
 import { useAgentTracker } from '../features/agents/useAgentTracker'
 import { useWindowViewBroadcast } from '../features/agents/windowView'
+import { useLegacyE2eCleanup } from '../features/issue/legacyE2eCleanup'
 import { useDeepLinkOpen } from '../features/remote/deepLink'
 import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
 import { usePeerSync } from '../features/remote/peerSync'
@@ -81,6 +82,8 @@ export function Workspace() {
   useDeepLinkOpen()
   // 열어 둔 모든 터미널의 에이전트 상태를 추적한다(이슈 행·패널·현황·알림)
   useAgentTracker()
+  // 열린 작업 폴더에서 지운 기능이 남긴 결과 폴더(.minmo/e2e)를 정리한다(#111)
+  useLegacyE2eCleanup()
   // 이 창이 보는 이슈를 다른 창(알림을 띄우는 주 창)에 알린다
   useWindowViewBroadcast()
   // 그 알림을 누르면 해당 터미널로 간다
