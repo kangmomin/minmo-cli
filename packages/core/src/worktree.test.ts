@@ -78,6 +78,8 @@ type Sim = {
   /** 새 worktree 의 .gitignore 로는 무시되지 않는 경로(브랜치마다 규칙이 다른 경우) */
   notIgnoredInNew?: string[]
   failCheckIgnore?: string
+  /** `rev-parse --is-bare-repository` 실패 stderr */
+  failBare?: string
 }
 
 const HASH = 'abc1234def5678abc1234def5678abc1234def56'
@@ -119,7 +121,7 @@ async function simGit(sim: Sim, args: string[], opts?: RunOptions): Promise<CmdR
       return ok()
     }
     case 'rev-parse': {
-      if (a.includes('--is-bare-repository')) return ok(sim.mainCheckedOut ? 'false\n' : 'true\n')
+      if (a.includes('--is-bare-repository')) return sim.failBare ? fail(sim.failBare, 128) : ok(sim.mainCheckedOut ? 'false\n' : 'true\n')
       if (a.includes('--git-dir')) {
         return cwd === MAIN && sim.existing.has(MAIN) && sim.mainIsRepo ? ok('.git\n') : fail('fatal: not a git repository', 128)
       }
@@ -797,41 +799,39 @@ describe('openIssue — 무시된 파일(.env 등) 가져오기', () => {
     await t.svc.openIssue(ISSUE42)
     expect(copyPaths).toHaveBeenCalledWith(MAIN, WT42, ['.env', 'apps/web/.env.local', '.venv', 'logs/a.log'], ['node_modules', 'target'])
     expect(t.find(isLs)[0]).toEqual(['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'])
-    expect(t.logs).toContainEqual({ issueId: ID42, step: 'ignored', status: 'ok', message: '무시된 파일 3개 복사' })
+    // AC-01·AC-03: 발견(ls-files 항목)·제외(필터로 빠진 항목) 수를 함께 남긴다
+    expect(t.logs).toContainEqual({ issueId: ID42, step: 'ignored', status: 'ok', message: '무시된 파일 3개 복사 (발견 6항목 · 제외 2항목)' })
   })
 
-  it('원본 ②: 메인이 bare(_main)면 ★기타 worktree 에서', async () => {
-    const copyPaths = vi.fn(async () => 1)
-    const t = setup({
-      mainExists: true,
-      values: ON,
-      sim: { existing: new Set([ETC_WT]), worktrees: new Map([[ETC_WT, 'etc']]), ignored: { [ETC_WT]: '.env\0' } },
-      entries: [[worktreeId('MyOrg', 'Repo-A', 'etc'), { path: ETC_WT, branch: 'etc' }]],
-      copyPaths,
-    })
-    await t.svc.openIssue(ISSUE42)
-    expect(copyPaths).toHaveBeenCalledWith(ETC_WT, WT42, ['.env'], ['node_modules', 'target'])
-  })
-
-  it('원본 ③: 기타가 없으면 가장 최근에 커밋한 다른 worktree 에서', async () => {
-    const OLD = '/home/u/minmo-workspaces/MyOrg/Repo-A/issue--1-old'
+  it('AC-02·EC-01 원본은 메인 저장소만: bare(_main)면 ★기타·최근 worktree 가 있어도 가져오지 않고 로그를 남긴다 (#110)', async () => {
     const copyPaths = vi.fn(async () => 1)
     const t = setup({
       mainExists: true,
       values: ON,
       sim: {
-        existing: new Set([OLD, WT43]),
-        worktrees: new Map([[OLD, 'issue/1-old'], [WT43, 'issue/43-fix-bug']]),
-        heads: { [OLD]: ['a'.repeat(40), 100], [WT43]: ['b'.repeat(40), 200] },
-        ignored: { [OLD]: 'old.env\0', [WT43]: '.env\0' },
+        existing: new Set([ETC_WT, WT43]),
+        worktrees: new Map([[ETC_WT, 'etc'], [WT43, 'issue/43-fix-bug']]),
+        heads: { [WT43]: ['b'.repeat(40), 200] },
+        ignored: { [ETC_WT]: '.env\0', [WT43]: '.env\0' },
       },
+      entries: [[worktreeId('MyOrg', 'Repo-A', 'etc'), { path: ETC_WT, branch: 'etc' }]],
       copyPaths,
     })
-    await t.svc.openIssue(ISSUE42)
-    expect(copyPaths).toHaveBeenCalledWith(WT43, WT42, ['.env'], ['node_modules', 'target'])
+    expect((await t.svc.openIssue(ISSUE42)).created).toBe(true)
+    expect(copyPaths).not.toHaveBeenCalled()
+    expect(t.find(isLs)).toHaveLength(0)
+    expect(t.logs).toContainEqual({ issueId: ID42, step: 'ignored', status: 'ok', message: '원본 폴더가 bare 저장소라 건너뜁니다' })
   })
 
-  it('원본 ④: 첫 worktree 면(원본 없음) 건너뛴다 · ★기타 자신을 만들 때 자신을 원본으로 쓰지 않는다', async () => {
+  it('원본 폴더를 확인하지 못하면 bare 로 오인하지 않고 오류로 남긴다 · 이슈는 열린다', async () => {
+    const copyPaths = vi.fn(async () => 1)
+    const t = setup({ mainExists: true, values: ON, sim: { mainCheckedOut: true, ignored: { [MAIN]: '.env\0' }, failBare: 'fatal: boom' }, copyPaths })
+    expect((await t.svc.openIssue(ISSUE42)).created).toBe(true)
+    expect(copyPaths).not.toHaveBeenCalled()
+    expect(t.logs).toContainEqual({ issueId: ID42, step: 'ignored', status: 'error', message: 'fatal: boom' })
+  })
+
+  it('원본 ④: 메인이 bare 면 첫 worktree·★기타 자신을 만들 때도 ls-files 를 돌리지 않는다', async () => {
     const copyPaths = vi.fn(async () => 1)
     const t = setup({ mainExists: true, values: ON, copyPaths })
     await t.svc.openIssue(ISSUE42)
@@ -906,7 +906,7 @@ describe('openIssue — 무시된 파일(.env 등) 가져오기', () => {
     expect(bad.logs).toContainEqual({ issueId: ID42, step: 'ignored', status: 'error', message: 'fatal: boom' })
   })
 
-  it('앞 후보에 가져올 것이 없으면 다음 후보를 본다(체크아웃만 있고 쓰지 않는 메인 저장소 → ★기타)', async () => {
+  it('AC-03 메인에 가져올 것이 없으면 ★기타를 보지 않고 0개와 발견·제외 수를 남긴다 (#110)', async () => {
     const copyPaths = vi.fn(async () => 1)
     const t = setup({
       mainExists: true,
@@ -916,8 +916,8 @@ describe('openIssue — 무시된 파일(.env 등) 가져오기', () => {
       copyPaths,
     })
     await t.svc.openIssue(ISSUE42)
-    expect(copyPaths).toHaveBeenCalledTimes(1)
-    expect(copyPaths).toHaveBeenCalledWith(ETC_WT, WT42, ['.env'], ['node_modules', 'target'])
+    expect(copyPaths).not.toHaveBeenCalled()
+    expect(t.logs).toContainEqual({ issueId: ID42, step: 'ignored', status: 'ok', message: '가져올 무시된 파일 없음 (발견 1항목 · 제외 1항목)' })
   })
 
   it('복사 중 삭제: 삭제는 복사가 끝나기를 기다리고, 삭제된 worktree 에서는 생성 후 스크립트를 돌리지 않는다', async () => {

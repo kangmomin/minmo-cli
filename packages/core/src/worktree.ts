@@ -229,19 +229,6 @@ export function ignoredPathsToCopy(stdout: string, exclude: ReadonlySet<string>,
   return out
 }
 
-/** `git worktree list --porcelain` → 체크아웃이 있는 worktree 들(bare·prunable 제외) */
-function parseWorktreeList(stdout: string): { path: string; head: string }[] {
-  const out: { path: string; head: string }[] = []
-  for (const block of stdout.split(/\r?\n\r?\n/)) {
-    const lines = block.split(/\r?\n/)
-    const path = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length)
-    const head = lines.find((l) => l.startsWith('HEAD '))?.slice('HEAD '.length)
-    if (!path || !head || lines.some((l) => l === 'bare' || l.startsWith('prunable'))) continue
-    out.push({ path, head })
-  }
-  return out
-}
-
 /** 생성 후 스크립트는 실행 셸이 OS 마다 달라 두 벌이다 — Windows 는 PowerShell, 그 외(macOS·Linux·원격 호스트)는 sh */
 export function scriptFor(values: Pick<SettingsValues, 'postCreateScript' | 'postCreateScriptPosix'>, platform: Platform): string {
   return platform === 'win32' ? values.postCreateScript : values.postCreateScriptPosix
@@ -416,41 +403,6 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
 
   const localDir = (main: string) => deps.localDirFor?.(main) ?? localFilesDir(main, platform)
 
-  /**
-   * 무시된 파일을 가져올 원본 후보(앞이 우선). 체크아웃된 메인 저장소(로컬·기준 저장소) → ★기타 worktree →
-   * 가장 최근에 커밋한 다른 worktree. 비어 있으면 이 저장소의 첫 worktree
-   */
-  async function ignoredSources(t: IssueTarget, p: Plan): Promise<string[]> {
-    const same = (a: string, b: string) => normalizePath(a, platform) === normalizePath(b, platform)
-    const out: string[] = []
-    const add = (path: string) => {
-      if (!same(path, p.path) && !out.some((o) => same(o, path))) out.push(path)
-    }
-    const bare = await tauri.gitRun(['-C', p.main, 'rev-parse', '--is-bare-repository'])
-    if (bare.code === 0 && bare.stdout.trim() === 'false') add(p.main)
-    const etc = deps.pathStore.get(worktreeId(t.owner, t.repo, 'etc'))
-    if (etc && (await tauri.pathExists(etc.path))) add(etc.path)
-    const list = await tauri.gitRun(['-C', p.main, 'worktree', 'list', '--porcelain'])
-    if (list.code !== 0) return out
-    const others = parseWorktreeList(list.stdout).filter((w) => !same(w.path, p.path) && !same(w.path, p.main))
-    if (others.length === 0) return out
-    // 만든 시각은 git 이 기록하지 않는다 — 마지막 커밋 시각이 가장 늦은 것을 "최근에 쓴 worktree" 로 본다
-    const at = new Map<string, number>()
-    if (others.length > 1) {
-      const times = await tauri.gitRun(['-C', p.main, 'log', '--no-walk=unsorted', '--format=%H %ct', ...new Set(others.map((w) => w.head))])
-      if (times.code === 0) {
-        for (const line of times.stdout.split(/\r?\n/)) {
-          const [hash, ct] = line.trim().split(' ')
-          if (hash && ct) at.set(hash, Number(ct) || 0)
-        }
-      }
-    }
-    let best = others[0]
-    for (const w of others) if ((at.get(w.head) ?? 0) > (at.get(best.head) ?? 0)) best = w
-    add(best.path)
-    return out
-  }
-
   /** 새 worktree(브랜치)의 .gitignore 로도 무시되는 것만 남긴다 — 원본 브랜치에서만 무시되던 파일이 새 브랜치에서 커밋 대상으로 보이지 않게 */
   async function stillIgnored(p: Plan, rels: string[]): Promise<string[]> {
     const kept: string[] = []
@@ -468,21 +420,36 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     return kept
   }
 
-  /** .gitignore 로 빠져 새 worktree 에 없는 파일(.env 등)을 원본에서 가져온다. 큰 폴더는 설정의 제외 목록으로 뺀다 */
-  async function copyIgnored(t: IssueTarget, p: Plan): Promise<void> {
+  /**
+   * .gitignore 로 빠져 새 worktree 에 없는 파일(.env 등)을 원본(메인 저장소 = 로컬·기준 저장소 폴더)에서 가져온다.
+   * 다른 worktree 는 원본으로 쓰지 않는다(#110). 큰 폴더는 설정의 제외 목록으로 뺀다
+   */
+  async function copyIgnored(p: Plan): Promise<void> {
     const exclude = ignoredCopyNames(p.values.ignoredCopyExclude)
     if (!exclude) return
-    for (const src of await ignoredSources(t, p)) {
-      // --directory: 통째로 무시된 폴더(node_modules 등)를 한 줄로 받아, 뺄 폴더 안을 훑지 않는다
-      const ls = await gitOrThrow(p.issueId, 'ignored', ['-C', src, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'])
-      const rels = await stillIgnored(p, ignoredPathsToCopy(ls.stdout, exclude, sparseDirs(p.values.sparsePaths), platform))
-      // 가져올 것이 없는 원본(예: 체크아웃만 있고 쓰지 않는 메인 저장소)이면 다음 후보를 본다
-      if (rels.length === 0) continue
-      log(p.issueId, 'ignored', 'start', src)
-      const n = await tauri.copyPaths(src, p.path, rels.map((r) => r.replace(/\/$/, '')), [...exclude])
-      log(p.issueId, 'ignored', 'ok', `무시된 파일 ${n}개 복사`)
+    const bare = await tauri.gitRun(['-C', p.main, 'rev-parse', '--is-bare-repository'])
+    if (bare.code !== 0) {
+      log(p.issueId, 'ignored', 'error', bare.stderr.trim() || '원본 폴더를 확인하지 못했습니다')
       return
     }
+    // 앱이 만든 _main 은 체크아웃이 없는 bare 라 가져올 파일이 없다
+    if (bare.stdout.trim() !== 'false') {
+      log(p.issueId, 'ignored', 'ok', '원본 폴더가 bare 저장소라 건너뜁니다')
+      return
+    }
+    // --directory: 통째로 무시된 폴더(node_modules 등)를 한 줄로 받아, 뺄 폴더 안을 훑지 않는다
+    const ls = await gitOrThrow(p.issueId, 'ignored', ['-C', p.main, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'])
+    const found = ls.stdout.split('\0').filter(Boolean).length
+    const rels = await stillIgnored(p, ignoredPathsToCopy(ls.stdout, exclude, sparseDirs(p.values.sparsePaths), platform))
+    // 0개여도 남긴다 — 무엇이 걸러졌는지 보여야 "왜 안 가져왔나"를 진단할 수 있다
+    const counts = `(발견 ${found}항목 · 제외 ${found - rels.length}항목)`
+    if (rels.length === 0) {
+      log(p.issueId, 'ignored', 'ok', `가져올 무시된 파일 없음 ${counts}`)
+      return
+    }
+    log(p.issueId, 'ignored', 'start', p.main)
+    const n = await tauri.copyPaths(p.main, p.path, rels.map((r) => r.replace(/\/$/, '')), [...exclude])
+    log(p.issueId, 'ignored', 'ok', `무시된 파일 ${n}개 복사 ${counts}`)
   }
 
   async function plan(t: IssueTarget): Promise<Plan> {
@@ -734,7 +701,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     }
 
     // 보관 파일이 먼저다(덮어쓰지 않으므로 보관해 둔 .env 가 이긴다)
-    const copy = copyIgnored(t, p).catch((e: unknown) => {
+    const copy = copyIgnored(p).catch((e: unknown) => {
       // gitOrThrow 는 이미 로그를 남겼다 — 복사 실패만 여기서 남긴다
       if (!(e instanceof WorktreeError)) log(issueId, 'ignored', 'error', e instanceof Error ? e.message : String(e))
     })
