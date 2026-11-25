@@ -574,8 +574,8 @@ function SettingsForm(props: {
             </div>
           </RadioGroup>
           <p id={fieldId('ignored-desc')} className="text-xs text-muted-foreground">
-            새 worktree 를 만들 때 .gitignore 로 빠진 파일(.env 등)을 원본 폴더에서 복사합니다 · 원본: 기준·로컬 저장소 폴더, 없으면 ★기타 worktree, 그다음
-            최근에 커밋한 worktree
+            새 worktree 를 만들 때 .gitignore 로 빠진 파일(.env 등)을 원본 폴더에서 복사합니다 · 원본: 기준·로컬 저장소 폴더(bare 저장소면 가져오지
+            않음)
           </p>
           {ignoredMode === 'inherit' && inherited && (
             <p className="text-xs text-muted-foreground">상속: {ignoredSummary(inherited.ignoredCopyExclude ?? DEFAULT_IGNORED_COPY_EXCLUDE)}</p>
