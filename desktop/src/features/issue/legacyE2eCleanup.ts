@@ -1,5 +1,5 @@
 // 지운 기능(E2E 큐, #92)이 작업 폴더에 남긴 결과 폴더(.minmo/e2e)를 정리한다(#111).
-// 작업 폴더가 열릴 때(ready) 그 폴더의 호스트에서 한 번 지운다. 실패는 알리지 않는다 — 다음에 다시 열면 다시 시도한다.
+// 작업 폴더가 열릴 때(ready) 그 폴더의 호스트에서 창마다 한 번 지운다. 실패는 알리지 않는다 — 앱을 다시 시작한 뒤(또는 새 창에서) 열면 다시 시도한다.
 import { useEffect } from 'react'
 
 import { aliasOfIssue, hostOf, useHostDeps } from '../../app/host'
@@ -41,7 +41,7 @@ export function useLegacyE2eCleanup() {
   const hostDeps = useHostDeps()
   useEffect(() => {
     const scan = () => {
-      // probe 확인과 deps 선택에 같은 스냅샷을 쓴다 — probe 가 없는 원격 이슈에 hostDeps 는 이 PC 를 돌려준다
+      // probe 확인과 deps 선택을 같은 동기 구간에서 한다(그 사이 probe 가 바뀌지 않는다) — probe 가 없는 원격 이슈에 hostDeps 는 이 PC 를 돌려준다
       const probes = useHostsStore.getState().probes
       for (const [id, o] of Object.entries(useSetupStore.getState().open)) {
         if (o.phase !== 'ready') continue

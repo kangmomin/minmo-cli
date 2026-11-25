@@ -137,7 +137,11 @@ describe('useLegacyE2eCleanup', () => {
     expect(tauri.listDir).not.toHaveBeenCalled()
     expect(tauri.removePath).not.toHaveBeenCalled()
     act(() => useHostsStore.getState().setProbe('dev', PROBE))
+    // 원격 ops 는 ssh 로 스크립트를 돌린다 — 그 호스트·작업 폴더로 부른다
     await vi.waitFor(() => expect(tauri.sshExec).toHaveBeenCalled())
+    const call = vi.mocked(tauri.sshExec).mock.calls[0]
+    expect(call[0]).toBe('dev')
+    expect(call[1]).toContain('/home/dev/w/3')
     expect(tauri.listDir).not.toHaveBeenCalled()
     expect(tauri.removePath).not.toHaveBeenCalled()
   })
