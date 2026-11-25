@@ -1,4 +1,3 @@
-pub mod agent_models;
 pub mod agents;
 pub mod fs;
 pub mod git;

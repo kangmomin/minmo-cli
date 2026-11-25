@@ -140,9 +140,6 @@ export type UsageTokens = { input: number; output: number; cacheWrite: number; c
 export type UsageLimit = { usedPercent: number; windowMinutes: number; resetsAtMs: number }
 /** limits 는 Codex 를 마지막으로 쓴 시점(limitsAtMs)의 값이다(없으면 빈 목록·0) */
 export type CodexUsage = { tokens: UsageTokens; limits: UsageLimit[]; limitsAtMs: number }
-/** 모델 목록을 조회할 수 있는 CLI */
-export type AgentModelsKind = 'claude' | 'codex' | 'gemini'
-
 /**
  * AI 별 사용량 — 그 컴퓨터의 기록에서 읽는다. null 은 그 도구의 기록 폴더가 없다는 뜻이다(쓰지 않는 도구).
  * unavailable: 원격 호스트에 python3 이 없어 읽지 못했다
@@ -290,8 +287,6 @@ export interface TauriApi extends WorktreeHost, GhHost {
   claudeSubagents(cwd: string, sinceMs: number): Promise<SubagentFile[]>
   /** 이 컴퓨터의 AI 별 사용량 — sinceMs(화면의 오늘 자정) 이후의 토큰 수와 Codex 의 한도 사용률 */
   agentUsage(sinceMs: number): Promise<AgentUsage>
-  /** 그 CLI 의 모델 목록 원문(claude 는 {"catalog":…,"masked":…} JSON, 없으면 '') — 파싱은 features/e2eQueue/models.ts */
-  agentModelsRaw(kind: AgentModelsKind): Promise<string>
   /** OS 알림을 띄운다(권한이 없으면 조용히 넘어간다) */
   notify(title: string, body: string, target?: NotifyTarget): Promise<void>
   /** 사용자가 알림을 눌렀다(target 을 실어 보낸 알림만) */
@@ -341,7 +336,6 @@ export const TAURI_COMMANDS = {
   ptyProcesses: 'pty_processes',
   claudeSubagents: 'claude_subagents',
   agentUsage: 'agent_usage',
-  agentModelsRaw: 'agent_models_raw',
   scriptRun: 'script_run',
   scriptCancel: 'script_cancel',
   sshHosts: 'ssh_hosts',
@@ -509,7 +503,6 @@ export function createTauriApi(): TauriApi {
     ptyProcesses: (id) => call(C.ptyProcesses, { id }),
     claudeSubagents: (cwd, sinceMs) => call(C.claudeSubagents, { cwd, sinceMs: Math.max(0, Math.floor(sinceMs)) }),
     agentUsage: (sinceMs) => call(C.agentUsage, { sinceMs: Math.max(0, Math.floor(sinceMs)) }),
-    agentModelsRaw: (kind) => call(C.agentModelsRaw, { kind }),
     notify: async (title, body, target) => {
       // 모든 창이 에이전트 상태를 추적한다 — OS 알림은 주 창만 띄워 한 번만 뜨게 한다(#105)
       if (!isPrimaryWindow()) return

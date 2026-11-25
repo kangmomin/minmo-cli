@@ -1,10 +1,8 @@
 // 함께 쓰는 상태를 호스트와 맞춘다(lib/sharedState.ts) — 저장소 목록·별칭, 작업 폴더 위치, 터미널 패널 구성, 에이전트 실행 명령,
-// 호스트별 기준 저장소 폴더·기본 폴더, 저장소별 연결 호스트, E2E 큐 역할 설정.
+// 호스트별 기준 저장소 폴더·기본 폴더, 저장소별 연결 호스트.
 // 테마·글자 크기·지금 보는 이슈·포커스처럼 기기마다 다른 것은 맞추지 않는다.
 import { LAUNCH_KINDS } from '../features/agents/launch'
 import type { LaunchKind } from '../features/agents/launch'
-import { sanitizeRoles } from '../features/e2eQueue/roles'
-import type { E2eRoles } from '../features/e2eQueue/roles'
 import { leafIds } from '../features/terminal/panes'
 import type { PaneNode } from '../features/terminal/panes'
 import { bindShared, merge3 } from '../lib/sharedState'
@@ -108,16 +106,6 @@ export function applySharedRepos(value: unknown) {
   useReposStore.setState(next)
 }
 
-/**
- * E2E 큐 역할 설정 — 모양이 맞지 않는 부분은 기본값으로 받는다(EC-11, 명령으로 쓰이는 값).
- * 객체가 아니면 무시한다(맞춘 뒤 이 화면의 값이 다시 올라가 호스트의 값을 고친다)
- */
-export function applySharedE2e(value: unknown) {
-  if (!isRecord(value)) return
-  const e2eRoles = sanitizeRoles(value)
-  if (JSON.stringify(e2eRoles) !== JSON.stringify(useUiStore.getState().e2eRoles)) useUiStore.setState({ e2eRoles })
-}
-
 const isStringMap = (v: unknown): v is Record<string, string> => isRecord(v) && Object.values(v).every((x) => typeof x === 'string')
 
 /** 호스트별 기준 저장소 폴더·기본 폴더·연결 호스트 — 모양이 맞는 부분만 받는다(잘못된 값이 경로·호스트로 쓰이지 않게) */
@@ -188,18 +176,6 @@ export function bindSharedStores(tauri: Pick<TauriApi, 'sharedGet' | 'sharedSet'
         const stops = [useUiStore.subscribe(cb), useSetupStore.subscribe(cb)]
         return () => stops.forEach((s) => s())
       },
-    }),
-    // 별도 키 — ui 키에 넣으면 이 필드를 모르는 이전 버전 화면과 서로 되올리며 맞추기를 반복한다
-    bindShared<E2eRoles>(tauri, {
-      key: 'e2e',
-      pick: () => {
-        const r = useUiStore.getState().e2eRoles
-        return { run: r.run, edge: r.edge, verify: r.verify }
-      },
-      apply: applySharedE2e,
-      subscribe: (cb) => useUiStore.subscribe(cb),
-      // 역할 단위로 통째 바꾼다 — 필드별로 합치면 한 화면의 CLI 와 다른 화면의 모델이 섞인다
-      depth: 1,
     }),
   ]
   return () => stops.forEach((s) => s())

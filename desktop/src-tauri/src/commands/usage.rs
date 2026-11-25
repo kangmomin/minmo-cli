@@ -506,7 +506,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 /// 환경 변수(name)가 있으면 그 폴더, 없으면 홈의 fallback
-pub(crate) fn tool_dir(name: &str, fallback: &str) -> Option<PathBuf> {
+fn tool_dir(name: &str, fallback: &str) -> Option<PathBuf> {
     match std::env::var_os(name) {
         Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
         _ => Some(home_dir()?.join(fallback)),

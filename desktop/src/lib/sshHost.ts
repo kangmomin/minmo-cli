@@ -2,7 +2,7 @@
 // `ssh <별칭> …` 으로 원격에서 실행한다. 원격은 POSIX(Linux·macOS)만 지원한다.
 import type { CmdResult, RunOptions } from '@minmo/core'
 
-import type { AgentModelsKind, DirEntry, RemotePty, SshError, SshErrorKind, SshProbe, TauriApi } from './tauri'
+import type { DirEntry, RemotePty, SshError, SshErrorKind, SshProbe, TauriApi } from './tauri'
 import { REMOTE_SUBAGENTS_SCRIPT, claudeProjectSlug, parseRemoteSubagents } from '../features/agents/subagents'
 import { EMPTY_USAGE, REMOTE_USAGE_SCRIPT, parseRemoteUsage } from '../features/usage/remoteUsage'
 
@@ -21,7 +21,6 @@ export type HostOps = Pick<
   | 'listDir'
   | 'claudeSubagents'
   | 'agentUsage'
-  | 'agentModelsRaw'
   | 'readTextFile'
   | 'writeTextFile'
   | 'createDir'
@@ -129,47 +128,6 @@ tmux -u -L minmo list-sessions -F '#{session_name}|#{@minmo_worktree}' 2>/dev/nu
   case "$wt" in "$p"|"$p"/*) tmux -L minmo kill-session -t "=$name" ;; esac
 done
 exit 0`
-
-const MODEL_CLIS: AgentModelsKind[] = ['claude', 'codex', 'gemini']
-
-/**
- * 모델 목록(E2E 큐 역할 설정). $1 = claude|codex|gemini. ssh 로 실행한 명령은 profile 을 읽지 않아 PATH 에 CLI 가 없을 수 있다 —
- * 로그인 셸이 POSIX 면 그 셸의 -lc 로, 아니면(fish·csh 등 문법이 다름) sh 에서 profile 을 읽고 실행한다(로컬 agent_models.rs 와 같은 규칙).
- * 스크립트가 stdin 으로 오므로 CLI 에는 /dev/null 을 준다(남은 스크립트를 읽어 가지 않게). CLI 가 없으면 127 로 끝난다
- */
-const AGENT_MODELS = `# MINMO_AGENT_MODELS
-run() {
-  case "\${SHELL##*/}" in
-    sh|bash|zsh|dash|ksh) "$SHELL" -lc 'exec "$@"' sh "$@" </dev/null ;;
-    *) (
-      for f in /etc/profile "$HOME/.profile" "$HOME/.bash_profile"; do
-        # bash 전용 문법이 있는 파일을 읽으면 sh 가 멈춘다 — 문법 검사를 통과한 것만
-        if [ -r "$f" ] && sh -n "$f" 2>/dev/null; then . "$f" >/dev/null 2>&1 </dev/null; fi
-      done
-      exec "$@" </dev/null
-    ) ;;
-  esac
-}
-case "$1" in
-  claude)
-    # CLAUDE_CONFIG_DIR 도 profile 에 있을 수 있다. profile 이 출력을 낼 수 있어 마지막 줄만 쓴다
-    base=$(run sh -c 'printf "\\n%s\\n" "\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"' | tail -n 1)
-    d="\${base:-$HOME/.claude}/cache/model-catalog"
-    f=$(ls -t -- "$d"/*-cc.json 2>/dev/null | head -n 1)
-    if [ -z "$f" ] || [ ! -f "$f" ]; then exit 0; fi
-    printf '{"catalog":'; cat -- "$f" || exit 1
-    printf ',"masked":'
-    if [ -s "$d/masked-ids.json" ] && [ "$(head -c 1 -- "$d/masked-ids.json")" = "{" ]; then cat -- "$d/masked-ids.json"; else printf 'null'; fi
-    printf '}\\n' ;;
-  codex) run codex debug models ;;
-  gemini)
-    # JSON 출력을 모르는 버전이면 텍스트 목록으로
-    out=$(run gemini models list -o json 2>/dev/null); c=$?
-    [ "$c" = 127 ] && exit 127
-    if [ "$c" = 0 ] && printf '%s' "$out" | grep -q '[[{]'; then printf '%s\\n' "$out"; exit 0; fi
-    run gemini --list-models ;;
-  *) echo "알 수 없는 CLI: $1" >&2; exit 2 ;;
-esac`
 
 const SSH_KINDS: SshErrorKind[] = ['host_key', 'auth', 'unreachable', 'unsupported_os', 'no_git', 'unknown_host', 'failed']
 
@@ -389,13 +347,6 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
     agentUsage: async (sinceMs) => {
       const r = await script(REMOTE_USAGE_SCRIPT, [String(Math.max(0, Math.floor(sinceMs)))])
       return r.code === 0 ? parseRemoteUsage(r.stdout) : EMPTY_USAGE
-    },
-    // 원격 CLI 의 모델 목록 원문 — claude 는 로컬(agent_models.rs)과 같은 {"catalog":…,"masked":…} JSON
-    agentModelsRaw: async (kind) => {
-      if (!MODEL_CLIS.includes(kind)) throw new Error(`모델 목록을 가져올 수 없는 CLI 입니다: ${String(kind)}`)
-      const r = await script(AGENT_MODELS, [kind])
-      if (r.code === 127) throw new Error(`원격 PATH 에서 ${kind} 를 찾지 못했습니다 — 원격의 profile 에서 PATH 를 확인하거나 모델을 직접 입력하세요`)
-      return must(r, '모델 목록').stdout
     },
     listDir: async (root, rel) => {
       assertRoot(root)

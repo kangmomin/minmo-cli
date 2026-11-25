@@ -8,7 +8,7 @@ mod shell;
 mod tailscale;
 mod update;
 
-use commands::{agent_models, agents, fs, git, keychain, pty, pty_reconnect, script, ssh, usage};
+use commands::{agents, fs, git, keychain, pty, pty_reconnect, script, ssh, usage};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -89,7 +89,6 @@ pub fn run() {
             pty_reconnect::pty_reconnect,
             agents::claude_subagents,
             usage::agent_usage,
-            agent_models::agent_models_raw,
             script::script_run,
             script::script_cancel,
             ssh::ssh_hosts,

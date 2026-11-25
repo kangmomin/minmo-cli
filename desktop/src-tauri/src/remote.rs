@@ -60,7 +60,6 @@ const ALLOWED: &[&str] = &[
     "ptyProcesses",
     "claudeSubagents",
     "agentUsage",
-    "agentModelsRaw",
     "scriptRun",
     "scriptCancel",
     "sshHosts",
