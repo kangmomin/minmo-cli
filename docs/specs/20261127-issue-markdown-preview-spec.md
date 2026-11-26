@@ -38,18 +38,20 @@
 - `store/repos.ts:16` `isLocalOwner` → 로컬 저장소 작업 판별(`useIssueManage.ts:28` 가 같은 방식으로 쓴다).
 
 ## 변경 사항 (To-Be)
-1. **새 파일 `desktop/src/features/issue/IssueTab.tsx`** — export 는 `IssueTab` 하나(react-refresh 규칙). 모듈 안 컴포넌트: `IssueTab`, `GitHubIssueBody`, `MarkdownLink`, `MarkdownImage`, `MarkdownTable`.
-   - `IssueTab({ target })` — 바깥 스크롤 영역이 `tabIndex` 0 + 포커스 링(`focus-visible:ring-inset`).
+1. **새 파일 `desktop/src/features/issue/IssueTab.tsx`** — export 는 `IssueTab` 하나(react-refresh 규칙). 모듈 안 컴포넌트: `IssueTab`, `GitHubIssueBody`, `MarkdownBody`(memo), `MarkdownLink`, `MarkdownImage`, `MarkdownListItem`, `MarkdownTable`.
+   - `IssueTab({ target })` — 바깥 스크롤 영역이 `role="region"` `aria-label="이슈 본문"` + `tabIndex` 0. 포커스 표시는 안쪽 outline(`focus-visible:outline-ring`, `-outline-offset-3`) — box-shadow 링은 스크롤하면 자식 배경에 가려진다. 기본은 `outline-hidden`(Windows 고대비에서 보이게).
      - `target.number === null` → "★기타에는 이슈 본문이 없습니다." (조회 없음)
      - `isLocalOwner(target.owner)` → "로컬 저장소의 작업에는 본문이 없습니다." (조회 없음)
      - 그 외 → `GitHubIssueBody`
    - `GitHubIssueBody` — `useQuery({ queryKey: queryKeys.githubIssueBody(o, r, n), queryFn: () => github.getIssue(o, r, n), staleTime: Infinity, retry: false, retryOnMount: false })`. 다시 조회는 [다시 시도]·트리 [새로고침]으로만 한다.
-     - 데이터가 없으면: 오류가 아니면 "불러오는 중…", 오류면 `role="alert"` 로 `githubErrorMessage(error)` + [다시 시도]. [다시 시도]는 먼저 포커스를 내용 영역으로 옮긴 뒤 `refetch()` 한다(`disabled={isFetching}` — 버튼이 사라져도 포커스를 잃지 않게).
+     - "불러오는 중…" 은 항상 있는 `role="status"` 영역의 글자만 바꿔 알린다(처음 조회와 [다시 시도] 중).
+    - 데이터가 없고 오류면 `role="alert"` 로 `githubErrorMessage(error)` + [다시 시도]. [다시 시도]는 먼저 포커스를 내용 영역으로 옮긴 뒤(`focusContent`) `refetch()` 한다(`disabled={isFetching}` — 버튼이 사라져도 포커스를 잃지 않게).
      - 본문이 비었거나 공백·HTML 주석(`<!-- -->`)뿐이면 "본문이 없습니다."
-     - 그 외 → `<div className="markdown"><Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={…} skipHtml>`. 받은 뒤 다시 조회가 실패해도 받은 본문을 계속 보인다.
-   - `MarkdownLink` — `href` 가 `/^https?:/i` 이면 `<a>` + `onClick` 에서 `preventDefault` 후 `tauri.openUrl(href)`. 아니면 `<span>` 글자.
+     - 그 외 → `MarkdownBody`(memo — 다시 조회 중 본문이 같으면 다시 파싱하지 않음): `<div className="markdown"><Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={…} skipHtml>`. 받은 뒤 다시 조회가 실패해도 받은 본문을 계속 보인다.
+   - `MarkdownLink` — `href` 가 `/^https?:/i` 이면 `<a title="외부 브라우저에서 엽니다">` + `onClick` 에서 `preventDefault` 후 `tauri.openUrl(href)`. 열지 못하면 링크 옆에 `role="alert"` "(브라우저를 열지 못했습니다)". 아니면 `<span>` 글자.
    - `MarkdownImage` — `<img>`·링크 없이 글자 "이미지: {alt}".
-   - `MarkdownTable` — `<div tabIndex={0} role="group" aria-label="표" className="overflow-x-auto …">` 로 감싼다. 넓은 표를 키보드로 가로 스크롤한다(랜드마크 이름이 겹치지 않게 region 대신 group).
+   - `MarkdownListItem` — GFM 체크리스트 항목(`li.task-list-item`)은 내용을 `<label>` 로 감싸 체크박스에 항목 글자를 이름으로 준다.
+  - `MarkdownTable` — `<div tabIndex={0} role="group" aria-label="표: {머리 칸 글자, …}" className="overflow-x-auto …">` 로 감싼다(머리 칸 글자가 없으면 "표"). 넓은 표를 키보드로 가로 스크롤한다(랜드마크가 늘지 않게 region 대신 group). 포커스 표시는 내용 영역과 같은 outline.
 2. **`lib/queryKeys.ts`** — `githubIssueBody: (owner, repo, number) => ['github', 'issueBody', owner, repo, number]`. 수정 대화상자의 `githubIssue` 와 따로 둔다(대화상자는 열 때마다 새로 받아야 한다, #64). `['github']` 접두라 트리 [새로고침]이 같이 다시 받는다.
 3. **`store/ui.ts`** — `WorkTab = 'terminal' | 'changes' | 'files' | 'notes' | 'issue'`. persist 버전·migrate 변경 없음(`merge` 가 tab 을 검사하지 않음, 값 추가만).
 4. **`WorkTabs.tsx`** — 메모 뒤에 `<TabsTrigger value="issue">이슈</TabsTrigger>`, `<TabsContent value="issue" tabIndex={-1}><IssueTab key={id} target={target} /></TabsContent>`. 내용 영역이 Tab 정지점이므로 패널은 -1(AX-19). worktree 상태와 무관하게 보인다. Radix 기본(forceMount 없음)이라 탭이 보일 때만 마운트·조회한다.
@@ -57,18 +59,18 @@
    - 먼저 `cancelQueries` 로 그 키의 진행 중인 조회를 취소한다. 옛 조회가 새 본문을 덮지 않고, 끝나지 않는 첫 조회를 다시 쓰지 않는다(TanStack Query 는 데이터가 없으면 `invalidateQueries` 가 진행 중인 조회를 취소하지 않고 재사용한다).
    - 탭 캐시에 본문이 있으면 → `setQueryData` 로 새 본문을 넣는다. 다시 조회하지 않는다.
    - 없으면(탭을 안 열었거나 첫 조회 중) → `invalidateQueries`. 첫 조회 중이었으면 저장 뒤 값으로 다시 받는다. 탭을 안 열었으면 아무 일도 없다.
-6. **`index.css`** — `@layer components { .markdown … }`: 글자 크기·줄 간격, 블록 간격, h1~h6, 목록, 체크리스트(`ul.contains-task-list`), 링크, 인라인 코드(`:not(pre) > code`), 코드 블록(가로 스크롤 없이 줄바꿈), 인용, 표, 구분선. 테마 토큰만 써서 ghostty·black·light 모두 맞춘다. table 에 `display:block` 을 쓰지 않는다.
+6. **`index.css`** — `@layer components { .markdown … }`: 글자 크기·줄 간격, 블록 간격, h1~h6, 목록, 체크리스트(`ul.contains-task-list`), 링크(포커스 outline 포함), 인라인 코드(`:not(pre) > code`), 코드 블록(가로 스크롤 없이 줄바꿈), 인용, 표, 구분선. 테마 토큰만 써서 ghostty·black·light 모두 맞춘다(회색 배경 위의 인용 속 코드·코드 블록·표 머리, 표 머리 속 링크, 링크 속 코드는 기본 글자색 — 4.5:1 대비). table 에 `display:block` 을 쓰지 않는다.
 7. **의존성** — `react-markdown` ^10.1.0, `remark-gfm` ^4.0.1, `remark-breaks` ^4.0.0 (`desktop/package.json`).
 8. **문서** — README `## 이슈 탭` 절.
 
-상태 설계: 서버 상태는 React Query `githubIssueBody` 키 1개(본문). 전역 UI 는 `tab` 값에 `'issue'` 추가. 컴포넌트 로컬 상태 없음(`ref` 하나).
+상태 설계: 서버 상태는 React Query `githubIssueBody` 키 1개(본문). 전역 UI 는 `tab` 값에 `'issue'` 추가. 컴포넌트 로컬 상태는 `ref` 하나와 링크별 열기 실패 여부.
 
 ## 정상 흐름
 | ID | 시나리오 | 보장되는 결과 |
 |----|---------|--------------|
 | AC-01 | GitHub 이슈를 고르고 [이슈] 탭을 누른다 | `getIssue` 로 본문을 받아 마크다운으로 렌더링한다: 제목(heading), 목록, 굵게·기울임, 인라인 코드·코드 블록, 인용, 구분선. 문단 안의 줄바꿈 한 번은 줄바꿈(`<br>`)으로 보인다(GitHub 과 같음) |
 | AC-02 | 본문에 GFM 요소가 있다 | 표(table), 체크리스트(읽기 전용 checkbox), 취소선(del), 맨 URL 자동 링크를 렌더링한다 |
-| AC-03 | 본문의 http/https 링크(대소문자 무관)를 누른다 | 앱 화면은 이동하지 않고(`preventDefault`) `tauri.openUrl(href)` 로 외부 브라우저에서 연다 |
+| AC-03 | 본문의 http/https 링크(대소문자 무관)를 누른다 | 앱 화면은 이동하지 않고(`preventDefault`) `tauri.openUrl(href)` 로 외부 브라우저에서 연다. 링크는 "외부 브라우저에서 엽니다" 설명을 가진다 |
 | AC-04 | [이슈] 탭에서 옛 본문을 보는 중에 [이슈 수정]으로 본문을 바꿔 저장한다 | 다시 조회하지 않고 같은 탭이 새 본문을 보인다. 탭이 아직 첫 조회 중이면 저장 뒤 다시 받아 새 본문을 보인다("불러오는 중…"에 멈추지 않음) |
 | AC-05 | 트리 [새로고침]을 누른다 | [이슈] 탭이 본문을 다시 받는다(탭이 안 보이면 다음에 열 때). 단, 탭이 안 보이는 동안 조회 오류 상태였으면 다시 열어도 자동으로 받지 않고 EC-14 대로 [다시 시도]로 받는다 |
 
@@ -76,7 +78,7 @@
 | ID | 조건 | 보장되는 결과 |
 |----|------|--------------|
 | EC-01 | 본문이 비었거나 공백·HTML 주석(`<!-- -->`)뿐 | "본문이 없습니다." |
-| EC-02 | 조회 중 | "불러오는 중…" |
+| EC-02 | 조회 중 | "불러오는 중…" (EC-17 의 status 영역) |
 | EC-03 | 조회 실패 | `role="alert"` 로 `githubErrorMessage` 문구 + [다시 시도] → 누르면 포커스가 내용 영역으로 가고 다시 조회 |
 | EC-04 | ★기타(`number === null`) | "★기타에는 이슈 본문이 없습니다.", `getIssue` 호출 없음 |
 | EC-05 | 로컬 저장소 작업(`isLocalOwner`) | "로컬 저장소의 작업에는 본문이 없습니다.", `getIssue` 호출 없음 |
@@ -85,10 +87,13 @@
 | EC-08 | 이미지 `![alt](https://…)` 와 배지 `[![CI](https://…/b.svg)](https://…/actions)` | `<img>` 없이 글자 "이미지: alt". 배지는 링크 하나만 있고(`<a>` 중첩 없음) 누르면 `openUrl` 이 링크 href 로 1번 |
 | EC-09 | [이슈] 탭에서 본문을 본 뒤 다른 곳에서 본문이 바뀌고 [이슈 수정]을 연다 | 대화상자 본문 칸은 새 본문(탭 캐시를 쓰지 않음, #64 유지) |
 | EC-10 | 다른 탭을 보고 있다 | 본문을 조회하지 않는다(탭을 열 때 조회) |
-| EC-11 | 접근성 | [이슈] 탭은 `tabpanel` "이슈" 와 연결, 패널 `tabIndex=-1`, 내용 영역 `tabIndex=0` + 포커스 링, 표는 포커스 가능한 가로 스크롤 영역 |
+| EC-11 | 접근성 | [이슈] 탭은 `tabpanel` "이슈" 와 연결, 패널 `tabIndex=-1`, 내용 영역은 region "이슈 본문" + `tabIndex=0` + 포커스 outline, 표는 포커스 가능한 가로 스크롤 영역(group "표: {머리 칸 글자}", 없으면 "표") |
 | EC-12 | 다른 이슈로 바꾼다 | 바꾼 이슈의 본문을 보인다(이전 본문이 남지 않음) |
 | EC-13 | 본문을 받은 뒤 다시 조회(트리 [새로고침])가 실패 | 받은 본문을 계속 보인다 |
-| EC-14 | 조회가 실패한 뒤 다른 탭에 갔다가 [이슈] 탭으로 돌아온다 | 자동으로 다시 조회하지 않는다(오류 문구 + [다시 시도] 유지) |
+| EC-14 | 조회가 실패한 뒤 다른 탭에 갔다가 [이슈] 탭으로 돌아온다 | 자동으로 다시 조회하지 않는다(오류 문구 + [다시 시도] 유지). 오류 문구는 다시 `alert` 로 읽힌다 — 돌아온 사용자에게 상태를 다시 알리는 의도된 동작 |
+| EC-15 | 링크를 외부 브라우저로 열지 못함(`openUrl` 실패) | 링크 옆에 `role="alert"` "(브라우저를 열지 못했습니다)" |
+| EC-16 | GFM 체크리스트 | 체크박스의 접근 이름이 항목 글자다(`label` 로 묶음) |
+| EC-17 | 처음 조회·[다시 시도] 중 | 항상 있는 `role="status"` 영역이 "불러오는 중…" 으로 바뀐다(끝나면 비움) |
 
 권한·소유권: 해당 없음 — 로그인·소유권 규칙을 바꾸지 않는다. 본문 조회는 기존 `github.getIssue` 를 그대로 쓴다.
 
@@ -107,6 +112,10 @@
 - A-5: GitHub 처럼 줄바꿈 한 번을 줄바꿈으로 보이려고 `remark-breaks` 4.0.0 을 더한다(D-02 에 의존성 1개 추가, 같은 unified 11 생태계). CommonMark 그대로면 두 줄이 한 줄로 붙는다.
 - A-6: raw HTML 은 `skipHtml` 로 숨긴다(글자로도 보이지 않음). CommonMark 의 HTML 블록은 **빈 줄까지 통째로** 하나다 — `<details>\n<summary>로그</summary>` 처럼 빈 줄 없이 이어진 글자("로그")도 함께 숨는다. 빈 줄로 나눈 마크다운만 남는다.
 - A-7: GitHub 에 끌어다 놓은 이미지는 본문에 `<img …>` HTML 로 저장된다 → A-6 에 따라 **표시 없이 숨는다**(A-1 의 "이미지: alt" 도 나오지 않음). 이미지만 있는 본문은 빈 영역으로 보인다("본문이 없습니다." 아님 — 내용이 있으므로).
+
+## 리뷰 보완 (2026-11-27, 사용자 결정: 지금 고치기)
+- 반영: 위 EC-11·EC-14·EC-15~17, AC-03 설명, 포커스 outline, 링크 포커스, `outline-hidden`, memo, `focusContent` 이름.
+- 반영하지 않음: `useQuery` 를 훅으로 빼기(한 곳에서만 씀), 넘칠 때만 표에 Tab 정지점(ResizeObserver 필요·jsdom 검증 불가 — 표마다 정지점 하나는 그대로).
 
 ## 미결
 - 없음
