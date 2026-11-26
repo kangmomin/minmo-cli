@@ -19,6 +19,7 @@ import { clampNickname, isLocalOwner, normalizeNickname, repoKey, repoLabelOf, r
 import { useSessionStore } from '../../store/session'
 import { PairSyncSection } from '../pairSync/PairSyncSection'
 import { BaseRepoDialog } from '../tree/BaseRepoDialog'
+import { SharePathsSection } from './SharePathsSection'
 import { useSettings } from './useSettings'
 
 export type PreviewIssue = { owner: string; repo: string; key: string; number: number | null; title: string }
@@ -79,6 +80,7 @@ export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: Sett
               : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'}
           </DialogDescription>
         </DialogHeader>
+        {open && scope.kind === 'global' && <SharePathsSection />}
         {open && scope.kind === 'global' && <PairSyncSection />}
         {open && scope.kind === 'project' && <RepoNicknameSection key={repoKey(scope.owner, scope.repo)} owner={scope.owner} repo={scope.repo} />}
         {open && project && <RepoHostSection owner={project.owner} repo={project.repo} />}
@@ -221,14 +223,17 @@ function BaseRepoSection({ owner, repo }: { owner: string; repo: string }) {
 
 function SettingsBody({ scope, previewIssue, onSaved }: { scope: SettingsScope; previewIssue: PreviewIssue | null; onSaved(): void }) {
   const s = useSettings(scope)
+  // 값 전체로 폼을 구분한다 — 수정 시각만 보면 값이 바뀐 것을 놓친다(아래 주석)
+  const recordKey = useMemo(() => JSON.stringify(s.record ?? null), [s.record])
   const ready = s.record !== undefined && (scope.kind === 'global' || s.inherited !== null)
   if (!ready) {
     return <p className="text-sm text-muted-foreground">{s.isLoading ? '불러오는 중…' : '설정을 불러올 수 없습니다 — 서버 연결 필요'}</p>
   }
-  // 레코드가 바뀌면(저장 후 재조회) 폼을 새로 초기화한다
+  // 레코드가 바뀌면(저장 후 재조회) 폼을 새로 초기화한다. 경로·스크립트 공유를 바꾼 뒤에도 그렇다 —
+  // 함께 쓰는 값과 이 PC 의 값은 수정 시각이 같을 수 있어, 남은 입력을 저장하면 한쪽 값이 다른 쪽에 들어간다
   return (
     <SettingsForm
-      key={s.record!.updatedAt ?? 'empty'}
+      key={recordKey}
       scope={scope}
       record={s.record!}
       inherited={s.inherited}

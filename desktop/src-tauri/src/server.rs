@@ -18,6 +18,8 @@ use crate::commands::keychain;
 use crate::profile;
 
 pub const DEFAULT_PORT: u16 = 8787;
+/// 배포 빌드가 쓰는 API 서버. 배포 빌드는 내장 서버를 띄우지 않고 이 주소로 붙는다(CSP connect-src 와 맞춘다)
+pub const HOSTED_SERVER_URL: &str = "https://minmo-cli-production.up.railway.app";
 pub const STATUS_EVENT: &str = "server-status";
 const SETTINGS_FILE: &str = "server.json";
 const TOKEN_KEY: &str = "minmo.server.token-key";
@@ -49,6 +51,10 @@ pub enum CloseAction {
 pub struct Settings {
     pub port: u16,
     pub close_action: CloseAction,
+    /// 이 PC 의 식별자(UUID) — 처음 실행할 때 만든다. 서버가 PC 별 설정을 구분하는 데 쓴다(X-Minmo-Pc)
+    pub pc_id: String,
+    /// 작업 폴더 경로·생성 후 스크립트를 같은 계정의 다른 PC 와 함께 쓴다. 끄면(기본) 이 PC 에만 저장한다
+    pub share_paths: bool,
 }
 
 impl Default for Settings {
@@ -56,7 +62,46 @@ impl Default for Settings {
         Self {
             port: DEFAULT_PORT,
             close_action: CloseAction::Ask,
+            pc_id: String::new(),
+            share_paths: false,
         }
+    }
+}
+
+/// 서버 설정 요청에 붙이는 PC 식별자 헤더(server/internal/httpapi PCHeader)
+pub const PC_HEADER: &str = "x-minmo-pc";
+
+/// 서버가 받는 형식(소문자 UUID)인지
+pub fn valid_pc_id(id: &str) -> bool {
+    let b = id.as_bytes();
+    b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => *c == b'-',
+            _ => c.is_ascii_digit() || (b'a'..=b'f').contains(c),
+        })
+}
+
+/// 무작위 UUID(v4). 난수를 얻지 못하면 None
+fn new_pc_id() -> Option<String> {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).ok()?;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let hex: String = b.iter().map(|v| format!("{v:02x}")).collect();
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    ))
+}
+
+impl Settings {
+    /// 경로를 함께 쓰지 않을 때만 PC 식별자를 보낸다 — 없으면 서버는 함께 쓰는 값을 읽고 쓴다
+    pub fn pc_header(&self) -> Option<String> {
+        (!self.share_paths && valid_pc_id(&self.pc_id)).then(|| self.pc_id.clone())
     }
 }
 
@@ -153,7 +198,7 @@ pub enum State {
     Running,
     Failed,
     Stopped,
-    /// debug 전용: 외부에서 띄운 서버를 쓴다(MINMO_EXTERNAL_SERVER=1)
+    /// 내장 서버를 띄우지 않는다 — 배포 빌드(HOSTED_SERVER_URL), debug 는 MINMO_EXTERNAL_SERVER=1
     External,
 }
 
@@ -163,10 +208,40 @@ pub struct Status {
     pub state: State,
     pub port: u16,
     pub message: Option<String>,
+    /// 내장 서버 대신 쓰는 서버 주소. 없으면 127.0.0.1:port
+    pub url: Option<String>,
+}
+
+impl Status {
+    pub fn new(state: State, port: u16, message: Option<String>) -> Self {
+        Self::with_hosted(state, port, message, hosted_url())
+    }
+
+    fn with_hosted(
+        state: State,
+        port: u16,
+        message: Option<String>,
+        hosted: Option<&str>,
+    ) -> Self {
+        // 주소는 상태와 관계없이 알린다 — 다시 시작·종료 중(Starting·Stopped)에도 이 주소 말고
+        // 로컬 포트(127.0.0.1)로 요청이 가면, 그 포트를 듣는 프로세스가 세션 토큰을 받는다
+        let url = hosted.map(str::to_string);
+        Self {
+            state,
+            port,
+            message,
+            url,
+        }
+    }
+}
+
+/// 배포 빌드만 고정 주소를 쓴다. debug 빌드는 내장 서버(또는 VITE_MINMO_SERVER)로 개발·E2E 를 한다
+pub fn hosted_url() -> Option<&'static str> {
+    (!cfg!(debug_assertions)).then_some(HOSTED_SERVER_URL)
 }
 
 fn external() -> bool {
-    cfg!(debug_assertions) && std::env::var("MINMO_EXTERNAL_SERVER").as_deref() == Ok("1")
+    hosted_url().is_some() || std::env::var("MINMO_EXTERNAL_SERVER").as_deref() == Ok("1")
 }
 
 fn sidecar_path() -> Result<PathBuf, String> {
@@ -281,6 +356,7 @@ pub struct ServerManager {
 pub struct SettingsInput {
     pub port: Option<u16>,
     pub close_action: Option<CloseAction>,
+    pub share_paths: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -288,6 +364,9 @@ pub struct SettingsInput {
 pub struct SettingsView {
     pub port: u16,
     pub close_action: CloseAction,
+    pub share_paths: bool,
+    /// 서버 설정 요청에 붙일 PC 식별자. 경로를 함께 쓰면 None
+    pub pc_id: Option<String>,
     pub warning: Option<String>,
 }
 
@@ -297,19 +376,28 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl ServerManager {
     pub fn load(app: &AppHandle) -> Self {
-        let (settings, warning) = match profile::dirs(app) {
+        let (mut settings, warning) = match profile::dirs(app) {
             Ok(d) => load_settings(&d.config.join(SETTINGS_FILE)),
             Err(e) => (Settings::default(), Some(e)),
         };
+        // 식별자가 없으면(처음 실행·예전 설정 파일) 만들어 저장한다. 설정 파일을 읽지 못했을 때(warning)는
+        // 만들지 않는다 — 기본값으로 파일을 덮어쓰면 포트 설정이 사라지고, 실행할 때마다 새 식별자가 생긴다.
+        // 식별자가 없으면 다른 PC 와 함께 쓰는 값으로 동작한다
+        if warning.is_none() && !valid_pc_id(&settings.pc_id) {
+            if let (Some(id), Ok(d)) = (new_pc_id(), profile::dirs(app)) {
+                let mut next = settings.clone();
+                next.pc_id = id;
+                // 저장하지 못하면 쓰지 않는다(다음 실행에 다른 식별자가 되지 않게)
+                if save_settings(&d.config.join(SETTINGS_FILE), &next).is_ok() {
+                    settings = next;
+                }
+            }
+        }
         Self::new(settings, warning)
     }
 
     pub fn new(settings: Settings, warning: Option<String>) -> Self {
-        let status = Status {
-            state: State::Stopped,
-            port: settings.port,
-            message: None,
-        };
+        let status = Status::new(State::Stopped, settings.port, None);
         Self {
             inner: Mutex::new(Inner {
                 settings,
@@ -355,11 +443,7 @@ impl ServerManager {
         let status = {
             let mut inner = lock(&mgr.inner);
             inner.generation += 1;
-            inner.status = Status {
-                state: State::Starting,
-                port: inner.settings.port,
-                message: None,
-            };
+            inner.status = Status::new(State::Starting, inner.settings.port, None);
             inner.status.clone()
         };
         publish(app, &status);
@@ -379,11 +463,7 @@ impl ServerManager {
         self.set_status(
             app,
             generation,
-            Status {
-                state: State::Stopped,
-                port: self.settings().port,
-                message: None,
-            },
+            Status::new(State::Stopped, self.settings().port, None),
         );
     }
 
@@ -418,11 +498,7 @@ impl ServerManager {
             (inner.settings.clone(), inner.generation)
         };
         let port = settings.port;
-        let status = |state, message| Status {
-            state,
-            port,
-            message,
-        };
+        let status = |state, message| Status::new(state, port, message);
         if external() {
             self.set_status(app, generation, status(State::External, None));
             return;
@@ -602,11 +678,7 @@ impl ServerManager {
             mgr.set_status(
                 &app,
                 generation,
-                Status {
-                    state: State::Failed,
-                    port,
-                    message: Some(message),
-                },
+                Status::new(State::Failed, port, Some(message)),
             );
             return;
         });
@@ -620,6 +692,8 @@ impl ServerManager {
         SettingsView {
             port: settings.port,
             close_action: settings.close_action,
+            share_paths: settings.share_paths,
+            pc_id: settings.pc_header(),
             warning,
         }
     }
@@ -644,9 +718,15 @@ impl ServerManager {
         if let Some(action) = input.close_action {
             next.close_action = action;
         }
+        if let Some(share) = input.share_paths {
+            next.share_paths = share;
+        }
         self.persist(app, next.clone())?;
         if next.port != current.port {
             Self::restart(app);
+        } else if next.share_paths != current.share_paths {
+            // 다른 창도 PC 식별자를 다시 읽게 상태를 한 번 더 알린다(화면은 상태 이벤트에서 설정을 다시 읽는다)
+            publish(app, &self.status());
         }
         Ok(self.view())
     }
@@ -727,6 +807,8 @@ mod tests {
         let s = Settings {
             port: 18787,
             close_action: CloseAction::Tray,
+            pc_id: "11111111-1111-4111-8111-111111111111".into(),
+            share_paths: true,
         };
         save_settings(&path, &s).unwrap();
         assert_eq!(load_settings(&path), (s, None));
@@ -763,6 +845,54 @@ mod tests {
         assert!(validate_port(1023).is_err());
         assert!(validate_port(1024).is_ok());
         assert!(validate_port(65535).is_ok());
+    }
+
+    #[test]
+    fn pc_id_is_sent_only_when_paths_are_not_shared() {
+        let id = new_pc_id().unwrap();
+        assert!(valid_pc_id(&id), "{id}");
+        assert_ne!(new_pc_id().unwrap(), id);
+        for bad in ["", "pc-a", "11111111-1111-4111-8111-11111111111G"] {
+            assert!(!valid_pc_id(bad), "{bad}");
+        }
+        // 대문자는 서버가 받지 않는다
+        assert!(!valid_pc_id(&id.to_uppercase()) || id == id.to_uppercase());
+
+        let mut s = Settings {
+            pc_id: id.clone(),
+            ..Settings::default()
+        };
+        assert_eq!(s.pc_header(), Some(id), "기본은 이 PC 에만 저장");
+        s.share_paths = true;
+        assert_eq!(s.pc_header(), None);
+        // 예전 설정 파일(식별자·공유 여부 없음)은 기본값으로 읽는다
+        let old: Settings = serde_json::from_str(r#"{"port":18787,"closeAction":"tray"}"#).unwrap();
+        assert_eq!((old.pc_id.as_str(), old.share_paths), ("", false));
+        assert_eq!(old.pc_header(), None);
+    }
+
+    #[test]
+    fn status_reports_hosted_url_in_every_state() {
+        let hosted = Some(HOSTED_SERVER_URL);
+        let external = Status::with_hosted(State::External, 8787, None, hosted);
+        assert_eq!(external.url.as_deref(), Some(HOSTED_SERVER_URL));
+        assert_eq!(
+            serde_json::to_value(&external).unwrap()["url"],
+            HOSTED_SERVER_URL
+        );
+        // 다시 시작·종료 중에도 로컬 포트로 넘어가지 않는다
+        for state in [State::Starting, State::Stopped, State::Failed] {
+            assert_eq!(
+                Status::with_hosted(state, 8787, None, hosted).url.as_deref(),
+                Some(HOSTED_SERVER_URL),
+                "{state:?}"
+            );
+        }
+        // 주소가 없는 빌드(debug)는 127.0.0.1:port 를 쓴다
+        assert_eq!(
+            Status::with_hosted(State::External, 8787, None, None).url,
+            None
+        );
     }
 
     fn launch() -> Launch {

@@ -6,7 +6,7 @@ import { ApiError } from '@minmo/api-client'
 
 import { CliError, requireLogin, serverErrorMessage } from '../context'
 import type { Ctx } from '../context'
-import { WINDOWS_SERVER_HINT, describeServer } from '../server'
+import { describeServer } from '../server'
 import { clearCredentials, saveCredentials } from '../store'
 
 export async function login(ctx: Ctx, code: string): Promise<void> {
@@ -64,43 +64,40 @@ export async function revokeSession(ctx: Ctx, id: string): Promise<void> {
 
 type Check = { ok: boolean; label: string; hint?: string }
 
-/** 데스크탑 서버 연결을 점검한다 — 역터널 소켓·서버 응답·로그인. 하나라도 실패하면 종료 코드 1 */
+/** 서버 연결을 점검한다 — 서버 경로·서버 응답·로그인. 하나라도 실패하면 종료 코드 1 */
 export async function doctor(ctx: Ctx): Promise<void> {
   const checks: Check[] = []
   const add = (ok: boolean, label: string, hint?: string) => checks.push({ ok, label, hint })
 
-  if (ctx.server.kind === 'unset') {
-    // Windows: 주소가 없으면 연결해 볼 곳도 없다
-    add(false, 'MINMO_SERVER 미설정', WINDOWS_SERVER_HINT)
+  if (ctx.server.kind === 'socket' && !existsSync(ctx.server.path)) {
+    add(false, `역터널 소켓 없음: ${ctx.server.path}`, 'PC 의 ~/.ssh/config 에 RemoteForward <이 경로> 127.0.0.1:8787 을 넣고 다시 접속하세요(원격 sshd 가 AllowStreamLocalForwarding 을 허용해야 함)')
   } else {
-    if (ctx.server.kind === 'socket' && !existsSync(ctx.server.path)) {
-      add(false, `역터널 소켓 없음: ${ctx.server.path}`, 'PC 의 ~/.ssh/config 에 RemoteForward <이 경로> 127.0.0.1:8787 을 넣고 다시 접속하세요(원격 sshd 가 AllowStreamLocalForwarding 을 허용해야 함)')
-    } else {
-      add(true, `서버 경로: ${describeServer(ctx.server)}`)
-    }
-    const health = await ctx.api.healthz().then(
-      () => true,
-      () => false,
-    )
-    const socket = ctx.server.kind === 'socket' ? ctx.server.path : null
-    const stale = !health && socket !== null && existsSync(socket)
-    add(
-      health,
-      health ? '서버 응답' : stale ? '소켓은 있지만 응답 없음 — 이전 접속의 소켓이 남았을 수 있습니다' : '서버에 연결할 수 없음',
-      health
-        ? undefined
-        : stale
-          ? `rm ${socket} 후 다시 접속하세요(원격 sshd_config 에 StreamLocalBindUnlink yes 가 있으면 자동으로 바뀝니다). PC 의 minmo 서버가 켜져 있는지도 확인하세요`
-          : 'SSH 역터널·PC 의 minmo 서버 실행 여부를 확인하세요',
-    )
-    if (!ctx.creds?.session) add(false, '로그인 안 됨', '`minmo login <코드>`')
-    else if (health) {
-      try {
-        const me = await requireLogin(ctx)
-        add(true, `로그인: ${me.githubLogin}`)
-      } catch (e) {
-        add(false, e instanceof Error ? e.message : String(e))
-      }
+    add(true, `서버 경로: ${describeServer(ctx.server)}`)
+  }
+  const health = await ctx.api.healthz().then(
+    () => true,
+    () => false,
+  )
+  const socket = ctx.server.kind === 'socket' ? ctx.server.path : null
+  const stale = !health && socket !== null && existsSync(socket)
+  add(
+    health,
+    health ? '서버 응답' : stale ? '소켓은 있지만 응답 없음 — 이전 접속의 소켓이 남았을 수 있습니다' : '서버에 연결할 수 없음',
+    health
+      ? undefined
+      : stale
+        ? `rm ${socket} 후 다시 접속하세요(원격 sshd_config 에 StreamLocalBindUnlink yes 가 있으면 자동으로 바뀝니다). PC 의 minmo 서버가 켜져 있는지도 확인하세요`
+        : socket !== null
+          ? 'SSH 역터널·PC 의 minmo 서버 실행 여부를 확인하세요'
+          : '네트워크 연결과 서버 주소(MINMO_SERVER 를 정했다면 그 값)를 확인하세요',
+  )
+  if (!ctx.creds?.session) add(false, '로그인 안 됨', '`minmo login <코드>`')
+  else if (health) {
+    try {
+      const me = await requireLogin(ctx)
+      add(true, `로그인: ${me.githubLogin}`)
+    } catch (e) {
+      add(false, e instanceof Error ? e.message : String(e))
     }
   }
 

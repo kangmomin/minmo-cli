@@ -1030,10 +1030,15 @@ async fn sync_server(ctx: &Ctx, method: Method, body: Option<Value>) -> Result<V
 }
 
 fn api_base(ctx: &Ctx) -> String {
-    format!(
-        "http://127.0.0.1:{}",
-        ctx.app.state::<server::ServerManager>().status().port
-    )
+    api_base_of(&ctx.app.state::<server::ServerManager>().status())
+}
+
+/// 내장 서버 대신 쓰는 주소가 있으면 그 주소, 없으면 내장 서버
+fn api_base_of(status: &server::Status) -> String {
+    match &status.url {
+        Some(url) => url.trim_end_matches('/').to_string(),
+        None => format!("http://127.0.0.1:{}", status.port),
+    }
 }
 
 fn session_token() -> Option<String> {
@@ -1101,7 +1106,15 @@ pub fn api_request_allowed(method: &Method, path: &str) -> bool {
     }
 }
 
-async fn forward(ctx: &Ctx, req: Request, url: String, bearer: String, github: bool) -> Response {
+/// pc: 서버 설정 요청에 붙일 이 PC 의 식별자(server::PC_HEADER). GitHub 요청에는 붙이지 않는다
+async fn forward(
+    ctx: &Ctx,
+    req: Request,
+    url: String,
+    bearer: String,
+    github: bool,
+    pc: Option<String>,
+) -> Response {
     let method = req.method().clone();
     let content_type = req.headers().get(header::CONTENT_TYPE).cloned();
     let accept = req.headers().get(header::ACCEPT).cloned();
@@ -1124,6 +1137,8 @@ async fn forward(ctx: &Ctx, req: Request, url: String, bearer: String, github: b
         out = out
             .header(header::USER_AGENT, "minmo")
             .header("X-GitHub-Api-Version", "2022-11-28");
+    } else if let Some(pc) = pc {
+        out = out.header(server::PC_HEADER, pc);
     }
     match out.send().await {
         Ok(res) => {
@@ -1177,7 +1192,13 @@ async fn proxy_api(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
         return (StatusCode::UNAUTHORIZED, Json(json!({ "error": { "code": "host_not_logged_in", "message": "호스트 PC 의 minmo 에서 먼저 로그인하세요" } }))).into_response();
     };
     let url = format!("{}{rest}", api_base(&ctx));
-    forward(&ctx, req, url, session, false).await
+    // 원격 화면은 이 PC 의 작업 폴더를 다루므로 이 PC 의 설정을 쓴다(붙은 기기가 보낸 값은 넘기지 않는다)
+    let pc = ctx
+        .app
+        .state::<server::ServerManager>()
+        .settings()
+        .pc_header();
+    forward(&ctx, req, url, session, false, pc).await
 }
 
 async fn proxy_github(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
@@ -1191,7 +1212,7 @@ async fn proxy_github(AxState(ctx): AxState<Ctx>, req: Request) -> Response {
         return text(StatusCode::UNAUTHORIZED, "host_not_logged_in");
     };
     let url = format!("{}{}", github_api_base(), path_and_query(&req, "/gh"));
-    forward(&ctx, req, url, token, true).await
+    forward(&ctx, req, url, token, true, None).await
 }
 
 /// desktop/src/lib/tauri.ts 의 runtimeKind 가 읽는 표시
@@ -1295,7 +1316,10 @@ pub fn remote_configure(app: AppHandle, input: ConfigInput) -> Result<Status, St
     let mgr = app.state::<RemoteManager>();
     if let Some(p) = input.port {
         server::validate_port(p)?;
-        if p == app.state::<server::ServerManager>().settings().port {
+        // 내장 서버를 띄우지 않으면(배포 빌드) 그 포트는 비어 있다
+        if server::hosted_url().is_none()
+            && p == app.state::<server::ServerManager>().settings().port
+        {
             return Err("내장 서버와 같은 포트는 쓸 수 없습니다".into());
         }
     }
@@ -1720,6 +1744,15 @@ pub fn shared_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_base_prefers_hosted_url_over_sidecar_port() {
+        let mut status = server::Status::new(server::State::External, 18787, None);
+        status.url = None;
+        assert_eq!(api_base_of(&status), "http://127.0.0.1:18787");
+        status.url = Some("https://minmo.example/".into());
+        assert_eq!(api_base_of(&status), "https://minmo.example");
+    }
 
     #[test]
     fn peer_urls_are_normalized_to_scheme_host_port() {

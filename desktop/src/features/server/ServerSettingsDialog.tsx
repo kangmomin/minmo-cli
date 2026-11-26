@@ -110,6 +110,8 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
   }
 
   const portChanged = parsedPort !== null && parsedPort !== loaded.port
+  // 배포 빌드는 내장 서버를 띄우지 않는다 — 포트·다시 시작·로그는 쓸 곳이 없다
+  const hosted = !!status?.url
 
   return (
     <form onSubmit={(e) => void onSubmit(e)} className="grid gap-5">
@@ -126,23 +128,27 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
         <p className="text-sm" data-testid="server-status">
           상태: {statusText(status)}
         </p>
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="grid gap-1">
-            <Label htmlFor={fid('port')}>포트</Label>
-            <Input id={fid('port')} inputMode="numeric" className="w-28" value={port} onChange={(e) => setPort(e.target.value)} aria-describedby={fid('port-hint')} />
-          </div>
-          <Button type="button" variant="outline" size="sm" onClick={() => void tauri.serverRestart()}>
-            다시 시작
-          </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={() => void tauri.serverOpenLogDir()}>
-            로그 폴더 열기
-          </Button>
-        </div>
-        <p id={fid('port-hint')} className="text-xs text-muted-foreground">
-          {portChanged
-            ? '저장하면 서버를 새 포트로 다시 시작하고 다시 연결합니다(열린 터미널은 닫힙니다). OAuth App 의 callback URL 과 원격 CLI 의 SSH RemoteForward 도 새 포트로 바꾸세요.'
-            : '이 PC 에서만 접속할 수 있습니다(127.0.0.1).'}
-        </p>
+        {!hosted && (
+          <>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="grid gap-1">
+                <Label htmlFor={fid('port')}>포트</Label>
+                <Input id={fid('port')} inputMode="numeric" className="w-28" value={port} onChange={(e) => setPort(e.target.value)} aria-describedby={fid('port-hint')} />
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => void tauri.serverRestart()}>
+                다시 시작
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => void tauri.serverOpenLogDir()}>
+                로그 폴더 열기
+              </Button>
+            </div>
+            <p id={fid('port-hint')} className="text-xs text-muted-foreground">
+              {portChanged
+                ? '저장하면 서버를 새 포트로 다시 시작하고 다시 연결합니다(열린 터미널은 닫힙니다). OAuth App 의 callback URL 과 원격 CLI 의 SSH RemoteForward 도 새 포트로 바꾸세요.'
+                : '이 PC 에서만 접속할 수 있습니다(127.0.0.1).'}
+            </p>
+          </>
+        )}
       </section>
 
       <AppUpdateSection tauri={tauri} headingId={fid('app')} />

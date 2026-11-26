@@ -24,6 +24,7 @@ export function statusText(s: ServerStatus | null): string {
     case 'stopped':
       return '정지됨'
     case 'external':
+      if (s.url) return `연결됨 · ${s.url}`
       return '외부 서버 사용 중(개발 실행) — 저장한 값은 내장 서버를 쓸 때 적용됩니다'
   }
 }
