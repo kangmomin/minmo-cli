@@ -157,11 +157,11 @@
   .markdown ul.contains-task-list {
     @apply list-none pl-1;
   }
-  .markdown li.task-list-item > input[type='checkbox'] {
+  .markdown li.task-list-item input[type='checkbox'] {
     @apply mr-1.5 align-middle;
   }
   .markdown a {
-    @apply text-primary underline underline-offset-2;
+    @apply rounded-sm text-primary underline underline-offset-2 outline-hidden focus-visible:outline-solid focus-visible:outline-3 focus-visible:outline-offset-1 focus-visible:outline-ring;
   }
   .markdown :not(pre) > code {
     @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.9em];
@@ -186,7 +186,7 @@
   }
   /* Why: bg-muted 위에서는 흐린 글자(light 인용)·링크 색(ghostty)이 4.5:1 대비에 못 미친다 — 기본 글자색을 쓴다(링크는 밑줄로 구분) */
   .markdown blockquote :is(:not(pre) > code, pre, th),
-  .markdown :is(th, :not(pre) > code) a,
+  .markdown th a,
   .markdown a > code {
     @apply text-foreground;
   }

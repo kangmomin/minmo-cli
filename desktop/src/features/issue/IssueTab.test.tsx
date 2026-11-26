@@ -181,6 +181,44 @@ describe('IssueTab 엣지 케이스', () => {
     expect(screen.getByText('받은 본문')).toBeInTheDocument()
   })
 
+  it('EC-15 링크를 외부 브라우저로 열지 못하면 링크 옆에 알린다', async () => {
+    const { tauri } = renderBody('[문서](https://example.com/doc)')
+    tauri.openUrl.mockRejectedValueOnce(new Error('denied'))
+    fireEvent.click(await screen.findByRole('link', { name: '문서' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('브라우저를 열지 못했습니다')
+  })
+
+  it('EC-16 체크리스트의 체크박스는 항목 글자를 이름으로 가진다', async () => {
+    renderBody('- [ ] 할 일\n- [x] 한 일')
+    expect(await screen.findByRole('checkbox', { name: '할 일' })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: '한 일' })).toBeChecked()
+  })
+
+  it('EC-17 불러오는 중 안내는 항상 있는 status 영역에서 바뀐다 — [다시 시도] 중에도 알린다', async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    renderTab(() => (++calls === 1 ? Promise.reject(new GitHubError('network', { message: 'offline' })) : new Promise<GitHubIssueDetail>(() => {})))
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('')
+    await user.click(screen.getByRole('button', { name: '다시 시도' }))
+    expect(status).toHaveTextContent('불러오는 중…')
+  })
+
+  it('EC-11 본문 영역은 "이슈 본문" 영역이고, 표 영역 이름은 머리 칸 글자를 담는다(없으면 "표")', async () => {
+    renderBody(['| 이름 | 값 |', '| --- | --- |', '| a | 1 |', '', '|  |  |', '| --- | --- |', '| b | 2 |'].join('\n'))
+    expect(await screen.findByRole('group', { name: '표: 이름, 값' })).toHaveAttribute('tabindex', '0')
+    const region = screen.getByRole('region', { name: '이슈 본문' })
+    expect(region).toHaveAttribute('tabindex', '0')
+    expect(region.className).toContain('focus-visible:outline-ring')
+    expect(screen.getByRole('group', { name: '표' })).toHaveAttribute('tabindex', '0')
+  })
+
+  it('AC-03 링크는 외부 브라우저에서 열린다는 설명을 가진다', async () => {
+    renderBody('[문서](https://example.com/doc)')
+    expect(await screen.findByRole('link', { name: '문서' })).toHaveAccessibleDescription('외부 브라우저에서 엽니다')
+  })
+
   it('EC-14 조회가 실패한 뒤 다시 마운트해도(다른 탭에 갔다 돌아옴) 자동으로 다시 조회하지 않는다', async () => {
     const { github, deps, queryClient, unmount } = renderTab(async () => {
       throw new GitHubError('network', { message: 'offline' })
