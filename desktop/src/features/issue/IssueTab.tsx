@@ -1,9 +1,9 @@
 // Why: 이슈 탭(#116)은 GitHub 이슈 본문을 마크다운으로 렌더해 읽기 전용으로만 보인다
 import { useQuery } from '@tanstack/react-query'
-import { memo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import { Children, createContext, isValidElement, memo, useContext, useRef, useState } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import Markdown from 'react-markdown'
-import type { Components } from 'react-markdown'
+import type { Components, ExtraProps } from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 
@@ -15,8 +15,12 @@ import { queryKeys } from '../../lib/queryKeys'
 import { isLocalOwner } from '../../store/repos'
 import { githubErrorMessage } from '../tree/useTree'
 
-// Why: 링은 box-shadow 라 스크롤하면 자식의 배경(코드·표 머리)에 가려진다 — 내용 위에 그려지는 outline 으로 보인다
-const FOCUS_OUTLINE = 'outline-hidden focus-visible:outline-solid focus-visible:outline-3 focus-visible:-outline-offset-3 focus-visible:outline-ring'
+// Why: 링은 box-shadow 라 스크롤하면 자식의 배경(코드·표 머리)에 가려진다 — 내용 위에 그려지는 outline 으로 보인다.
+// 포커스 때만 실선 outline 을 둔다(고대비 모드에서도 outline 은 시스템 색으로 남고, 포커스가 없을 때 테두리가 생기지 않는다)
+const FOCUS_OUTLINE = 'outline-none focus-visible:outline-solid focus-visible:outline-3 focus-visible:-outline-offset-3 focus-visible:outline-ring'
+
+/** 링크를 열지 못한 주소를 본문 위에 알린다 — 알림이 표 머리·체크리스트 label 안에 섞이지 않게 한 곳에 둔다 */
+const OpenFailureContext = createContext<(href: string | null) => void>(() => undefined)
 
 export function IssueTab({ target }: { target: IssueTarget }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -43,13 +47,19 @@ function GitHubIssueBody({ owner, repo, number, focusContent }: { owner: string;
     retry: false,
     retryOnMount: false,
   })
+  const [openFailed, setOpenFailed] = useState<string | null>(null)
   const loading = issue.data === undefined && (!issue.isError || issue.isFetching)
   return (
     <>
-      {/* Why: live region 은 미리 있어야 바뀐 글자를 읽는다 — 영역은 항상 두고 글자만 바꾼다([다시 시도] 중에도 알린다) */}
-      <p role="status" className="text-sm text-muted-foreground empty:hidden">
+      {/* Why: live region 은 미리 접근성 트리에 있어야 바뀐 글자를 읽는다 — 영역은 항상 두고(숨기지 않음, 비면 높이 0) 글자만 바꾼다 */}
+      <p role="status" className="text-sm text-muted-foreground">
         {loading ? '불러오는 중…' : ''}
       </p>
+      {openFailed !== null && (
+        <p role="alert" className="mb-3 break-all text-sm text-destructive">
+          브라우저를 열지 못했습니다 — {openFailed}
+        </p>
+      )}
       {issue.data === undefined ? (
         issue.isError && (
           <div className="grid justify-items-start gap-3">
@@ -74,7 +84,9 @@ function GitHubIssueBody({ owner, repo, number, focusContent }: { owner: string;
       ) : isBlank(issue.data.body) ? (
         <p className="text-sm text-muted-foreground">본문이 없습니다.</p>
       ) : (
-        <MarkdownBody body={issue.data.body} />
+        <OpenFailureContext.Provider value={setOpenFailed}>
+          <MarkdownBody body={issue.data.body} />
+        </OpenFailureContext.Provider>
       )}
     </>
   )
@@ -96,28 +108,21 @@ const isBlank = (body: string) => body.replace(/<!--[\s\S]*?-->/g, '').trim() ==
 
 function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
   const { tauri } = useDeps()
-  const [failed, setFailed] = useState(false)
+  const reportOpenFailure = useContext(OpenFailureContext)
   // Why: 앱 창 안에서 이동하지 않게 http/https 만 외부 브라우저로 열고, 나머지는 글자로 둔다
   if (href === undefined || !/^https?:/i.test(href)) return <span>{children}</span>
   return (
-    <>
-      <a
-        href={href}
-        title="외부 브라우저에서 엽니다"
-        onClick={(e) => {
-          e.preventDefault()
-          setFailed(false)
-          void tauri.openUrl(href).catch(() => setFailed(true))
-        }}
-      >
-        {children}
-      </a>
-      {failed && (
-        <span role="alert" className="ml-1 text-destructive">
-          (브라우저를 열지 못했습니다)
-        </span>
-      )}
-    </>
+    <a
+      href={href}
+      title="외부 브라우저에서 엽니다"
+      onClick={(e) => {
+        e.preventDefault()
+        reportOpenFailure(null)
+        void tauri.openUrl(href).catch(() => reportOpenFailure(href))
+      }}
+    >
+      {children}
+    </a>
   )
 }
 
@@ -126,12 +131,16 @@ function MarkdownImage({ alt }: { alt?: string }) {
   return <span>이미지{alt ? `: ${alt}` : ''}</span>
 }
 
-// Why: GFM 체크리스트의 체크박스에는 이름이 없다 — 항목 글자와 label 로 묶어 이름을 준다
-function MarkdownListItem({ className, children }: { className?: string; children?: ReactNode }) {
-  if (!className?.split(' ').includes('task-list-item')) return <li className={className}>{children}</li>
+// Why: GFM 체크리스트의 체크박스에는 이름이 없다 — 항목 글자와 label 로 묶어 이름을 준다.
+// 하위 목록은 label 밖에 둔다(label 안에 label 이 생기거나 바깥 체크박스 이름에 하위 항목이 붙지 않게)
+function MarkdownListItem({ node: _node, className, children, ...rest }: ComponentProps<'li'> & ExtraProps) {
+  if (!className?.split(' ').includes('task-list-item')) return <li className={className} {...rest}>{children}</li>
+  const items = Children.toArray(children)
+  const nestedAt = items.findIndex((c) => isValidElement(c) && (c.type === 'ul' || c.type === 'ol'))
   return (
-    <li className={className}>
-      <label>{children}</label>
+    <li className={className} {...rest}>
+      <label>{nestedAt === -1 ? items : items.slice(0, nestedAt)}</label>
+      {nestedAt === -1 ? null : items.slice(nestedAt)}
     </li>
   )
 }

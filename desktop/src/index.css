@@ -161,7 +161,7 @@
     @apply mr-1.5 align-middle;
   }
   .markdown a {
-    @apply rounded-sm text-primary underline underline-offset-2 outline-hidden focus-visible:outline-solid focus-visible:outline-3 focus-visible:outline-offset-1 focus-visible:outline-ring;
+    @apply rounded-sm text-primary underline underline-offset-2 outline-none focus-visible:outline-solid focus-visible:outline-3 focus-visible:outline-offset-1 focus-visible:outline-ring;
   }
   .markdown :not(pre) > code {
     @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.9em];

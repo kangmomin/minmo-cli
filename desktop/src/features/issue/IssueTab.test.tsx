@@ -181,17 +181,27 @@ describe('IssueTab 엣지 케이스', () => {
     expect(screen.getByText('받은 본문')).toBeInTheDocument()
   })
 
-  it('EC-15 링크를 외부 브라우저로 열지 못하면 링크 옆에 알린다', async () => {
-    const { tauri } = renderBody('[문서](https://example.com/doc)')
+  it('EC-15 링크를 외부 브라우저로 열지 못하면 본문 위에 주소와 함께 알리고, 다시 열면 지운다', async () => {
+    const { tauri, container } = renderBody('- [ ] [문서](https://example.com/doc) 보기')
     tauri.openUrl.mockRejectedValueOnce(new Error('denied'))
     fireEvent.click(await screen.findByRole('link', { name: '문서' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('브라우저를 열지 못했습니다')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('브라우저를 열지 못했습니다')
+    expect(alert).toHaveTextContent('https://example.com/doc')
+    // 알림은 본문 밖(위)에 있어 체크박스 이름에 섞이지 않는다
+    expect(container.querySelector('.markdown [role="alert"]')).toBeNull()
+    expect(screen.getByRole('checkbox', { name: '문서 보기' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('link', { name: '문서' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
   })
 
-  it('EC-16 체크리스트의 체크박스는 항목 글자를 이름으로 가진다', async () => {
-    renderBody('- [ ] 할 일\n- [x] 한 일')
+  it('EC-16 체크리스트의 체크박스는 항목 글자를 이름으로 가진다 — 하위 목록은 이름에 넣지 않는다', async () => {
+    const { container } = renderBody('- [ ] 할 일\n- [x] 한 일\n- [ ] 바깥\n  - [ ] 안쪽')
     expect(await screen.findByRole('checkbox', { name: '할 일' })).not.toBeChecked()
     expect(screen.getByRole('checkbox', { name: '한 일' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: '바깥' })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: '안쪽' })).toBeInTheDocument()
+    expect(container.querySelector('label label')).toBeNull()
   })
 
   it('EC-17 불러오는 중 안내는 항상 있는 status 영역에서 바뀐다 — [다시 시도] 중에도 알린다', async () => {
