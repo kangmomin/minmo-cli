@@ -55,8 +55,9 @@ function GitHubIssueBody({ owner, repo, number, focusContent }: { owner: string;
       <p role="status" className="text-sm text-muted-foreground">
         {loading ? '불러오는 중…' : ''}
       </p>
+      {/* Why: 아래로 스크롤한 채 링크를 눌러도 보이게 스크롤 영역 위에 붙인다(배경은 그대로 background — 대비 유지) */}
       {openFailed !== null && (
-        <p role="alert" className="mb-3 break-all text-sm text-destructive">
+        <p role="alert" className="sticky top-0 z-10 mb-3 break-all bg-background py-1 text-sm text-destructive">
           브라우저를 열지 못했습니다 — {openFailed}
         </p>
       )}
