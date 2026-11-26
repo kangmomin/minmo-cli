@@ -24,6 +24,8 @@ export type ApiClientOptions = {
   baseUrl: string
   /** 요청 시점마다 호출된다. null 이면 Authorization 헤더 생략 */
   getToken: () => string | null
+  /** 설정 요청 시점마다 호출된다. 값이 있으면 X-Minmo-Pc 로 보내 그 PC 의 경로·스크립트를 읽고 쓴다. null 이면 함께 쓰는 값 */
+  getPcId?: () => string | null
   fetch?: typeof fetch
 }
 
@@ -143,6 +145,8 @@ type RequestOpts = {
   /** false 면 Authorization 생략(E0·E1 무인증) */
   auth?: boolean
   token?: string
+  /** 설정 요청 — PC 식별자가 있으면 헤더로 붙인다 */
+  pc?: boolean
 }
 
 export function createApiClient(opts: ApiClientOptions): ApiClient {
@@ -155,6 +159,8 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
       const token = r.token ?? opts.getToken()
       if (token) headers.Authorization = `Bearer ${token}`
     }
+    const pcId = r.pc ? opts.getPcId?.() : null
+    if (pcId) headers['X-Minmo-Pc'] = pcId
     const init: RequestInit = { method: r.method ?? 'GET', headers }
     if (r.body !== undefined) {
       headers['Content-Type'] = 'application/json; charset=utf-8'
@@ -189,9 +195,9 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
       if (res.ok || res.status === 401) return undefined
       throw await toApiError(res)
     },
-    getSettings: (scope) => request<SettingsRecord>(scopePath(scope)),
-    putSettings: (scope, input) => request<SettingsRecord>(scopePath(scope), { method: 'PUT', body: input }),
-    getEffective: (owner, repo) => request<Effective>(`/projects/${seg(owner)}/${seg(repo)}/settings/effective`),
+    getSettings: (scope) => request<SettingsRecord>(scopePath(scope), { pc: true }),
+    putSettings: (scope, input) => request<SettingsRecord>(scopePath(scope), { method: 'PUT', body: input, pc: true }),
+    getEffective: (owner, repo) => request<Effective>(`/projects/${seg(owner)}/${seg(repo)}/settings/effective`, { pc: true }),
     getNotes: (owner, repo, key) => request<Notes>(notesPath(owner, repo, key)),
     putNotes: (owner, repo, key, input) => {
       // baseUpdatedAt 생략(무조건 덮어쓰기)과 null("행이 없어야 함")을 구분 — 생략이면 키 자체를 보내지 않는다
