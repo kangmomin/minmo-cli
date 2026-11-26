@@ -1,4 +1,4 @@
-// 이슈 탭(#116) — GitHub 이슈 본문을 마크다운으로 렌더해 읽기 전용으로 보인다
+// Why: 이슈 탭(#116)은 GitHub 이슈 본문을 마크다운으로 렌더해 읽기 전용으로만 보인다
 import { useQuery } from '@tanstack/react-query'
 import { useRef } from 'react'
 import type { ReactNode } from 'react'
