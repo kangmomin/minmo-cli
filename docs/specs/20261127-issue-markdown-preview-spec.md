@@ -39,18 +39,19 @@
 
 ## 변경 사항 (To-Be)
 1. **새 파일 `desktop/src/features/issue/IssueTab.tsx`** — export 는 `IssueTab` 하나(react-refresh 규칙). 모듈 안 컴포넌트: `IssueTab`, `GitHubIssueBody`, `MarkdownBody`(memo), `MarkdownLink`, `MarkdownImage`, `MarkdownListItem`, `MarkdownTable`.
-   - `IssueTab({ target })` — 바깥 스크롤 영역이 `role="region"` `aria-label="이슈 본문"` + `tabIndex` 0. 포커스 표시는 안쪽 outline(`focus-visible:outline-ring`, `-outline-offset-3`) — box-shadow 링은 스크롤하면 자식 배경에 가려진다. 기본은 `outline-hidden`(Windows 고대비에서 보이게).
+   - `IssueTab({ target })` — 바깥 스크롤 영역이 `role="region"` `aria-label="이슈 본문"` + `tabIndex` 0. 포커스 표시는 안쪽 outline(`focus-visible:outline-ring`, `-outline-offset-3`) — box-shadow 링은 스크롤하면 자식 배경에 가려진다. 기본은 `outline-none` 이고 포커스(`focus-visible`) 때만 실선 outline 이다(고대비 모드에서도 outline 은 시스템 색으로 남고, 포커스가 없을 때 테두리가 생기지 않는다).
      - `target.number === null` → "★기타에는 이슈 본문이 없습니다." (조회 없음)
      - `isLocalOwner(target.owner)` → "로컬 저장소의 작업에는 본문이 없습니다." (조회 없음)
      - 그 외 → `GitHubIssueBody`
    - `GitHubIssueBody` — `useQuery({ queryKey: queryKeys.githubIssueBody(o, r, n), queryFn: () => github.getIssue(o, r, n), staleTime: Infinity, retry: false, retryOnMount: false })`. 다시 조회는 [다시 시도]·트리 [새로고침]으로만 한다.
-     - "불러오는 중…" 은 항상 있는 `role="status"` 영역의 글자만 바꿔 알린다(처음 조회와 [다시 시도] 중).
+     - "불러오는 중…" 은 항상 있는 `role="status"` 영역의 글자만 바꿔 알린다(처음 조회와 [다시 시도] 중). 영역은 숨기지 않는다(비면 높이 0) — 숨기면 접근성 트리에서 빠져 live region 이 동작하지 않는다.
+    - 링크를 열지 못하면 본문 위에 `role="alert"` "브라우저를 열지 못했습니다 — {주소}" 를 보인다(링크를 다시 누르면 지운다). 알림을 한 곳에 두어 표 머리·체크리스트 label 안에 섞이지 않게 한다.
     - 데이터가 없고 오류면 `role="alert"` 로 `githubErrorMessage(error)` + [다시 시도]. [다시 시도]는 먼저 포커스를 내용 영역으로 옮긴 뒤(`focusContent`) `refetch()` 한다(`disabled={isFetching}` — 버튼이 사라져도 포커스를 잃지 않게).
      - 본문이 비었거나 공백·HTML 주석(`<!-- -->`)뿐이면 "본문이 없습니다."
      - 그 외 → `MarkdownBody`(memo — 다시 조회 중 본문이 같으면 다시 파싱하지 않음): `<div className="markdown"><Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={…} skipHtml>`. 받은 뒤 다시 조회가 실패해도 받은 본문을 계속 보인다.
-   - `MarkdownLink` — `href` 가 `/^https?:/i` 이면 `<a title="외부 브라우저에서 엽니다">` + `onClick` 에서 `preventDefault` 후 `tauri.openUrl(href)`. 열지 못하면 링크 옆에 `role="alert"` "(브라우저를 열지 못했습니다)". 아니면 `<span>` 글자.
+   - `MarkdownLink` — `href` 가 `/^https?:/i` 이면 `<a title="외부 브라우저에서 엽니다">` + `onClick` 에서 `preventDefault` 후 `tauri.openUrl(href)`. 열지 못하면 본문 위 알림으로 주소를 알린다(`OpenFailureContext`). 아니면 `<span>` 글자.
    - `MarkdownImage` — `<img>`·링크 없이 글자 "이미지: {alt}".
-   - `MarkdownListItem` — GFM 체크리스트 항목(`li.task-list-item`)은 내용을 `<label>` 로 감싸 체크박스에 항목 글자를 이름으로 준다.
+   - `MarkdownListItem` — GFM 체크리스트 항목(`li.task-list-item`)은 첫 하위 목록 앞까지의 내용을 `<label>` 로 감싸 체크박스에 항목 글자를 이름으로 준다. 하위 목록은 label 밖에 둔다(label 안의 label·이름 오염 방지). 다른 li 속성은 그대로 넘긴다.
   - `MarkdownTable` — `<div tabIndex={0} role="group" aria-label="표: {머리 칸 글자, …}" className="overflow-x-auto …">` 로 감싼다(머리 칸 글자가 없으면 "표"). 넓은 표를 키보드로 가로 스크롤한다(랜드마크가 늘지 않게 region 대신 group). 포커스 표시는 내용 영역과 같은 outline.
 2. **`lib/queryKeys.ts`** — `githubIssueBody: (owner, repo, number) => ['github', 'issueBody', owner, repo, number]`. 수정 대화상자의 `githubIssue` 와 따로 둔다(대화상자는 열 때마다 새로 받아야 한다, #64). `['github']` 접두라 트리 [새로고침]이 같이 다시 받는다.
 3. **`store/ui.ts`** — `WorkTab = 'terminal' | 'changes' | 'files' | 'notes' | 'issue'`. persist 버전·migrate 변경 없음(`merge` 가 tab 을 검사하지 않음, 값 추가만).
@@ -63,7 +64,7 @@
 7. **의존성** — `react-markdown` ^10.1.0, `remark-gfm` ^4.0.1, `remark-breaks` ^4.0.0 (`desktop/package.json`).
 8. **문서** — README `## 이슈 탭` 절.
 
-상태 설계: 서버 상태는 React Query `githubIssueBody` 키 1개(본문). 전역 UI 는 `tab` 값에 `'issue'` 추가. 컴포넌트 로컬 상태는 `ref` 하나와 링크별 열기 실패 여부.
+상태 설계: 서버 상태는 React Query `githubIssueBody` 키 1개(본문). 전역 UI 는 `tab` 값에 `'issue'` 추가. 컴포넌트 로컬 상태는 `ref` 하나와 열지 못한 링크 주소 하나.
 
 ## 정상 흐름
 | ID | 시나리오 | 보장되는 결과 |
@@ -91,8 +92,8 @@
 | EC-12 | 다른 이슈로 바꾼다 | 바꾼 이슈의 본문을 보인다(이전 본문이 남지 않음) |
 | EC-13 | 본문을 받은 뒤 다시 조회(트리 [새로고침])가 실패 | 받은 본문을 계속 보인다 |
 | EC-14 | 조회가 실패한 뒤 다른 탭에 갔다가 [이슈] 탭으로 돌아온다 | 자동으로 다시 조회하지 않는다(오류 문구 + [다시 시도] 유지). 오류 문구는 다시 `alert` 로 읽힌다 — 돌아온 사용자에게 상태를 다시 알리는 의도된 동작 |
-| EC-15 | 링크를 외부 브라우저로 열지 못함(`openUrl` 실패) | 링크 옆에 `role="alert"` "(브라우저를 열지 못했습니다)" |
-| EC-16 | GFM 체크리스트 | 체크박스의 접근 이름이 항목 글자다(`label` 로 묶음) |
+| EC-15 | 링크를 외부 브라우저로 열지 못함(`openUrl` 실패) | 본문 위에 `role="alert"` "브라우저를 열지 못했습니다 — {주소}". 알림은 본문(체크리스트 이름 등)에 섞이지 않고, 링크를 다시 누르면 지운다 |
+| EC-16 | GFM 체크리스트 | 체크박스의 접근 이름이 항목 글자다(`label` 로 묶음). 하위 목록은 이름에 넣지 않고 label 안에 label 이 생기지 않는다 |
 | EC-17 | 처음 조회·[다시 시도] 중 | 항상 있는 `role="status"` 영역이 "불러오는 중…" 으로 바뀐다(끝나면 비움) |
 
 권한·소유권: 해당 없음 — 로그인·소유권 규칙을 바꾸지 않는다. 본문 조회는 기존 `github.getIssue` 를 그대로 쓴다.
