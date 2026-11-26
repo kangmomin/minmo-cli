@@ -118,3 +118,70 @@
     margin: 0;
   }
 }
+
+/* 이슈 탭의 마크다운 본문(#116). Why: typography 플러그인 없이 테마 토큰만 써서 모든 테마에 맞춘다 */
+@layer components {
+  .markdown {
+    @apply text-sm leading-relaxed break-words;
+  }
+  .markdown > * + * {
+    @apply mt-3;
+  }
+  .markdown :is(li, blockquote) > * + * {
+    @apply mt-2;
+  }
+  .markdown :is(h1, h2, h3, h4, h5, h6) {
+    @apply mt-5 font-semibold leading-snug first:mt-0;
+  }
+  .markdown h1 {
+    @apply border-b pb-1 text-xl;
+  }
+  .markdown h2 {
+    @apply border-b pb-1 text-lg;
+  }
+  .markdown h3 {
+    @apply text-base;
+  }
+  .markdown :is(h4, h5, h6) {
+    @apply text-sm;
+  }
+  .markdown ul {
+    @apply list-disc pl-6;
+  }
+  .markdown ol {
+    @apply list-decimal pl-6;
+  }
+  .markdown li + li {
+    @apply mt-1;
+  }
+  .markdown ul.contains-task-list {
+    @apply list-none pl-1;
+  }
+  .markdown li.task-list-item > input[type='checkbox'] {
+    @apply mr-1.5 align-middle;
+  }
+  .markdown a {
+    @apply text-primary underline underline-offset-2;
+  }
+  .markdown :not(pre) > code {
+    @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.9em];
+  }
+  .markdown pre {
+    @apply whitespace-pre-wrap break-words rounded bg-muted p-3 font-mono text-xs;
+  }
+  .markdown blockquote {
+    @apply border-l-4 pl-3 text-muted-foreground;
+  }
+  .markdown table {
+    @apply border-collapse;
+  }
+  .markdown :is(th, td) {
+    @apply border px-2 py-1 text-left;
+  }
+  .markdown th {
+    @apply bg-muted font-semibold;
+  }
+  .markdown hr {
+    @apply my-4 border-t;
+  }
+}

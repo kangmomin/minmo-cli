@@ -24,6 +24,8 @@ export const queryKeys = {
   githubIssueSearch: (owner: string, repo: string, query: string) => ['github', 'issueSearch', owner, repo, query] as const,
   /** 이슈 하나(본문 포함) — 수정 화면을 열 때마다 새로 받는다 */
   githubIssue: (owner: string, repo: string, number: number) => ['github', 'issue', owner, repo, number] as const,
+  /** 이슈 탭이 보이는 본문. Why: 수정 화면은 열 때마다 새로 받아야 하므로(#64) githubIssue 와 따로 둔다 */
+  githubIssueBody: (owner: string, repo: string, number: number) => ['github', 'issueBody', owner, repo, number] as const,
   githubSource: ['github', 'source'] as const,
   // 로컬 git 조회(서버 캐시 아님)
   gitAll: ['git'] as const,
