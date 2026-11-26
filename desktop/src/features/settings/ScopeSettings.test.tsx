@@ -16,8 +16,8 @@ import { LOCAL_OWNER, NICKNAME_MAX, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { apiError, createFakeApi } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { SettingsDialog } from './SettingsDialog'
-import type { PreviewIssue } from './SettingsDialog'
+import { SettingsDialog } from './ScopeSettings'
+import type { PreviewIssue } from './ScopeSettings'
 
 const GLOBAL: SettingsRecord = {
   branchTemplate: 'issue/{number}-{slug}',

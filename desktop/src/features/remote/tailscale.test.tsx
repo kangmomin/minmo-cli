@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { RemoteStatus, TailscaleLogEvent, TailscaleStatus } from '../../lib/tauri'
 import { TAILSCALE_MISSING, createFakeTauri, deferred } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { RemoteAccessDialog, shareableAddress, withHttps } from './RemoteAccessDialog'
+import { RemoteAccessDialog, shareableAddress, withHttps } from './RemoteAccessSettings'
 import { TailscaleSection, appendLog } from './TailscaleSection'
 
 const NEEDS_LOGIN: TailscaleStatus = { ...TAILSCALE_MISSING, state: 'needs-login', install: null }

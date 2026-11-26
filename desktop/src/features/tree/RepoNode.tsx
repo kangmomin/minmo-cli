@@ -24,7 +24,7 @@ import { baseDirOf, baseRepoOf, repoAliasOf, useHostsStore, useOriginFolder } fr
 import { isLocalOwner, useRepoFullNameIfNicknamed, useRepoShortName, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
-import type { PreviewIssue } from '../settings/SettingsDialog'
+import type { PreviewIssue } from '../settings/ScopeSettings'
 import { shrinkBadge } from './badgeClasses'
 import { BaseRepoDialog } from './BaseRepoDialog'
 import { issueStatuses, statusRank, useAgentStore } from '../agents/agentStore'

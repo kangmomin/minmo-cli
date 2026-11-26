@@ -13,7 +13,7 @@ import { useUiStore } from '../../store/ui'
 import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { leaf } from '../terminal/panes'
-import { RemoteAccessDialog, shareableAddress } from './RemoteAccessDialog'
+import { RemoteAccessDialog, shareableAddress } from './RemoteAccessSettings'
 import { defaultDeviceName, pairErrorMessage, reloadAllowed } from './RemoteGate'
 import { runRemoteCall } from './useRemoteHost'
 

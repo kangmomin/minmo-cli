@@ -17,7 +17,7 @@ import { createFakeApi, createFakeGitHub, createFakeTauri, deferred } from '../.
 import { makeDeps, makeWrapper, renderWithDeps } from '../../test/render'
 import { Sidebar } from '../tree/Sidebar'
 import { useRefreshTree } from '../tree/useTree'
-import { HostsDialog } from './HostsDialog'
+import { HostsDialog } from './HostsSettings'
 
 const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: true }
 const cfg = (alias: string, hostName: string | null = null, user: string | null = null): SshHostInfo => ({ alias, hostName, user, source: 'config', port: null, identityFile: null })

@@ -30,13 +30,14 @@ export function ServerSettingsDialog({ tauri = getTauri() }: ServerSettingsDialo
           <DialogTitle>서버 설정</DialogTitle>
           <DialogDescription>minmo 서버는 앱과 함께 이 PC 에서 실행됩니다. 원격 CLI 도 SSH 로 이 서버를 씁니다.</DialogDescription>
         </DialogHeader>
-        {open && <ServerSettingsBody tauri={tauri} onDone={() => setOpen(false)} />}
+        {open && <ServerSettingsForm tauri={tauri} onDone={() => setOpen(false)} />}
       </DialogContent>
     </Dialog>
   )
 }
 
-function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void }) {
+/** 서버·앱 설정 폼 — onDone 이 있으면 대화상자(저장·취소 후 닫음)에서 쓴다 */
+export function ServerSettingsForm({ tauri, onDone }: { tauri: TauriApi; onDone?: () => void }) {
   const uid = useId()
   const fid = (name: string) => `${uid}-${name}`
   const status = useServerStore((s) => s.status)
@@ -94,14 +95,14 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
     if (parsedPort !== loaded.port) input.port = parsedPort
     if (closeAction !== loaded.closeAction) input.closeAction = closeAction
     if (Object.keys(input).length === 0) {
-      onDone()
+      onDone?.()
       return
     }
     setSaving(true)
     try {
       // 포트가 바뀌면 서버가 새 포트로 다시 시작되고, 앱(App)이 running 을 보고 새 주소로 다시 붙는다
       await tauri.serverSettingsSave(input)
-      onDone()
+      onDone?.()
     } catch (err) {
       setError(`저장하지 못했습니다: ${errorText(err)}`)
     } finally {
@@ -230,7 +231,7 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
       )}
 
       <DialogFooter>
-        <Button type="button" variant="ghost" onClick={onDone}>
+        <Button type="button" variant="ghost" onClick={() => onDone?.()}>
           취소
         </Button>
         <Button type="submit" disabled={saving}>

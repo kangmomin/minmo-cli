@@ -60,12 +60,6 @@ function scopeTitle(scope: SettingsScope, repoLabel: string): string {
 }
 
 export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: SettingsDialogProps) {
-  const project = scope.kind === 'project' && !isLocalOwner(scope.owner) ? scope : null
-  // 연결 호스트를 정한 저장소는 원본 위치·경로 미리보기를 그 호스트 기준으로 보인다. 정하지 않았으면 바깥(작업 호스트) 그대로
-  const bound = useHostsStore((s) => (project ? repoAliasOf(s, project.owner, project.repo) : undefined))
-  const outer = useHost().alias
-  const alias = bound === undefined ? outer : bound
-  const status = useHostStatus(bound ?? null)
   // 별칭을 바꾸면 제목도 바로 바뀌게 구독한다
   const repoLabel = useReposStore((s) => (scope.kind === 'project' ? repoLabelOf(s, scope.owner, scope.repo) : ''))
   return (
@@ -79,27 +73,47 @@ export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: Sett
               : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'}
           </DialogDescription>
         </DialogHeader>
-        {open && scope.kind === 'global' && <PairSyncSection />}
-        {open && scope.kind === 'project' && <RepoNicknameSection key={repoKey(scope.owner, scope.repo)} owner={scope.owner} repo={scope.repo} />}
-        {open && project && <RepoHostSection owner={project.owner} repo={project.repo} />}
-        {open &&
-          project &&
-          (status.ready ? (
-            <HostScope alias={alias}>
-              <BaseRepoSection owner={project.owner} repo={project.repo} />
-            </HostScope>
-          ) : (
-            // 연결 호스트에 닿기 전에는 그 호스트의 원본 위치를 보일 수 없다 — 아래 서버 설정은 호스트와 관계없으므로 그대로 쓴다
-            <HostStatusNotice alias={bound ?? ''} status={status} className="grid gap-2 rounded border p-3 text-sm" testId="settings-host-status" />
-          ))}
-        {/* 연결 호스트를 바꿔도 폼이 다시 마운트되지 않게(입력이 남게) 항상 같은 HostScope 아래에 둔다. 연결 전에는 미리보기를 감춘다 */}
-        {open && (
-          <HostScope alias={alias}>
-            <SettingsBody scope={scope} previewIssue={status.ready ? (previewIssue ?? null) : null} onSaved={() => onOpenChange(false)} />
-          </HostScope>
-        )}
+        {open && <ScopeSettings scope={scope} previewIssue={previewIssue} onSaved={() => onOpenChange(false)} />}
       </DialogContent>
     </Dialog>
+  )
+}
+
+export interface ScopeSettingsProps {
+  scope: SettingsScope
+  /** 하단 미리보기 기준 이슈(브랜치명·해석된 worktree 경로) */
+  previewIssue?: PreviewIssue | null
+  /** 폼 저장에 성공했을 때 */
+  onSaved?: () => void
+}
+
+/** 범위(전역·조직·프로젝트) 하나의 설정 — 이 PC 에 저장하는 값(별칭·연결 호스트·원본 위치)과 서버에 저장하는 폼 */
+export function ScopeSettings({ scope, previewIssue, onSaved }: ScopeSettingsProps) {
+  const project = scope.kind === 'project' && !isLocalOwner(scope.owner) ? scope : null
+  // 연결 호스트를 정한 저장소는 원본 위치·경로 미리보기를 그 호스트 기준으로 보인다. 정하지 않았으면 바깥(작업 호스트) 그대로
+  const bound = useHostsStore((s) => (project ? repoAliasOf(s, project.owner, project.repo) : undefined))
+  const outer = useHost().alias
+  const alias = bound === undefined ? outer : bound
+  const status = useHostStatus(bound ?? null)
+  return (
+    <>
+      {scope.kind === 'global' && <PairSyncSection />}
+      {scope.kind === 'project' && <RepoNicknameSection key={repoKey(scope.owner, scope.repo)} owner={scope.owner} repo={scope.repo} />}
+      {project && <RepoHostSection owner={project.owner} repo={project.repo} />}
+      {project &&
+        (status.ready ? (
+          <HostScope alias={alias}>
+            <BaseRepoSection owner={project.owner} repo={project.repo} />
+          </HostScope>
+        ) : (
+          // 연결 호스트에 닿기 전에는 그 호스트의 원본 위치를 보일 수 없다 — 아래 서버 설정은 호스트와 관계없으므로 그대로 쓴다
+          <HostStatusNotice alias={bound ?? ''} status={status} className="grid gap-2 rounded border p-3 text-sm" testId="settings-host-status" />
+        ))}
+      {/* 연결 호스트를 바꿔도 폼이 다시 마운트되지 않게(입력이 남게) 항상 같은 HostScope 아래에 둔다. 연결 전에는 미리보기를 감춘다 */}
+      <HostScope alias={alias}>
+        <SettingsBody scope={scope} previewIssue={status.ready ? (previewIssue ?? null) : null} onSaved={() => onSaved?.()} />
+      </HostScope>
+    </>
   )
 }
 

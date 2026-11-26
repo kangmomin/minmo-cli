@@ -29,7 +29,7 @@ export function CliAccessDialog({ open, onOpenChange }: CliAccessDialogProps) {
             원격 서버에 minmo CLI 를 설치하고 SSH 로 접속해 이슈·worktree 를 관리합니다. 원격 CLI 는 SSH 역터널로 이 PC 의 서버를 씁니다.
           </DialogDescription>
         </DialogHeader>
-        {open && <CliAccessBody />}
+        {open && <CliAccessSettings />}
       </DialogContent>
     </Dialog>
   )
@@ -42,7 +42,8 @@ function remaining(expiresAt: string, now: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-function CliAccessBody() {
+/** 원격 CLI 접속 설정 본문 — 로그인 코드·SSH 설정·로그인된 기기 */
+export function CliAccessSettings() {
   const { api } = useDeps()
   const uid = useId()
   const offline = useSessionStore((s) => s.status === 'offline')

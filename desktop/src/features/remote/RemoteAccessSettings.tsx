@@ -53,13 +53,14 @@ export function RemoteAccessDialog({ open, onOpenChange }: { open: boolean; onOp
           <DialogTitle>원격 접속</DialogTitle>
           <DialogDescription>다른 PC 나 휴대폰의 브라우저에서 이 PC 의 minmo 를 씁니다. 등록한 기기는 이 PC 의 터미널을 조작할 수 있으니, 내 기기만 등록하세요.</DialogDescription>
         </DialogHeader>
-        {open && <Body />}
+        {open && <RemoteAccessSettings />}
       </DialogContent>
     </Dialog>
   )
 }
 
-function Body() {
+/** 원격 접속 설정 본문 — 켜기·접속 주소·기기 등록·Tailscale·등록된 기기·다른 PC */
+export function RemoteAccessSettings() {
   const uid = useId()
   const { tauri } = useBaseDeps()
   const [status, setStatus] = useState<RemoteStatus | null>(null)

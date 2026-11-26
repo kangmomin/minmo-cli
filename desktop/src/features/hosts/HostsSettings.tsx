@@ -30,7 +30,7 @@ export function HostsDialog({ open, onOpenChange }: HostsDialogProps) {
             ssh 로 접속해 그 호스트에서 worktree 를 만들고 터미널·파일을 씁니다. ~/.ssh/config 의 Host 를 고르거나 아래에서 직접 등록하세요. 원격에는 git 이 있어야 합니다.
           </DialogDescription>
         </DialogHeader>
-        {open && <HostsBody />}
+        {open && <HostsSettings />}
       </DialogContent>
     </Dialog>
   )
@@ -43,7 +43,8 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 const EMPTY: SshHostInput = { alias: '', hostName: '', user: '', port: 22, identityFile: null }
 
-function HostsBody() {
+/** 원격 호스트 설정 본문 — ~/.ssh/config 의 Host 와 직접 등록한 호스트 */
+export function HostsSettings() {
   const { tauri, platform } = useBaseDeps()
   const aliases = useHostsStore((s) => s.aliases)
   const add = useHostsStore((s) => s.add)

@@ -21,7 +21,7 @@ import { createFakeApi, createFakeGitHub, createFakeTauri, deferred } from '../.
 import { makeDeps, makeWrapper, renderWithDeps } from '../../test/render'
 import { WorktreeProvider } from '../issue/useWorktree'
 import { consumeHash, deepLinkAlias, useDeepLinkOpen } from '../remote/deepLink'
-import { SettingsDialog } from '../settings/SettingsDialog'
+import { SettingsDialog } from '../settings/ScopeSettings'
 import { useHasWorktree } from './useVisibleRepos'
 
 const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: false }

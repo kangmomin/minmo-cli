@@ -10,7 +10,7 @@ import { createAppQueryClient } from '../../app/createDeps'
 import { useSessionStore } from '../../store/session'
 import { apiError, createFakeApi } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { SettingsDialog } from './SettingsDialog'
+import { SettingsDialog } from './ScopeSettings'
 
 const GLOBAL: SettingsRecord = {
   branchTemplate: 'issue/{number}-{slug}',

@@ -18,7 +18,7 @@ import { groupRows, rowKey } from '../agents/overview'
 import type { AgentRow } from '../agents/overview'
 import { consumeHash, parseHash, takePendingOpen } from './deepLink'
 import { MAX_PEER_ROWS, NOTIFY_MAX, NOTIFY_WINDOW_MS, allowNotify, forPublish, newlyUrgent, parsePeerRows, usePeerAgents, usePeerAgentsStore } from './peerAgents'
-import { RemoteAccessDialog } from './RemoteAccessDialog'
+import { RemoteAccessDialog } from './RemoteAccessSettings'
 
 const PEER: Peer = { id: 'p1', name: '회사 PC', url: 'http://100.64.0.5:8790', token: 'tok' }
 const TARGET: IssueTarget = { owner: 'acme', repo: 'app', key: '42', number: 42, title: 'Add login' }

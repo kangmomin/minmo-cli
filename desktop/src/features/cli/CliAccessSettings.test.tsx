@@ -8,7 +8,7 @@ import type { Sessions } from '@minmo/api-client'
 import { useSessionStore } from '../../store/session'
 import { createFakeApi } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { CliAccessDialog } from './CliAccessDialog'
+import { CliAccessDialog } from './CliAccessSettings'
 
 const SESSIONS: Sessions = {
   sessions: [

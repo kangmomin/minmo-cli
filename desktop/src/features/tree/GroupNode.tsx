@@ -8,7 +8,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { useHost } from '../../app/host'
 import { isLocalOwner, splitFullName, useReposStore } from '../../store/repos'
 import { useUiStore } from '../../store/ui'
-import type { PreviewIssue } from '../settings/SettingsDialog'
+import type { PreviewIssue } from '../settings/ScopeSettings'
 import { GroupDialog } from './GroupDialog'
 import { useOpenWindow } from './openWindow'
 import { OpenWindowButton } from './OpenWindowButton'
