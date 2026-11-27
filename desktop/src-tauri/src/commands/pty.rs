@@ -1339,8 +1339,8 @@ pub struct WindowsPty {
 
 /// 터미널이 Windows ConPTY 위에서 돌면 그 정보를, 아니면 None 을 돌려준다.
 /// xterm 은 이 값으로 ConPTY 와 같은 방식으로 크기를 바꾼다(행이 늘면 스크롤백을 끌어오지 않고 아래에 빈 행을 둔다).
-/// 원격(ssh) 터미널도 이 PC 의 ConPTY 를 거친다. portable-pty 는 함께 넣은 conpty.dll 이 없으면 OS 의 ConPTY 를 쓰므로
-/// OS 빌드 번호가 곧 ConPTY 의 버전이다
+/// 원격(ssh) 터미널도 이 PC 의 ConPTY 를 거친다. 빌드 번호는 OS 의 것이다 — portable-pty 는 DLL 검색 경로(PATH 포함)에서
+/// conpty.dll 을 찾으면(예: WezTerm 의 것) 그것을 쓰므로, 그때는 실제 ConPTY 의 버전과 다를 수 있다
 #[tauri::command]
 pub fn pty_windows() -> Option<WindowsPty> {
     windows_build().map(|build_number| WindowsPty {
