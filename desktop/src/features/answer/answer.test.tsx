@@ -578,6 +578,8 @@ describe('Jev 판정(AC-10 · EC-11)', () => {
     await first.user.click(toggle())
     expect(screen.getByTestId('jev-verdict')).toBeInTheDocument()
     first.unmount()
+    // 보기 상태는 store 에 남는다 — 기본 보기로 되돌려야 아래 토글이 답변 모드를 켠다
+    useUiStore.setState({ viewMode: 'normal' })
     const remote = renderApp({ runtime: 'remote', jevKeyStatus: async () => true })
     await remote.user.click(toggle())
     expect(summary()).toBeInTheDocument()
