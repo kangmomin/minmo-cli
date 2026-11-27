@@ -113,6 +113,17 @@ describe('SummarySettingsSection', () => {
     if (!error) expect(tauri.jevKeySet).not.toHaveBeenCalled()
   })
 
+  it('AC-11 대화상자의 [저장]: 키 칸에 공백만 있으면 키는 저장하지 않고 서버 설정을 저장하고 닫는다', async () => {
+    const { tauri } = setup()
+    await section()
+    fireEvent.change(screen.getByLabelText('포트'), { target: { value: '18787' } })
+    fireEvent.change(keyInput(), { target: { value: '   ' } })
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(useServerStore.getState().settingsOpen).toBe(false))
+    expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ port: 18787 })
+    expect(tauri.jevKeySet).not.toHaveBeenCalled()
+  })
+
   it('AC-11 취소한 뒤 다시 열면 키 입력 칸은 비어 있다(취소한 키가 남지 않는다)', async () => {
     const { tauri } = setup()
     await section()

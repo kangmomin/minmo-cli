@@ -95,7 +95,8 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
       setError('포트는 1024~65535 사이의 숫자여야 합니다')
       return
     }
-    if (jevDraft !== '') {
+    // Why: 공백만 있으면 저장할 키가 없다 — 키 검사에 막혀 서버 설정까지 저장하지 못하지 않게 건너뛴다.
+    if (jevDraft.trim() !== '') {
       setSaving(true)
       try {
         await saveJevKey(tauri, jevDraft)
@@ -105,8 +106,8 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
       } finally {
         setSaving(false)
       }
-      setJevDraft('')
     }
+    setJevDraft('')
     const input: ServerSettingsInput = {}
     if (parsedPort !== loaded.port) input.port = parsedPort
     if (closeAction !== loaded.closeAction) input.closeAction = closeAction
