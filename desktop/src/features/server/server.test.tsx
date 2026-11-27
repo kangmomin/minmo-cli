@@ -1,17 +1,18 @@
 // 내장 서버 — 서버 설정·시작 화면·창 닫기·상태 구독·포트 연동
-import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { OfflineBanner } from '../../components/OfflineBanner'
 import { portOf, serverBaseUrl } from '../../lib/api'
-import type { ServerStatus } from '../../lib/tauri'
+import type { ServerSettings, ServerStatus, TauriApi, UpdateInfo } from '../../lib/tauri'
 import { useServerStore } from '../../store/server'
 import { useSessionStore } from '../../store/session'
-import { SERVER_SETTINGS, createFakeTauri } from '../../test/fakes'
+import { useUpdateStore } from '../../store/update'
+import { SERVER_SETTINGS, createFakeTauri, deferred, flush } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { CloseDialog } from '../app/CloseDialog'
 import { sshConfigExample, sshWindowsNote } from '../cli/sshConfig'
-import { ServerSettingsDialog } from './ServerSettingsDialog'
+import { ServerSettingsDialog, ServerSettingsForm } from './ServerSettingsDialog'
 import { ServerStartScreen } from './ServerStartScreen'
 import { parsePort, statusText } from './serverSettings'
 import { useServerStatusSubscription } from './useServerStatus'
@@ -21,6 +22,7 @@ const running: ServerStatus = { state: 'running', port: 8787, message: null }
 beforeEach(() => {
   useServerStore.setState(useServerStore.getInitialState(), true)
   useSessionStore.setState(useSessionStore.getInitialState(), true)
+  useUpdateStore.setState(useUpdateStore.getInitialState(), true)
 })
 
 describe('helpers', () => {
@@ -102,6 +104,84 @@ describe('ServerSettingsDialog', () => {
     expect(useServerStore.getState().settingsOpen).toBe(true)
   })
 
+  it('AC-15 서버·앱 항목만 다룬다 — 글자 크기·에이전트 알림·AI 사용량은 없다', async () => {
+    open()
+    expect(await screen.findByLabelText('포트')).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog', { name: '서버 설정' })
+    expect(within(dialog).getByRole('button', { name: '업데이트 확인' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('radiogroup', { name: '창을 닫을 때' })).toBeInTheDocument()
+    expect(within(dialog).queryAllByRole('spinbutton')).toHaveLength(0)
+    expect(within(dialog).queryAllByRole('checkbox')).toHaveLength(0)
+    expect(within(dialog).queryAllByText(/글자 크기/)).toHaveLength(0)
+    expect(within(dialog).queryAllByText(/에이전트 알림/)).toHaveLength(0)
+    expect(within(dialog).queryAllByText(/AI 사용량/)).toHaveLength(0)
+  })
+})
+
+describe('ServerSettingsForm — 설정 화면(onDone 없음)', () => {
+  const NEXT: UpdateInfo = { version: '0.4.1', currentVersion: '0.4.0', notes: null, date: null }
+
+  /** onDone 없이 띄운다. 저장은 받은 값을 반영한 설정을 돌려준다(lib/tauri.mock.ts 의 serverSettingsSave 와 같은 방식) */
+  function page(overrides: Partial<TauriApi> = {}) {
+    let current: ServerSettings = SERVER_SETTINGS
+    const fake = createFakeTauri({
+      serverSettingsGet: async () => current,
+      serverSettingsSave: async (input) => {
+        current = { ...current, ...input }
+        return current
+      },
+      ...overrides,
+    })
+    useServerStore.setState({ status: running })
+    render(<ServerSettingsForm tauri={fake.tauri} />)
+    return { tauri: fake.tauri }
+  }
+
+  it('AC-14 창 닫기만 바꿔 저장하면 저장했습니다 — 이후 비교는 serverSettingsSave 가 돌려준 값 기준', async () => {
+    const { tauri } = page()
+    fireEvent.click(await screen.findByLabelText('트레이로 최소화(서버 유지)'))
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+    expect((await screen.findByText('저장했습니다')).closest('[role="status"]')).not.toBeNull()
+    expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ closeAction: 'tray' })
+    // 돌려받은 값이 새 기준 — 그대로 다시 [저장] 하면 저장하지 않는다
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+    await flush()
+    expect(tauri.serverSettingsSave).toHaveBeenCalledTimes(1)
+    // 처음 값(매번 묻기)으로 되돌리면 바뀐 값으로 본다
+    fireEvent.click(screen.getByLabelText('매번 묻기'))
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(tauri.serverSettingsSave).toHaveBeenCalledTimes(2))
+    expect(tauri.serverSettingsSave).toHaveBeenLastCalledWith({ closeAction: 'ask' })
+  })
+
+  it('AC-14 바뀐 값이 없으면 [저장] 은 아무것도 하지 않는다', async () => {
+    const { tauri } = page()
+    fireEvent.click(await screen.findByRole('button', { name: '저장' }))
+    await flush()
+    expect(tauri.serverSettingsSave).not.toHaveBeenCalled()
+    expect(screen.queryByText('저장했습니다')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByLabelText('포트')).toHaveValue('8787')
+  })
+
+  it('EC-28 저장 중에는 [저장] 이 disabled, 저장하면 포커스를 [저장] 으로 되돌린다', async () => {
+    const save = deferred<ServerSettings>()
+    const { tauri } = page({ serverSettingsSave: () => save.promise })
+    fireEvent.click(await screen.findByLabelText('트레이로 최소화(서버 유지)'))
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+    expect(screen.getByRole('button', { name: '저장' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '저장' })).not.toHaveFocus()
+    await act(async () => save.resolve({ ...SERVER_SETTINGS, closeAction: 'tray' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '저장' })).toHaveFocus())
+    expect(screen.getByRole('button', { name: '저장' })).toBeEnabled()
+    expect(tauri.serverSettingsSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('EC-31 [업데이트 확인] 결과 새 버전이 있으면 설정을 닫은 뒤 화면 위 안내에서 설치하라고 알린다', async () => {
+    page({ appUpdateCheck: async () => NEXT })
+    fireEvent.click(await screen.findByRole('button', { name: '업데이트 확인' }))
+    expect(await screen.findByText('새 버전 v0.4.1 이 있습니다 — 설정을 닫으면 화면 위 안내에서 설치할 수 있습니다')).toBeInTheDocument()
+  })
 })
 
 describe('ServerStartScreen', () => {

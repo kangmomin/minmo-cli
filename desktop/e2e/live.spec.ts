@@ -18,7 +18,7 @@ async function liveLogin(page: Page): Promise<string> {
   await expect(page.getByTestId('device-user-code')).toHaveText('MOCK-CODE')
   // 승인 페이지 주소는 githubmock 의 것(loopback) — 앱은 이 주소를 브라우저로 연다
   await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__?.openedUrls[0] ?? '')).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/login\/device$/)
-  await expect(page.getByRole('button', { name: '전역 설정' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: '설정', exact: true })).toBeVisible({ timeout: 15_000 })
   await expect(page).toHaveURL(/\/$/)
   const session = await page.evaluate(() => window.__MINMO_MOCK__?.keychain['minmo.session'] ?? '')
   expect(session, '키체인에 세션 없음').toBeTruthy()
@@ -48,13 +48,17 @@ test('실서버: 로그인 → 트리 → 프로젝트 설정 저장 → 메모 
   // 3) 프로젝트 설정 저장(실서버 PUT) — 키보드 접근 가능한 ⚙ 버튼 경로
   const template = `feat/{number}-live${Date.now() % 100000}`
   await page.getByRole('button', { name: 'widgets 프로젝트 설정' }).click()
-  const dialog = page.getByRole('dialog')
+  const dialog = page.getByRole('dialog', { name: '설정', exact: true })
   await dialog.getByLabel('브랜치 템플릿').fill(template)
   await dialog.getByRole('button', { name: '저장' }).click()
-  await expect(dialog).toBeHidden()
+  await expect(dialog.getByText('저장했습니다', { exact: true })).toBeVisible()
   const saved = await request.get(`${LIVE_SERVER}/projects/my-org/widgets/settings`, { headers: auth })
   expect(saved.status()).toBe(200)
   expect((await saved.json()) as Record<string, unknown>).toMatchObject({ branchTemplate: template })
+
+  // 설정은 저장 뒤에도 열려 있다 — Esc 로 닫는다
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
 
   // 4) 메모 입력 → 저장
   await page.getByTestId('issue-row-42').click()

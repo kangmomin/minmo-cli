@@ -10,7 +10,7 @@ import { createAppQueryClient } from '../../app/createDeps'
 import { useSessionStore } from '../../store/session'
 import { apiError, createFakeApi } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { SettingsDialog } from './ScopeSettings'
+import { ScopeSettings } from './ScopeSettings'
 
 const GLOBAL: SettingsRecord = {
   branchTemplate: 'issue/{number}-{slug}',
@@ -38,7 +38,7 @@ describe('settings 저장 401', () => {
       },
     })
     const user = userEvent.setup()
-    renderWithDeps(<SettingsDialog scope={{ kind: 'global' }} open onOpenChange={() => {}} />, makeDeps({ api }), createAppQueryClient())
+    renderWithDeps(<ScopeSettings scope={{ kind: 'global' }} previewIssue={null} />, makeDeps({ api }), createAppQueryClient())
 
     await waitFor(() => expect(screen.getByLabelText('브랜치 템플릿')).toHaveValue('issue/{number}-{slug}'))
     await user.click(screen.getByRole('button', { name: '저장' }))

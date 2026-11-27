@@ -8,7 +8,7 @@ import type { Sessions } from '@minmo/api-client'
 import { useSessionStore } from '../../store/session'
 import { createFakeApi } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { CliAccessDialog } from './CliAccessSettings'
+import { CliAccessSettings } from './CliAccessSettings'
 
 const SESSIONS: Sessions = {
   sessions: [
@@ -35,7 +35,7 @@ function setup() {
       sessions = { sessions: sessions.sessions.filter((s) => s.id !== id) }
     },
   })
-  renderWithDeps(<CliAccessDialog open onOpenChange={() => {}} />, makeDeps({ api }))
+  renderWithDeps(<CliAccessSettings />, makeDeps({ api }))
   return { api, user: userEvent.setup() }
 }
 

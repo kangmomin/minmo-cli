@@ -17,7 +17,7 @@ import { createFakeApi, createFakeGitHub, createFakeTauri, deferred } from '../.
 import { makeDeps, makeWrapper, renderWithDeps } from '../../test/render'
 import { Sidebar } from '../tree/Sidebar'
 import { useRefreshTree } from '../tree/useTree'
-import { HostsDialog } from './HostsSettings'
+import { HostsSettings } from './HostsSettings'
 
 const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: true }
 const cfg = (alias: string, hostName: string | null = null, user: string | null = null): SshHostInfo => ({ alias, hostName, user, source: 'config', port: null, identityFile: null })
@@ -187,7 +187,7 @@ describe('HostsDialog', () => {
       },
     })
     const user = userEvent.setup()
-    renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri }))
+    renderWithDeps(<HostsSettings />, makeDeps({ tauri }))
 
     const row = await screen.findByTestId('ssh-host-my-server')
     expect(row).toHaveTextContent('dev@10.0.0.5')
@@ -216,7 +216,7 @@ describe('HostsDialog', () => {
       sshHostRemove: async (alias) => (saved = saved.filter((x) => x.alias !== alias)),
     })
     const user = userEvent.setup()
-    renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri }))
+    renderWithDeps(<HostsSettings />, makeDeps({ tauri }))
     await user.click(await screen.findByRole('button', { name: '호스트 직접 등록' }))
     const form = screen.getByRole('form', { name: '호스트 직접 등록' })
     await user.type(within(form).getByLabelText('이름'), 'bad name')
@@ -262,7 +262,7 @@ describe('HostsDialog', () => {
     })
     const { tauri } = createFakeTauri({ sshHosts: async () => [cfg('new-host')], sshProbe })
     const user = userEvent.setup()
-    renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri }))
+    renderWithDeps(<HostsSettings />, makeDeps({ tauri }))
     const row = await screen.findByTestId('ssh-host-new-host')
     await user.click(within(row).getByRole('button', { name: '연결 확인' }))
     await user.click(await within(row).findByRole('button', { name: '호스트 키 등록하고 연결' }))
@@ -272,13 +272,13 @@ describe('HostsDialog', () => {
 
   it('설정에 호스트가 없으면 안내한다 · 설정에서 사라진 호스트는 뺄 수 있다', async () => {
     const { tauri } = createFakeTauri({ sshHosts: async () => [] })
-    const { unmount } = renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri }))
+    const { unmount } = renderWithDeps(<HostsSettings />, makeDeps({ tauri }))
     expect(await screen.findByText(/Host 항목이 없습니다/)).toBeInTheDocument()
     unmount()
 
     useHostsStore.setState({ aliases: ['gone'], selected: 'gone' })
     const user = userEvent.setup()
-    renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri }))
+    renderWithDeps(<HostsSettings />, makeDeps({ tauri }))
     const row = await screen.findByTestId('ssh-host-gone')
     expect(row).toHaveTextContent('더 이상 없는 호스트')
     await user.click(within(row).getByRole('button', { name: '빼기' }))
@@ -288,7 +288,7 @@ describe('HostsDialog', () => {
   it('원격 터미널에 tmux 사용: 기본은 꺼짐 · 켜면 이 PC 에 저장한다', async () => {
     const { tauri } = createFakeTauri({ sshHosts: async () => [] })
     const user = userEvent.setup()
-    renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri }))
+    renderWithDeps(<HostsSettings />, makeDeps({ tauri }))
     const box = await screen.findByRole('checkbox', { name: '원격 터미널에 tmux 사용' })
     expect(box).not.toBeChecked()
     expect(box).toHaveAccessibleDescription(/새로 여는\(또는 다시 시작한\) 터미널부터 적용/)
@@ -303,7 +303,7 @@ describe('HostsDialog', () => {
     useHostsStore.setState({ aliases: ['srv'], baseDirs: {} })
     const { tauri } = createFakeTauri({ sshHosts: async () => [cfg('srv')] })
     const user = userEvent.setup()
-    renderWithDeps(<HostsDialog open onOpenChange={() => {}} />, makeDeps({ tauri, platform: 'win32' }))
+    renderWithDeps(<HostsSettings />, makeDeps({ tauri, platform: 'win32' }))
     const remote = within(await screen.findByTestId('base-dir-ssh:srv'))
     const input = remote.getByLabelText('srv')
     // 원격은 POSIX 경로만 — Windows 경로는 거절한다

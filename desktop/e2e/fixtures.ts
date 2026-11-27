@@ -129,6 +129,22 @@ export async function openTerminal(page: Page) {
   await page.getByRole('button', { name: '터미널 열기' }).click()
 }
 
+/**
+ * 상단 ⚙ 로 설정 화면을 연다 — section(분류 탭 이름, 예: '원격 접속')을 주면 그 분류로 간다. dialog `설정` 을 돌려준다.
+ * 이름은 exact — `설정` 은 `서버 설정`·`… 프로젝트 설정` 과도 부분 일치한다
+ */
+export async function openSettings(page: Page, section?: string) {
+  await page.getByRole('button', { name: '설정', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '설정', exact: true })
+  await expect(dialog).toBeVisible()
+  if (section) {
+    const tab = dialog.getByRole('tab', { name: section, exact: true })
+    await tab.click()
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+  }
+  return dialog
+}
+
 /** 트리에서 my-org → widgets 펼치기 */
 export async function expandWidgets(page: Page) {
   await page.getByTestId('org-node-my-org').click()

@@ -13,7 +13,7 @@ import { useUiStore } from '../../store/ui'
 import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { leaf } from '../terminal/panes'
-import { RemoteAccessDialog, shareableAddress } from './RemoteAccessSettings'
+import { RemoteAccessSettings, shareableAddress } from './RemoteAccessSettings'
 import { defaultDeviceName, pairErrorMessage, reloadAllowed } from './RemoteGate'
 import { runRemoteCall } from './useRemoteHost'
 
@@ -517,7 +517,7 @@ describe('RemoteAccessDialog (호스트의 원격 접속 설정)', () => {
       remotePairStart: async () => ({ code: '482913', expiresInSec: 120 }),
       remoteDeviceRemove: async () => ({ ...on, devices: [] }),
     })
-    renderWithDeps(<RemoteAccessDialog open onOpenChange={() => {}} />, makeDeps({ tauri: fake.tauri }))
+    renderWithDeps(<RemoteAccessSettings />, makeDeps({ tauri: fake.tauri }))
     const user = userEvent.setup()
     const toggle = await screen.findByRole('checkbox', { name: '원격 접속 켜기' })
     expect(toggle).not.toBeChecked()
@@ -541,7 +541,7 @@ describe('RemoteAccessDialog (호스트의 원격 접속 설정)', () => {
     const fake = createFakeTauri()
     const r = render(<div />)
     r.unmount()
-    const view = renderWithDeps(<RemoteAccessDialog open onOpenChange={() => {}} />, makeDeps({ tauri: fake.tauri }))
+    const view = renderWithDeps(<RemoteAccessSettings />, makeDeps({ tauri: fake.tauri }))
     await screen.findByRole('checkbox', { name: '원격 접속 켜기' })
     view.unmount()
     expect(fake.tauri.remotePairCancel).toHaveBeenCalled()

@@ -18,7 +18,7 @@ import { groupRows, rowKey } from '../agents/overview'
 import type { AgentRow } from '../agents/overview'
 import { consumeHash, parseHash, takePendingOpen } from './deepLink'
 import { MAX_PEER_ROWS, NOTIFY_MAX, NOTIFY_WINDOW_MS, allowNotify, forPublish, newlyUrgent, parsePeerRows, usePeerAgents, usePeerAgentsStore } from './peerAgents'
-import { RemoteAccessDialog } from './RemoteAccessSettings'
+import { RemoteAccessSettings } from './RemoteAccessSettings'
 
 const PEER: Peer = { id: 'p1', name: '회사 PC', url: 'http://100.64.0.5:8790', token: 'tok' }
 const TARGET: IssueTarget = { owner: 'acme', repo: 'app', key: '42', number: 42, title: 'Add login' }
@@ -222,7 +222,7 @@ describe('다른 PC 등록 화면', () => {
       },
       peerRemove: async () => (peers = []),
     })
-    renderWithDeps(<RemoteAccessDialog open onOpenChange={() => {}} />, makeDeps({ tauri: fake.tauri }))
+    renderWithDeps(<RemoteAccessSettings />, makeDeps({ tauri: fake.tauri }))
     const user = userEvent.setup()
     const submit = await screen.findByRole('button', { name: 'PC 등록' })
     expect(submit).toBeDisabled()

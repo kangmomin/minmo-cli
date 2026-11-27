@@ -21,7 +21,7 @@ import { createFakeApi, createFakeGitHub, createFakeTauri, deferred } from '../.
 import { makeDeps, makeWrapper, renderWithDeps } from '../../test/render'
 import { WorktreeProvider } from '../issue/useWorktree'
 import { consumeHash, deepLinkAlias, useDeepLinkOpen } from '../remote/deepLink'
-import { SettingsDialog } from '../settings/ScopeSettings'
+import { ScopeSettings } from '../settings/ScopeSettings'
 import { useHasWorktree } from './useVisibleRepos'
 
 const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: false }
@@ -258,10 +258,8 @@ describe('프로젝트 설정 — 연결 호스트', () => {
     const api = createFakeApi({ getSettings: async (s) => (s.kind === 'global' ? GLOBAL : EMPTY) })
     const { tauri } = createFakeTauri({ sshProbe: probe })
     renderWithDeps(
-      <SettingsDialog
+      <ScopeSettings
         scope={{ kind: 'project', owner: 'my-org', repo: 'widgets' }}
-        open
-        onOpenChange={() => {}}
         previewIssue={{ owner: 'my-org', repo: 'widgets', key: '1', number: 1, title: 'Bound' }}
       />,
       makeDeps({ api, tauri, home: '/home/u', platform: 'linux' }),
