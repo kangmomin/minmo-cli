@@ -37,7 +37,7 @@ export function defaultDeviceName(ua: string = navigator.userAgent): string {
 export function pairErrorMessage(e: unknown): string {
   if (e instanceof PairError) {
     if (e.code === 'pair_wrong_code') return e.left ? `코드가 맞지 않습니다(남은 시도 ${e.left}번)` : '코드를 여러 번 틀려 무효가 되었습니다 — 호스트에서 새 코드를 받으세요'
-    if (e.code === 'pair_not_open') return '등록 코드가 만료되었거나 이미 사용되었습니다 — 호스트의 [원격 접속] 에서 새 코드를 받으세요'
+    if (e.code === 'pair_not_open') return '등록 코드가 만료되었거나 이미 사용되었습니다 — 호스트의 [설정] → [원격 접속] 에서 새 코드를 받으세요'
     if (e.code === 'not_enabled') return '호스트에서 원격 접속이 꺼져 있습니다'
   }
   return '호스트에 연결할 수 없습니다'
