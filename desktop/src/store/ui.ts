@@ -205,15 +205,17 @@ export const useUiStore = create<UiState>()(
       setLastLaunchKind: (lastLaunchKind) => set({ lastLaunchKind }),
       setPeerSync: (peerSync) => set({ peerSync }),
       setLaunchRequest: (launchRequest) => set({ launchRequest }),
-      launchPane: (issueId, keepFirst = false, _focus = true) => {
+      launchPane: (issueId, keepFirst = false, focus = true) => {
         const s = get()
         let cur = s.panes[issueId]
         const leaves = leafIds(cur?.tree ?? null)
+        // Why: 배경 실행(focus=false)은 사용자가 그 이슈에서 마지막으로 쓴 패널과 키보드 포커스를 옮기지 않는다
+        const kept = !focus && cur && leaves.length > 0 ? { focused: cur.focused } : null
         const commit = (next: NonNullable<typeof cur>, id: string) => {
           set({
-            panes: { ...s.panes, [issueId]: next },
+            panes: { ...s.panes, [issueId]: kept ? { ...next, ...kept } : next },
             startedTerminals: { ...s.startedTerminals, [issueId]: true },
-            focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 },
+            ...(focus ? { focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 } } : null),
           })
           return id
         }
