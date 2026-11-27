@@ -365,7 +365,7 @@ mod tests {
         let project = projects.join("-w-app");
         fs::create_dir_all(&project).unwrap();
         write_at(&project.join("old.jsonl"), "old\n", 1_000);
-        // 가장 최근 "기록"이 파일이 아니다(폴더) — Windows 는 열기, Unix 는 읽기에서 실패한다
+        // Why: 가장 최근 "기록"이 파일이 아니다(폴더) — Windows 는 열기, Unix 는 읽기에서 실패한다
         fs::create_dir_all(project.join("x.jsonl")).unwrap();
         assert!(reply_tail(&projects, "/w/app").is_err());
         let _ = fs::remove_dir_all(&projects);
