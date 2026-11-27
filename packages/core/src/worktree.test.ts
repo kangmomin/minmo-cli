@@ -1002,11 +1002,16 @@ describe('deleteWorktree (AC-14, EC-15, EC-16, EC-24, PTY 선종료)', () => {
     expect(t.pathStore.delete).toHaveBeenCalledWith(ID42)
   })
 
-  it('EC-16 ★기타는 삭제 불가 — git·PTY 호출 없음', async () => {
-    const t = setup({ mainExists: true, entries: [[worktreeId('MyOrg', 'Repo-A', 'etc'), { path: '/home/u/x/etc', branch: 'etc' }]] })
-    await expect(t.svc.deleteWorktree(ETC, { confirmed: true })).rejects.toMatchObject({ code: 'etc_not_deletable' })
-    expect(t.tauri.gitRun).not.toHaveBeenCalled()
-    expect(t.tauri.ptyKillByCwd).not.toHaveBeenCalled()
+  it('EC-16 ★기타도 다른 이슈처럼 삭제한다 — PTY 선종료 → worktree remove → 브랜치 삭제 → 맵 제거 (#119)', async () => {
+    const PE = '/home/u/x/etc'
+    const IDE = worktreeId('MyOrg', 'Repo-A', 'etc')
+    const t = setup({ mainExists: true, sim: { worktrees: new Map([[PE, 'etc']]), local: new Set(['etc']) }, entries: [[IDE, { path: PE, branch: 'etc' }]] })
+    t.sim.existing.add(PE)
+    await expect(t.svc.deleteWorktree(ETC, { confirmed: true })).resolves.toEqual({ status: 'deleted' })
+    expect(t.tauri.ptyKillByCwd).toHaveBeenCalledWith(PE)
+    expect(t.find(t.isRemove)[0]).toContain(PE)
+    expect(t.find((a) => a[0] === 'branch' && a.includes('-D'))[0]).toContain('etc')
+    expect(t.pathStore.delete).toHaveBeenCalledWith(IDE)
   })
 
   it('실행 중인 생성 후 스크립트가 있으면 worktree remove 전에 취소', async () => {

@@ -1,5 +1,5 @@
 // 보일 저장소(E15/E16) — 트리 필터·worktree 있는 저장소의 "숨김" 표시·선택 다이얼로그 저장/409
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -9,8 +9,9 @@ import { worktreeId } from '@minmo/core'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
-import { apiError, createFakeApi, createFakeGitHub } from '../../test/fakes'
+import { apiError, createFakeApi, createFakeGitHub, createFakeTauri, ok } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
+import { WorktreeProvider } from '../issue/useWorktree'
 import { Sidebar } from './Sidebar'
 
 const ACME = { login: 'Acme', kind: 'org' as const, avatarUrl: null }
@@ -65,6 +66,33 @@ describe('트리 필터', () => {
     const node = await screen.findByTestId('repo-node-zed/tools')
     expect(within(node).getByText('숨김')).toBeInTheDocument()
     expect(await screen.findByTestId('repo-node-Acme/gadgets')).toBeInTheDocument()
+  })
+
+  it('#119 ★기타 worktree 때문에 보이던 숨긴 저장소는 그 worktree 를 지우면 사라진다', async () => {
+    useUiStore.setState({
+      expanded: { 'org:Acme': true, 'org:zed': true, 'repo:zed/tools': true },
+      worktreePathMap: { [worktreeId('zed', 'tools', 'etc')]: { path: '/w/etc', branch: 'etc' } },
+    })
+    const api = createFakeApi({ getVisibleRepos: async () => ({ repos: ['acme/*'], updatedAt: '2026-11-10T00:00:00.000Z' }) })
+    const github = createFakeGitHub({ listOwners: async () => [ACME, ZED], listRepos: async (o) => REPOS[o.login] ?? [] })
+    // 변경·미push 없음 → 확인 없이 지운다. 메인 clone 은 git 이 알려 준다(설정 조회 없음)
+    const fake = createFakeTauri({
+      gitRun: async (args) => (args.includes('rev-list') ? ok('0\n') : args.includes('--git-common-dir') ? ok('/w/_main/.git\n') : ok()),
+    })
+    renderWithDeps(
+      <TooltipProvider>
+        <WorktreeProvider>
+          <Sidebar onOpenSettings={() => {}} />
+        </WorktreeProvider>
+      </TooltipProvider>,
+      makeDeps({ api, github, tauri: fake.tauri }),
+    )
+    const node = await screen.findByTestId('repo-node-zed/tools')
+    expect(within(node).getByText('숨김')).toBeInTheDocument()
+    // 펼친 저장소는 zed/tools 하나뿐 — ★기타 행도 하나다
+    fireEvent.contextMenu(await screen.findByTestId('issue-row-etc'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'worktree 삭제' }))
+    await waitFor(() => expect(screen.queryByTestId('repo-node-zed/tools')).toBeNull())
   })
 })
 
