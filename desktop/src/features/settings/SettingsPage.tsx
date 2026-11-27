@@ -23,9 +23,10 @@ import { WorkspaceSection } from './WorkspaceSection'
 const CONTENT_CLASS = 'left-0 top-0 translate-x-0 translate-y-0 h-dvh max-h-none w-full max-w-none sm:max-w-none rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col'
 const TABS_CLASS = 'min-h-0 flex-1 flex-row gap-0 max-md:flex-col'
 const SIDE_CLASS = 'flex flex-col gap-2 border-b p-3 md:min-h-0 md:w-60 md:border-r md:border-b-0 max-md:shrink-0'
-const LIST_CLASS = 'justify-start p-1 md:h-auto md:w-full md:min-h-0 md:flex-1 md:flex-col md:items-stretch md:overflow-y-auto max-md:w-full max-md:max-w-full max-md:overflow-x-auto'
-// Why: 기본 h-full 은 세로 목록에서 탭마다 목록 전체 높이가 된다
-const TRIGGER_CLASS = 'md:h-auto md:flex-none md:justify-start md:rounded-l-none md:border-l-2 md:data-[state=active]:border-l-primary data-[state=active]:font-semibold'
+// Why: bg-transparent — 기본 bg-muted 위에서는 라이트 테마의 비선택 탭 글자 대비가 4.5:1 에 못 미친다
+const LIST_CLASS = 'justify-start bg-transparent p-1 md:h-auto md:w-full md:min-h-0 md:flex-1 md:flex-col md:items-stretch md:overflow-y-auto max-md:w-full max-md:max-w-full max-md:overflow-x-auto'
+// Why: 기본 h-full 은 세로 목록에서 탭마다 목록 전체 높이가 된다. 선택 막대(넓으면 왼쪽·좁으면 아래)는 색 채움 없이도 선택을 보이고, 고대비 모드에서는 Highlight 로 남긴다
+const TRIGGER_CLASS = 'md:h-auto md:flex-none md:justify-start md:rounded-l-none md:border-l-2 md:data-[state=active]:border-l-primary max-md:rounded-b-none max-md:border-b-2 max-md:data-[state=active]:border-b-primary forced-colors:data-[state=active]:border-l-[Highlight] max-md:forced-colors:data-[state=active]:border-b-[Highlight] data-[state=active]:font-semibold'
 const PANEL_CLASS = 'min-h-0 overflow-y-auto p-4 md:p-6'
 
 function ServerSection() {
@@ -67,10 +68,14 @@ export function SettingsPage() {
         }}
         onCloseAutoFocus={(e) => {
           e.preventDefault()
-          const { opener } = useSettingsPageStore.getState()
-          // Why: DialogTrigger 로 열지 않아 Radix 가 되돌릴 곳을 모른다 — 연 요소가 사라졌으면 상단 ⚙ 로
-          const el = opener?.isConnected ? opener : document.querySelector<HTMLElement>('[data-settings-trigger]')
-          el?.focus()
+          const { open, opener } = useSettingsPageStore.getState()
+          // Why: Radix 는 unmount 뒤 setTimeout 으로 부른다 — 그사이 다시 열었으면 닫힌 화면의 늦은 호출이라 새 opener 를 건드리지 않는다
+          if (open) return
+          // Why: DialogTrigger 로 열지 않아 Radix 가 되돌릴 곳을 모른다 — 연 요소가 사라졌거나 숨어(좁은 화면 사이드바) 포커스를 못 받으면 상단 ⚙ 로
+          opener?.focus()
+          if (document.activeElement !== opener) document.querySelector<HTMLElement>('[data-settings-trigger]')?.focus()
+          // Why: 되돌린 뒤에는 쓸 일이 없다 — store 가 떨어져 나간 DOM 을 계속 잡지 않게 한다
+          useSettingsPageStore.setState({ opener: null })
         }}
         onEscapeKeyDown={(e) => {
           // Why: 한글 조합 중 Esc 는 조합만 끝낸다 — 설정까지 닫으면 쓰던 검색어가 사라진다

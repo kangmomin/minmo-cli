@@ -168,7 +168,7 @@ function AgentCommandField({ kind }: { kind: LaunchKind }) {
           className="font-mono"
           placeholder={kind === 'custom' ? `my-agent ${PROMPT_SLOT}` : undefined}
           aria-invalid={note?.kind === 'error' || undefined}
-          aria-describedby={`${uid}-note`}
+          aria-describedby={note?.kind === 'error' ? `${uid}-note ${uid}-error` : `${uid}-note`}
         />
         {kind !== 'custom' && (
           <Button type="button" variant="outline" aria-label={`${LAUNCH_LABEL[kind]} 기본값`} disabled={saved === fallback} onClick={() => change(fallback)}>
@@ -176,14 +176,13 @@ function AgentCommandField({ kind }: { kind: LaunchKind }) {
           </Button>
         )}
       </div>
-      {note?.kind === 'error' ? (
-        <p id={`${uid}-note`} role="alert" className="text-sm text-destructive">
+      {/* Why: live region 은 미리 렌더해 두어야 변화가 읽힌다 — 같은 노드의 role 을 바꾸지 않고 오류는 별도 alert 로 둔다(AX-20) */}
+      <p id={`${uid}-note`} role="status" className="text-xs text-muted-foreground">
+        {note?.kind === 'hint' ? note.text : ''}
+      </p>
+      {note?.kind === 'error' && (
+        <p id={`${uid}-error`} role="alert" className="text-sm text-destructive">
           {note.text}
-        </p>
-      ) : (
-        // Why: live region 은 미리 렌더해 두어야 변화가 읽힌다
-        <p id={`${uid}-note`} role="status" className="text-xs text-muted-foreground">
-          {note?.text ?? ''}
         </p>
       )}
     </div>
