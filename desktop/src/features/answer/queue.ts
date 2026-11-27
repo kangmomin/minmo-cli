@@ -166,8 +166,8 @@ function observe(s: Session, input: StepInput): Session {
       next.closedAt = null
     } else next.shownStatus = null
   }
-  if (input.paneHasAgent) next.goneAt = null
-  else if (!row && next.agentSeen && next.goneAt === null) {
+  // Why: '기타'가 돌 때 끝난 때를 지우면, 그것이 끝날 때 새로 기록해 그 앞의 입력(npm test 등)을 못 본다.
+  if (!row && !input.paneHasAgent && next.agentSeen && next.goneAt === null) {
     // Why: 같은 패널에서 새로 띄운 에이전트가 지난 기다림을 물려받으면, 띄우려고 친 입력을 "답을 보냄"으로 읽는다.
     return { ...next, goneAt: input.now, shownWaiting: false, waitStart: null, shownStatus: null }
   }
@@ -227,7 +227,8 @@ export function step(state: QueueState, input: StepInput): StepResult {
   if (answered && quiet && head) return done({ row: head, reason: 'answered' })
 
   // Why: 끝난 뒤 그 패널(닫았으면 보이는 옆 패널)에 입력했으면 사용자가 그 패널을 쓰는 중이다.
-  const endedAt = session.goneAt ?? session.closedAt
+  // Why: '기타'(vim·개발 서버 등)가 도는 동안은 셸만 남은 것이 아니다.
+  const endedAt = (input.paneHasAgent ? null : session.goneAt) ?? session.closedAt
   if (endedAt !== null && !waitingHere && lastInput <= endedAt && now - endedAt >= ENDED_CONFIRM_MS && quiet && head)
     return done({ row: head, reason: 'ended' })
   return done()

@@ -420,6 +420,26 @@ describe('step — 끝남(EC-07 · EC-20, D-13)', () => {
     expect(s.tick({ now: T + 10_000, shown, row: null, paneHasAgent: true, waiting: others }).go).toBeUndefined()
   })
 
+  it('EC-07 끝난 뒤 셸에 입력해 돌린 기타 프로그램(npm test 등)이 끝나 셸만 남아도 넘어가지 않는다', () => {
+    const { s, shown, others } = endedFlow()
+    expect(s.state.session).toMatchObject({ goneAt: T + 3000 })
+    // 셸에 `npm test` 를 친다 → '기타'(node)가 잡힌다
+    s.tick({ now: T + 3500, shown, row: null, paneHasAgent: false, lastInput: T + 3500, waiting: others })
+    s.tick({ now: T + 4000, shown, row: null, paneHasAgent: true, lastInput: T + 3500, waiting: others })
+    // 테스트가 끝나 셸만 남는다
+    s.tick({ now: T + 8000, shown, row: null, paneHasAgent: false, lastInput: T + 3500, waiting: others })
+    expect(s.tick({ now: T + 9000, shown, row: null, paneHasAgent: false, lastInput: T + 3500, waiting: others }).go).toBeUndefined()
+    expect(s.tick({ now: T + 10_000, shown, row: null, paneHasAgent: false, lastInput: T + 3500, waiting: others }).go).toBeUndefined()
+  })
+
+  it('EC-07 끝난 뒤 입력 없이 기타 프로그램이 잡혀도(미리 친 명령) 그것이 도는 동안은 넘어가지 않는다', () => {
+    const { s, shown, others } = endedFlow()
+    expect(s.state.session).toMatchObject({ goneAt: T + 3000 })
+    s.tick({ now: T + 3500, shown, row: null, paneHasAgent: true, waiting: others })
+    expect(s.tick({ now: T + 4000, shown, row: null, paneHasAgent: true, waiting: others }).go).toBeUndefined()
+    expect(s.tick({ now: T + 13_000, shown, row: null, paneHasAgent: true, waiting: others }).go).toBeUndefined()
+  })
+
   it('EC-07 끝난 뒤 셸에서 새 에이전트를 띄우면(작업 중으로 시작) 넘어가지 않는다', () => {
     const { s, shown, others } = endedFlow()
     s.tick({ now: T + 3500, shown, row: null, paneHasAgent: false, lastInput: T + 3500, waiting: others })
