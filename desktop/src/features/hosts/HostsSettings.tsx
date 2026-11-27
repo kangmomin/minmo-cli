@@ -7,32 +7,22 @@ import { DEFAULT_WORKSPACE_ROOT, checkBaseDir } from '@minmo/core'
 import { useBaseDeps } from '../../app/deps'
 import { hostOf } from '../../app/host'
 import { Button } from '../../components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { sshErrorOf, sshErrorText } from '../../lib/sshHost'
 import type { SshHostInfo, SshHostInput, SshProbe } from '../../lib/tauri'
 import { baseDirOf, useHostsStore } from '../../store/hosts'
 
-export interface HostsDialogProps {
-  open: boolean
-  onOpenChange(open: boolean): void
-}
-
 /** 원격 호스트 관리 — ~/.ssh/config 의 Host 를 고르거나 앱에 직접 등록한다 */
-export function HostsDialog({ open, onOpenChange }: HostsDialogProps) {
+export function HostsSettings() {
+  // Why: 본문은 불러오는 중·오류 때 먼저 반환한다 — 설명은 어느 상태에서나 보이게 바깥에 둔다
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>원격 호스트</DialogTitle>
-          <DialogDescription>
-            ssh 로 접속해 그 호스트에서 worktree 를 만들고 터미널·파일을 씁니다. ~/.ssh/config 의 Host 를 고르거나 아래에서 직접 등록하세요. 원격에는 git 이 있어야 합니다.
-          </DialogDescription>
-        </DialogHeader>
-        {open && <HostsSettings />}
-      </DialogContent>
-    </Dialog>
+    <>
+      <p className="text-sm text-muted-foreground">
+        ssh 로 접속해 그 호스트에서 worktree 를 만들고 터미널·파일을 씁니다. ~/.ssh/config 의 Host 를 고르거나 아래에서 직접 등록하세요. 원격에는 git 이 있어야 합니다.
+      </p>
+      <HostsBody />
+    </>
   )
 }
 
@@ -44,7 +34,7 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const EMPTY: SshHostInput = { alias: '', hostName: '', user: '', port: 22, identityFile: null }
 
 /** 원격 호스트 설정 본문 — ~/.ssh/config 의 Host 와 직접 등록한 호스트 */
-export function HostsSettings() {
+function HostsBody() {
   const { tauri, platform } = useBaseDeps()
   const aliases = useHostsStore((s) => s.aliases)
   const add = useHostsStore((s) => s.add)

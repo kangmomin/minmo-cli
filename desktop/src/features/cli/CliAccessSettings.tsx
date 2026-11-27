@@ -7,33 +7,11 @@ import type { CliCode, SessionInfo } from '@minmo/api-client'
 import { useDeps } from '../../app/deps'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { queryKeys } from '../../lib/queryKeys'
 import { useSessionStore } from '../../store/session'
 import { portOf } from '../../lib/api'
 import { useServerStore } from '../../store/server'
 import { SSH_SERVER_NOTE, sshConfigExample, sshWindowsNote } from './sshConfig'
-
-export interface CliAccessDialogProps {
-  open: boolean
-  onOpenChange(open: boolean): void
-}
-
-export function CliAccessDialog({ open, onOpenChange }: CliAccessDialogProps) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>원격 CLI 접속</DialogTitle>
-          <DialogDescription>
-            원격 서버에 minmo CLI 를 설치하고 SSH 로 접속해 이슈·worktree 를 관리합니다. 원격 CLI 는 SSH 역터널로 이 PC 의 서버를 씁니다.
-          </DialogDescription>
-        </DialogHeader>
-        {open && <CliAccessSettings />}
-      </DialogContent>
-    </Dialog>
-  )
-}
 
 function remaining(expiresAt: string, now: number): string {
   const ms = Date.parse(expiresAt) - now
@@ -86,6 +64,9 @@ export function CliAccessSettings() {
 
   return (
     <div className="grid gap-5">
+      <p className="text-sm text-muted-foreground">
+        원격 서버에 minmo CLI 를 설치하고 SSH 로 접속해 이슈·worktree 를 관리합니다. 원격 CLI 는 SSH 역터널로 이 PC 의 서버를 씁니다.
+      </p>
       <section aria-labelledby={`${uid}-code`} className="grid gap-2">
         <h3 id={`${uid}-code`} className="text-sm font-medium">
           1. 로그인 코드

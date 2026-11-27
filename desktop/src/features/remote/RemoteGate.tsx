@@ -164,7 +164,7 @@ export function RemoteGate({ children, origin = window.location.origin }: { chil
         <form onSubmit={onPair} className="grid w-full max-w-sm gap-4">
           <div>
             <h1 className="text-lg font-semibold">minmo — 기기 등록</h1>
-            <p className="mt-1 text-sm text-muted-foreground">호스트 PC 의 minmo 에서 [원격 접속] → [기기 등록] 을 눌러 나온 6자리 코드를 입력하세요.</p>
+            <p className="mt-1 text-sm text-muted-foreground">호스트 PC 의 minmo 에서 [설정] → [원격 접속] → [기기 등록] 을 눌러 나온 6자리 코드를 입력하세요.</p>
           </div>
           <div className="grid gap-1">
             <Label htmlFor="pair-code">등록 코드</Label>

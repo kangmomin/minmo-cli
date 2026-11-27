@@ -7,7 +7,6 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { useBaseDeps } from '../../app/deps'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import type { RemoteAddress, RemoteStatus, TailscaleStatus } from '../../lib/tauri'
@@ -45,22 +44,18 @@ function formatTime(ms: number): string {
   return ms > 0 ? new Date(ms).toLocaleString() : '-'
 }
 
-export function RemoteAccessDialog({ open, onOpenChange }: { open: boolean; onOpenChange(open: boolean): void }) {
+export function RemoteAccessSettings() {
+  // Why: 본문은 불러오는 중·오류 때 먼저 반환한다 — 설명은 어느 상태에서나 보이게 바깥에 둔다
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>원격 접속</DialogTitle>
-          <DialogDescription>다른 PC 나 휴대폰의 브라우저에서 이 PC 의 minmo 를 씁니다. 등록한 기기는 이 PC 의 터미널을 조작할 수 있으니, 내 기기만 등록하세요.</DialogDescription>
-        </DialogHeader>
-        {open && <RemoteAccessSettings />}
-      </DialogContent>
-    </Dialog>
+    <>
+      <p className="text-sm text-muted-foreground">다른 PC 나 휴대폰의 브라우저에서 이 PC 의 minmo 를 씁니다. 등록한 기기는 이 PC 의 터미널을 조작할 수 있으니, 내 기기만 등록하세요.</p>
+      <RemoteAccessBody />
+    </>
   )
 }
 
 /** 원격 접속 설정 본문 — 켜기·접속 주소·기기 등록·Tailscale·등록된 기기·다른 PC */
-export function RemoteAccessSettings() {
+function RemoteAccessBody() {
   const uid = useId()
   const { tauri } = useBaseDeps()
   const [status, setStatus] = useState<RemoteStatus | null>(null)
@@ -313,7 +308,7 @@ function PeersSection() {
       <h3 id={`${uid}-peers`} className="font-medium">
         다른 PC
       </h3>
-      <p className="text-xs text-muted-foreground">minmo 가 깔린 다른 PC 를 등록하면 그 PC 의 화면을 이 앱 안에서 열고, 그 PC 의 에이전트도 전체 현황과 알림에 함께 나옵니다. 그 PC 의 [원격 접속] → [기기 등록] 에서 나온 주소와 코드를 넣으세요.</p>
+      <p className="text-xs text-muted-foreground">minmo 가 깔린 다른 PC 를 등록하면 그 PC 의 화면을 이 앱 안에서 열고, 그 PC 의 에이전트도 전체 현황과 알림에 함께 나옵니다. 그 PC 의 [설정] → [원격 접속] → [기기 등록] 에서 나온 주소와 코드를 넣으세요.</p>
       {peers.length > 0 && (
         <ul className="grid gap-1">
           {peers.map((p) => (

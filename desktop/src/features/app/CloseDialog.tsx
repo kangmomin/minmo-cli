@@ -41,7 +41,7 @@ export function CloseDialog({ tauri = getTauri() }: { tauri?: TauriApi }) {
         </DialogHeader>
         <label htmlFor={`${uid}-remember`} className="flex items-center gap-2 text-sm">
           <input id={`${uid}-remember`} type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-          다음부터 묻지 않기 (서버 설정에서 바꿀 수 있습니다)
+          다음부터 묻지 않기 (설정 → 서버·앱(로그인 전에는 서버 설정)에서 바꿀 수 있습니다)
         </label>
         <DialogFooter>
           <Button variant="ghost" onClick={() => setOpen(false)}>

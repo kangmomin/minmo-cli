@@ -8,7 +8,7 @@ import { useDeps } from '../../app/deps'
 import { HostStatusNotice } from '../../app/HostGate'
 import { HostScope, hostOf, useHost, useHostStatus } from '../../app/host'
 import { Button } from '../../components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog'
+import { DialogFooter } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
@@ -21,14 +21,6 @@ import { BaseRepoDialog } from '../tree/BaseRepoDialog'
 import { useSettings } from './useSettings'
 
 export type PreviewIssue = { owner: string; repo: string; key: string; number: number | null; title: string }
-
-export interface SettingsDialogProps {
-  scope: SettingsScope
-  open: boolean
-  onOpenChange(open: boolean): void
-  /** 하단 미리보기 기준 이슈(브랜치명·해석된 worktree 경로) */
-  previewIssue?: PreviewIssue | null
-}
 
 type TextField = 'branchTemplate' | 'etcBranchName' | 'worktreePath' | 'mainClonePath'
 type ScriptMode = 'inherit' | 'none' | 'custom'
@@ -58,36 +50,14 @@ function scopeTitle(scope: SettingsScope, repoLabel: string): string {
   return `프로젝트 설정 — ${repoLabel}`
 }
 
-function scopeDescription(scope: SettingsScope): string {
-  return scope.kind === 'global' ? '모든 저장소의 기본값입니다.' : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'
-}
-
-export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: SettingsDialogProps) {
-  // 별칭을 바꾸면 제목도 바로 바뀌게 구독한다
-  const repoLabel = useReposStore((s) => (scope.kind === 'project' ? repoLabelOf(s, scope.owner, scope.repo) : ''))
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{scopeTitle(scope, repoLabel)}</DialogTitle>
-          <DialogDescription>{scopeDescription(scope)}</DialogDescription>
-        </DialogHeader>
-        {open && <ScopeSettings scope={scope} previewIssue={previewIssue} onSaved={() => onOpenChange(false)} />}
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 export interface ScopeSettingsProps {
   scope: SettingsScope
   /** 하단 미리보기 기준 이슈(브랜치명·해석된 worktree 경로) */
   previewIssue?: PreviewIssue | null
-  /** 폼 저장에 성공했을 때 */
-  onSaved?: () => void
 }
 
 /** 범위(전역·조직·프로젝트) 하나의 설정 — 이 PC 에 저장하는 값(별칭·연결 호스트·원본 위치)과 서버에 저장하는 폼 */
-export function ScopeSettings({ scope, previewIssue, onSaved }: ScopeSettingsProps) {
+export function ScopeSettings({ scope, previewIssue }: ScopeSettingsProps) {
   const project = scope.kind === 'project' && !isLocalOwner(scope.owner) ? scope : null
   // 연결 호스트를 정한 저장소는 원본 위치·경로 미리보기를 그 호스트 기준으로 보인다. 정하지 않았으면 바깥(작업 호스트) 그대로
   const bound = useHostsStore((s) => (project ? repoAliasOf(s, project.owner, project.repo) : undefined))
@@ -100,7 +70,9 @@ export function ScopeSettings({ scope, previewIssue, onSaved }: ScopeSettingsPro
     <>
       <div className="grid gap-1">
         <h3 className="text-sm font-semibold">{scopeTitle(scope, repoLabel)}</h3>
-        <p className="text-sm text-muted-foreground">{scopeDescription(scope)}</p>
+        <p className="text-sm text-muted-foreground">
+          {scope.kind === 'global' ? '모든 저장소의 기본값입니다.' : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'}
+        </p>
       </div>
       {scope.kind === 'project' && <RepoNicknameSection key={repoKey(scope.owner, scope.repo)} owner={scope.owner} repo={scope.repo} />}
       {project && <RepoHostSection owner={project.owner} repo={project.repo} />}
@@ -115,7 +87,7 @@ export function ScopeSettings({ scope, previewIssue, onSaved }: ScopeSettingsPro
         ))}
       {/* 연결 호스트를 바꿔도 폼이 다시 마운트되지 않게(입력이 남게) 항상 같은 HostScope 아래에 둔다. 연결 전에는 미리보기를 감춘다 */}
       <HostScope alias={alias}>
-        <SettingsBody scope={scope} previewIssue={status.ready ? (previewIssue ?? null) : null} onSaved={onSaved} />
+        <SettingsBody scope={scope} previewIssue={status.ready ? (previewIssue ?? null) : null} />
       </HostScope>
     </>
   )
@@ -237,7 +209,7 @@ function BaseRepoSection({ owner, repo }: { owner: string; repo: string }) {
   )
 }
 
-function SettingsBody({ scope, previewIssue, onSaved }: { scope: SettingsScope; previewIssue: PreviewIssue | null; onSaved?: () => void }) {
+function SettingsBody({ scope, previewIssue }: { scope: SettingsScope; previewIssue: PreviewIssue | null }) {
   const s = useSettings(scope)
   // Why: 저장하면 폼이 새 레코드로 다시 마운트된다 — 결과 문구·포커스 요청은 폼 바깥에 두어야 새 폼까지 남는다
   const [saved, setSaved] = useState(false)
@@ -260,7 +232,6 @@ function SettingsBody({ scope, previewIssue, onSaved }: { scope: SettingsScope; 
           onSaved={() => {
             setSaved(true)
             setFocusSave(true)
-            onSaved?.()
           }}
           focusSave={focusSave}
           onFocused={onFocused}
