@@ -4,14 +4,15 @@
 import { useEffect } from 'react'
 
 import { useUiStore } from '../../store/ui'
+import { effectivePane } from '../terminal/panes'
 
 const KEY = 'minmo-window-view'
 /** 이 화면(창)의 id — 새로 고치면 바뀐다 */
 const ME = Math.random().toString(36).slice(2)
 
-type View = { by: string; issueId: string | null; terminal: boolean }
+export type View = { by: string; issueId: string | null; terminal: boolean; paneId?: string | null }
 
-function readView(): View | null {
+export function readView(): View | null {
   try {
     const v: unknown = JSON.parse(localStorage.getItem(KEY) ?? 'null')
     return typeof v === 'object' && v !== null && typeof (v as View).by === 'string' ? (v as View) : null
@@ -20,20 +21,20 @@ function readView(): View | null {
   }
 }
 
-/** 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 — paneId: 답변 모드 창이면 그 패널만 본 것(#122, Phase 5.2 에서 구현) */
-export function viewedInOtherWindow(issueId: string, _paneId: string): boolean {
-  const v = readView()
-  return v !== null && v.by !== ME && v.issueId === issueId && v.terminal
+/** 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 — paneId: 답변 모드 창이면 그 패널만 본 것(#122) */
+export function viewedInOtherWindow(issueId: string, paneId: string, v: View | null = readView()): boolean {
+  return v !== null && v.by !== ME && v.issueId === issueId && v.terminal && (v.paneId == null || v.paneId === paneId)
 }
 
 /** 이 창이 포커스를 가진 동안 보는 이슈를 적어 두고, 포커스를 잃거나 닫히면 지운다 */
 export function useWindowViewBroadcast() {
   const issueId = useUiStore((s) => s.selectedIssueId)
   const terminal = useUiStore((s) => s.tab === 'terminal')
+  const paneId = useUiStore((s) => (s.viewMode === 'answer' && s.selectedIssueId !== null ? effectivePane(s.panes[s.selectedIssueId]) : null))
   useEffect(() => {
     const write = () => {
       try {
-        if (document.hasFocus()) localStorage.setItem(KEY, JSON.stringify({ by: ME, issueId, terminal } satisfies View))
+        if (document.hasFocus()) localStorage.setItem(KEY, JSON.stringify({ by: ME, issueId, terminal, paneId } satisfies View))
       } catch {
         // 저장소를 쓸 수 없으면 알리지 않는다(주 창이 알림을 한 번 더 띄울 뿐이다)
       }
@@ -54,5 +55,5 @@ export function useWindowViewBroadcast() {
       window.removeEventListener('blur', clear)
       window.removeEventListener('pagehide', clear)
     }
-  }, [issueId, terminal])
+  }, [issueId, terminal, paneId])
 }

@@ -1388,7 +1388,7 @@ pub async fn pty_processes(state: State<'_, PtyState>, id: String) -> Result<Vec
         Some(pid) => {
             tauri::async_runtime::spawn_blocking(move || super::procs::descendant_names(pid))
                 .await
-                .map_err(err)
+                .map_err(err)?
         }
         None => Ok(Vec::new()),
     }

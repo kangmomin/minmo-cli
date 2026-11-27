@@ -15,7 +15,7 @@ import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
 import type { UiState } from '../../store/ui'
 import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
-import { muteTerminalActivity, noteTerminalInput } from '../agents/useAgentTracker'
+import { muteTerminalActivity, notePtySize, noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, EDIT_KEYS, MOUSE_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
 import { attachLinks } from './links'
@@ -556,10 +556,12 @@ function TerminalSession({
         const remote = remoteHost === undefined ? undefined : remotePty(remoteHost, remoteTmux, spec.cwd, paneRole(spec.issueId, paneId))
         // 이 패널의 터미널이 이미 떠 있으면(다른 화면이 열었거나, 이 화면이 잠시 내려갔다 돌아온 경우) 새로 만들지 않고 붙는다
         const found = await tauri.ptyFind(paneId)
-        const id = found
-          ? found.id
-          : await tauri.ptySpawn({ cwd: spec.cwd, cols: Math.max(t.cols, 20), rows: Math.max(t.rows, 5), remote, key: paneId })
+        const size = { cols: Math.max(t.cols, 20), rows: Math.max(t.rows, 5) }
+        const id = found ? found.id : await tauri.ptySpawn({ cwd: spec.cwd, ...size, remote, key: paneId })
         settled = true
+        // Why: 추적기가 크기 변경으로 다시 그린 출력을 작업 시작과 가려내려면 PTY 의 처음 크기를 알아야 한다
+        if (!found) notePtySize(id, size.cols, size.rows)
+        else if (found.cols > 0 && found.rows > 0) notePtySize(id, found.cols, found.rows)
         if (found) tmux = Promise.resolve(found.tmux ?? null)
         // 이 화면이 만들었으면 실제 세션을 한 번 묻는다 — 그 사이 다른 기기(다른 tmux 설정)가 먼저 열었을 수 있다
         else if (remoteHost !== undefined) tmux = tauri.ptyFind(paneId).then((f) => (f?.id === id ? (f.tmux ?? null) : null), () => null)

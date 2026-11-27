@@ -60,8 +60,7 @@ export function toRows(panes: Record<string, PaneAgent>, ctx: RowContext, subage
       label: p.label,
       status: statusOf(p),
       since: p.since,
-      // #122 스텁 — Phase 5.2(U2)에서 구현
-      waitingSince: null,
+      waitingSince: p.waitingSince,
       lastOutputAt: p.lastOutputAt,
       subagents: subagents[p.paneId] ?? [],
       running: runningCount(subagents[p.paneId]),

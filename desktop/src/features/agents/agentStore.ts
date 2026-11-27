@@ -87,8 +87,7 @@ export function derive(paneId: string, sig: PaneSignals, prev: PaneAgent | null,
     unseen,
     lastOutputAt: sig.lastOutputAt,
     since: was && was.activity === activity ? was.since : now,
-    // #122 스텁 — Phase 5.2(U2)에서 구현
-    waitingSince: null,
+    waitingSince: activity === 'working' ? null : (was?.waitingSince ?? now),
   }
   const before = was ? statusOf(was) : null
   const after = statusOf(next)
@@ -107,7 +106,7 @@ export interface AgentState {
 }
 
 const sameAgent = (a: PaneAgent, b: PaneAgent) =>
-  a.agent === b.agent && a.program === b.program && a.label === b.label && a.activity === b.activity && a.unseen === b.unseen && a.since === b.since && a.lastOutputAt === b.lastOutputAt
+  a.agent === b.agent && a.program === b.program && a.label === b.label && a.activity === b.activity && a.unseen === b.unseen && a.since === b.since && a.lastOutputAt === b.lastOutputAt && a.waitingSince === b.waitingSince
 
 const sameSubs = (a: Subagent[], b: Subagent[]) => a.length === b.length && a.every((x, i) => x.id === b[i].id && x.finished === b[i].finished && x.updatedAt === b[i].updatedAt && x.description === b[i].description)
 

@@ -87,8 +87,7 @@ export function parsePeerRows(raw: unknown, peer: Pick<Peer, 'id' | 'name'>): Ag
         label: str(o.label),
         status: o.status as AgentStatus,
         since: num(o.since),
-        // #122 스텁 — Phase 5.2(U2)에서 구현
-        waitingSince: null,
+        waitingSince: typeof o.waitingSince === 'number' && Number.isFinite(o.waitingSince) ? o.waitingSince : null,
         lastOutputAt: num(o.lastOutputAt),
         subagents: Array.isArray(o.subagents)
           ? (o.subagents as AgentRow['subagents']).slice(0, 50).filter((s) => typeof s === 'object' && s !== null && typeof s.id === 'string' && typeof s.type === 'string' && typeof s.description === 'string')
