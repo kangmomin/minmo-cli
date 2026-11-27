@@ -169,7 +169,8 @@ export function useAnswerQueue(enabled: boolean, { narrowListOpen }: { narrowLis
         deadline: at + (reason === 'pick' ? PICK_OPEN_DEADLINE_MS : AUTO_OPEN_DEADLINE_MS),
         isStale: () => {
           const selected = useUiStore.getState().selectedIssueId
-          return token.current !== my || !live.current.enabled || (selected !== from.issueId && selected !== row.issueId) || (from.paneId !== null && lastInputAt(from.paneId) > at)
+          // Why: 자동 이동은 대화상자 뒤에서 이슈를 바꾸지 않는다 — 사용자가 고른 줄만 이어 간다.
+          return token.current !== my || !live.current.enabled || (selected !== from.issueId && selected !== row.issueId) || (from.paneId !== null && lastInputAt(from.paneId) > at) || (reason !== 'pick' && overlayOpen())
         },
       }).then((res) => {
         if (res !== 'stale') settle(res === 'ok')

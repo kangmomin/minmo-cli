@@ -347,6 +347,27 @@ describe('열기·실패·취소(EC-16 · EC-22 · EC-24 · EC-26)', () => {
     await act(async () => finish('stale'))
   })
 
+  it('EC-05 열기를 기다리는 동안 대화상자가 열리면 자동 이동은 쓸모없어진다(isStale) — 사용자가 고른 줄(pick)의 열기는 이어 간다', async () => {
+    let finish!: (r: OpenPaneResult) => void
+    const r = await answeredToUnopened(() => new Promise((res) => (finish = res)))
+    expect(openMock).toHaveBeenCalledTimes(1)
+    const auto = openMock.mock.calls[0][0]
+    expect(auto.isStale()).toBe(false)
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+    expect(auto.isStale()).toBe(true)
+    await act(async () => finish('stale'))
+    await tick(3000)
+    expect(selected()).toBe(ISSUE.A)
+    act(() => r.result.current.pick(rowOf(r.result.current.waiting, B1)))
+    await tick(100)
+    expect(openMock).toHaveBeenCalledTimes(2)
+    const picked = openMock.mock.calls[1][0]
+    expect(picked).toMatchObject({ paneId: B1, keyboard: true })
+    expect(picked.isStale()).toBe(false)
+  })
+
   it('EC-26 열기를 기다리는 동안 옛 패널에 입력하면 이동이 쓸모없어지고 화면은 그대로다', async () => {
     let finish!: (r: OpenPaneResult) => void
     await answeredToUnopened(() => new Promise((res) => (finish = res)))
