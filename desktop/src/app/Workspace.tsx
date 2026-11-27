@@ -117,19 +117,36 @@ export function Workspace() {
   }, [])
   useEffect(() => {
     if (!answer) return
-    const onFocusOut = (e: FocusEvent) => {
-      const gone = e.target
-      if (e.relatedTarget !== null || !(gone instanceof Node)) return
-      // Why: 누른 버튼·대화상자가 사라지면 포커스가 body 로 간다. Radix 는 닫은 뒤 setTimeout 0 으로 포커스를 돌려놓으므로 그 뒤에 본다.
+    // Why: 누른 버튼·대화상자가 사라지면 포커스가 body 로 간다. Radix 는 닫은 뒤 setTimeout 0 으로 포커스를 돌려놓으므로 그 뒤에 본다.
+    const settle = (gone: Node) =>
       setTimeout(() =>
         setTimeout(() => {
           const active = document.activeElement
           if (!gone.isConnected && (active === null || active === document.body)) focusSummary()
         }),
       )
+    const onFocusOut = (e: FocusEvent) => {
+      const gone = e.target
+      if (e.relatedTarget !== null || !(gone instanceof Node)) return
+      settle(gone)
     }
+    // Why: WebKit 은 지워진 요소의 focusout 을 보내지 않을 수 있다 — 마지막 포커스 요소가 지워졌는지 짧게 본다. 빈 곳을 눌러 떠났으면(요소가 남음) 잊는다.
+    let last: Node | null = null
+    const onFocusIn = (e: FocusEvent) => {
+      last = e.target instanceof Node ? e.target : null
+    }
+    const poll = setInterval(() => {
+      if (last === null || document.activeElement === last) return
+      if (!last.isConnected) settle(last)
+      last = null
+    }, 300)
     document.addEventListener('focusout', onFocusOut)
-    return () => document.removeEventListener('focusout', onFocusOut)
+    document.addEventListener('focusin', onFocusIn)
+    return () => {
+      clearInterval(poll)
+      document.removeEventListener('focusout', onFocusOut)
+      document.removeEventListener('focusin', onFocusIn)
+    }
   }, [answer, focusSummary])
 
   const selectedPreview: PreviewIssue | null = target ?? null

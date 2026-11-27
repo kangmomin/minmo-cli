@@ -276,6 +276,38 @@ describe('답변 모드 접근성(EC-15)', () => {
     expect(rows()[2]).toHaveTextContent('#3 배포')
   })
 
+  it('EC-15 포커스된 요소가 focusout 없이 지워져도(WebKit) 카드 제목으로 간다 — 빈 곳을 눌러 body 가 된 것은 옮기지 않는다', async () => {
+    world({ agents: [done(A1, 65_000)] })
+    const { user } = renderApp()
+    await user.click(toggle())
+    const heading = within(summary()).getByRole('heading', { name: '세션 요약' })
+    // Why: WebKit 은 지운 요소의 focusout 을 보내지 않을 수 있다(jsdom 도 같다) — 혹시 오더라도 document 에 닿지 않게 막는다.
+    const noFocusOut = (e: Event) => e.stopImmediatePropagation()
+    window.addEventListener('focusout', noFocusOut, true)
+    const focusedButton = () => {
+      const el = document.createElement('button')
+      document.body.appendChild(el)
+      act(() => el.focus())
+      return el
+    }
+    const wait = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)))
+    try {
+      const kept = focusedButton()
+      act(() => kept.blur())
+      await wait(400)
+      act(() => kept.remove())
+      await wait(400)
+      expect(document.activeElement).toBe(document.body)
+
+      const gone = focusedButton()
+      act(() => gone.remove())
+      expect(document.activeElement).toBe(document.body)
+      await waitFor(() => expect(heading).toHaveFocus(), { timeout: 2000 })
+    } finally {
+      window.removeEventListener('focusout', noFocusOut, true)
+    }
+  })
+
   it('EC-15 [새 세션] 대화상자를 닫으면 포커스가 사라지지 않고 카드 제목으로 간다', async () => {
     world({ agents: [done(A1, 65_000)] })
     const { user } = renderApp()
