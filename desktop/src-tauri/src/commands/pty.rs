@@ -1426,14 +1426,24 @@ pub fn kill_unkeyed(state: &PtyState) {
 }
 
 pub(crate) fn kill_all_in(hub: &Hub) {
-    // 감독 통로는 세션과 함께 바로 버려진다 — 감독마다 pty-exit 를 한 번 낸다. 원격 tmux 세션은 남는다(EC-08)
-    let procs: Vec<Proc> = match hub.sessions.lock() {
-        Ok(mut s) => s.drain().map(|(_, v)| v.proc).collect(),
-        Err(_) => return,
-    };
+    let procs = drain(hub);
     if !procs.is_empty() {
         std::thread::spawn(move || kill_and_close(procs));
     }
+}
+
+/// 앱이 끝날 때 — 남은 터미널을 모두 끝내고 ConPTY 가 닫힐 때까지(세션마다 마감) 기다린 뒤, 마감 안에 닫힌 수를 돌려준다.
+/// ConPTY 를 닫지 않고 끝나면 일부 OpenConsole 이 끊긴 파이프에서 CPU 한 코어를 계속 쓴다(#100)
+pub fn close_all(state: &PtyState) -> usize {
+    kill_and_close(drain(&state.hub))
+}
+
+/// 모든 세션을 목록에서 뺀다. 감독 통로는 세션과 함께 바로 버려진다 — 감독마다 pty-exit 를 한 번 낸다. 원격 tmux 세션은 남는다(EC-08)
+fn drain(hub: &Hub) -> Vec<Proc> {
+    hub.sessions
+        .lock()
+        .map(|mut s| s.drain().map(|(_, v)| v.proc).collect())
+        .unwrap_or_default()
 }
 
 /// 같은 호스트(None = 이 PC)의 세션이고 cwd 가 path 와 같거나 그 하위인가
@@ -2049,6 +2059,29 @@ mod tests {
                 "셸이 먼저 끝난 뒤 남은 자손(pid {pid})을 끝내지 못했다"
             );
             assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
+        }
+
+        // ── #100 앱이 끝날 때의 ConPTY 호스트 ─────────────────────────────
+
+        /// 앱 종료(RunEvent::Exit): 남은 터미널을 모두 끝내고 ConPTY 가 닫힐 때까지 기다린 뒤 돌아온다
+        #[test]
+        fn close_all_closes_every_terminal_before_returning() {
+            let state = PtyState::default();
+            for _ in 0..2 {
+                spawn_session(
+                    &state.hub,
+                    SpawnReq {
+                        key: None,
+                        cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+                        cols: 80,
+                        rows: ROWS,
+                        remote: None,
+                    },
+                )
+                .unwrap();
+            }
+            assert_eq!(close_all(&state), 2, "마감 안에 모든 ConPTY 가 닫혀야 한다");
+            assert!(state.hub.sessions.lock().unwrap().is_empty());
         }
 
         // ── #89 재접속의 ConPTY 전제(U3 관문) ─────────────────────────────

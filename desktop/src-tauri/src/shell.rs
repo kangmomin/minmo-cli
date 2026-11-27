@@ -33,13 +33,14 @@ fn hide_main(app: &AppHandle) {
     }
 }
 
-/// 서버를 정상 종료한 뒤 앱을 끝낸다(서버 정지가 몇 초 걸릴 수 있어 별도 스레드)
+/// 서버를 정상 종료하고 터미널의 ConPTY 를 닫은 뒤 앱을 끝낸다(둘 다 몇 초 걸릴 수 있어 메인 스레드가 아닌 별도 스레드)
 pub fn quit(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         if let Some(mgr) = app.try_state::<ServerManager>() {
             mgr.shutdown(&app);
         }
+        crate::commands::pty::close_all(&app.state::<crate::commands::pty::PtyState>());
         app.exit(0);
     });
 }
