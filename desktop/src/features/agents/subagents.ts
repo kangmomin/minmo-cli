@@ -48,13 +48,10 @@ export function parseSubagentFiles(files: readonly SubagentFile[], now: number =
 export const runningCount = (subs: readonly Subagent[] | undefined) => (subs ?? []).filter((s) => !s.finished).length
 
 /**
- * 원격 호스트에서 같은 것을 읽는 스크립트. $1 = 작업 폴더의 slug, $2 = 이 시각(초) 이전에 마지막으로 바뀐 세션은 보지 않는다(0 이면 전부).
- * 한 줄에 하나씩 "<id>\t<meta 가 바뀐 시각(초)>\t<기록이 바뀐 시각(초)>\t<meta.json 한 줄>"
+ * 원격에서 작업 폴더($1 = slug)의 가장 최근 세션 기록을 $s 에 찾고 바뀐 시각(초)을 읽는 mt() 를 정하는 앞부분.
+ * 기록이 없으면 아무것도 출력하지 않고 끝난다 — 하위 에이전트·마지막 답변 스크립트가 같이 쓴다
  */
-/** 원격에서 작업 폴더($1 = slug)의 최신 세션 기록($s)을 찾는 앞부분(#122) — 스텁: Phase 5.2(U6)에서 REMOTE_SUBAGENTS_SCRIPT 에서 뺀다 */
-export const REMOTE_SESSION_LOOKUP = ''
-
-export const REMOTE_SUBAGENTS_SCRIPT = `d="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+export const REMOTE_SESSION_LOOKUP = `d="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 [ -d "$d" ] || exit 0
 p=""
 # 정확히 그 이름의 폴더가 먼저다. 없을 때만 이름을 같은 규칙으로 바꿔 찾는다(버전에 따라 _ . 를 남기는 경우)
@@ -69,7 +66,13 @@ fi
 s=$(ls -t "$p"/*.jsonl 2>/dev/null | head -n 1)
 [ -n "$s" ] || exit 0
 mt() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
-# 이 에이전트가 뜨기 전에 끝난 세션(이전 실행의 기록)은 보지 않는다
+`
+
+/**
+ * 원격 호스트에서 같은 것을 읽는 스크립트. $1 = 작업 폴더의 slug, $2 = 이 시각(초) 이전에 마지막으로 바뀐 세션은 보지 않는다(0 이면 전부).
+ * 한 줄에 하나씩 "<id>\t<meta 가 바뀐 시각(초)>\t<기록이 바뀐 시각(초)>\t<meta.json 한 줄>"
+ */
+export const REMOTE_SUBAGENTS_SCRIPT = `${REMOTE_SESSION_LOOKUP}# 이 에이전트가 뜨기 전에 끝난 세션(이전 실행의 기록)은 보지 않는다
 [ "$(mt "$s")" -ge "\${2:-0}" ] || exit 0
 dir="\${s%.jsonl}/subagents"
 [ -d "$dir" ] || exit 0
