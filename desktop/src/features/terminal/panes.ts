@@ -1,4 +1,5 @@
 // 터미널 패널 분할 레이아웃 — 이슈별 이진 분할 트리(순수 함수). 각 leaf 가 PTY 하나를 가진다.
+
 // Why: 기본·★기타는 탭이 2개 이상이면 루트가 TabsNode 라 트리 모양이 둘이다 —
 // 소비처는 tabList·leafIds·tabOfPane 으로만 읽는다(tree.kind 를 직접 나누지 않는다).
 
@@ -12,7 +13,6 @@ export const leaf = (id: string): PaneNode => ({ kind: 'leaf', id })
 export type TermTab = { id: string; no: number; node: PaneNode }
 export type TabsNode = { kind: 'tabs'; tabs: TermTab[] }
 export type PaneTree = PaneNode | TabsNode
-/** 탭 없는 트리를 읽을 때의 가상 탭 id */
 export const FIRST_TAB_ID = 't0'
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

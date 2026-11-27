@@ -9,7 +9,6 @@ import { useUiStore } from '../../store/ui'
 import { IssueAgentDot } from '../agents/AgentBadge'
 import { homeOf, openDefault } from '../issue/defaultOpen'
 
-/** 트리 맨 위의 "⌂ 기본" 행 — 저장소와 관계없는 작업 공간(이 호스트의 홈 폴더). 클릭 = 열기(터미널이 떠 있으면 그 터미널로 포커스) */
 export function DefaultRow() {
   const host = useHost()
   const { home } = useDeps()

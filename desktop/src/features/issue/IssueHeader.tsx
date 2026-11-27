@@ -14,7 +14,7 @@ import { IssueManageActions } from './IssueManageActions'
 import { LocalFilesDialog } from './LocalFilesDialog'
 import { useIssueActions } from './useWorktree'
 
-/** 상단 바: 저장소·이슈, 브랜치(AC-05), worktree 경로, 준비 상태. 기본은 ⌂ 기본 · 홈 경로 · 에이전트 실행만 */
+/** Why: 기본은 저장소·브랜치가 없어 ⌂ 기본 · 홈 경로 · 에이전트 실행만 보인다 */
 export interface IssueHeaderProps {
   target: IssueTarget
   state: IssueOpenState | undefined

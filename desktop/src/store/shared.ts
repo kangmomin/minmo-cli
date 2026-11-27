@@ -23,8 +23,8 @@ type SharedUi = {
   worktreePathMap: UiState['worktreePathMap']
   agentCommands: UiState['agentCommands']
   /**
-   * 공유 = tree·seq·first·tabSeq(와 아래 tabNames) / 기기별 = focused·tab(고른 터미널 탭).
-   * first(원격 tmux 의 기본 세션을 쓰는 패널)는 기기마다 같아야 한다(#89 D-26)
+   * Why: first(원격 tmux 의 기본 세션을 쓰는 패널)는 기기마다 같아야 한다(#89 D-26).
+   * 공유 = tree·seq·first·tabSeq(와 아래 tabNames) / 기기별 = focused·tab(고른 터미널 탭)
    */
   panes: Record<string, Pick<IssuePanes, 'tree' | 'seq' | 'first' | 'tabSeq'>>
   /**
@@ -32,7 +32,7 @@ type SharedUi = {
    * 다른 PC 에서 그 이슈를 바로 열 수 있다
    */
   targets?: SetupState['targets']
-  /** 터미널 탭 이름. Why: 늘 보낸다 — merge3 는 키가 없으면 "지워짐"으로 합친다 */
+  /** Why: 늘 보낸다 — merge3 는 키가 없으면 "지워짐"으로 합친다 */
   tabNames?: UiState['tabNames']
 }
 
@@ -87,7 +87,6 @@ export function applySharedUi(value: unknown) {
         // Why: 깨진 트리도 받은 그대로 둔다 — 고쳐서 되올리면 다른 기기의 터미널이 꺼진다
         const tree = (p.tree ?? null) as PaneTree | null
         const mine = s.panes[id]
-        // 이 기기에서 포커스하던 패널·고른 탭이 아직 있으면 그대로 둔다
         const focused = mine?.focused ?? null
         // first 는 지금 패널이 아니어도(첫 패널을 닫은 뒤) 그대로 받는다. 없으면(이전 버전 화면) 이 기기의 값을 둔다
         const first = typeof p.first === 'string' ? p.first : mine?.first

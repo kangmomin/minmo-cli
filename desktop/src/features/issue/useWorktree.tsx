@@ -124,11 +124,11 @@ export function describeOpenError(e: unknown): { code: string; message: string; 
 
 const NO_WORKTREE = '기본 작업 공간은 worktree 가 없습니다'
 
-/** 호스트의 worktree 서비스로 이슈를 다루는 동작들. home: 이 PC 의 홈(기본을 열 때 쓴다) */
+/** Why: home 은 이 PC 의 홈 — 기본을 열 때 쓴다 */
 function issueActionsOf(service: WorktreeService, host: Host, home: string) {
   const worktreeId = host.issueId
   return {
-    /** 이슈 선택 + worktree 준비(AC-05~07). 이미 있으면 전환(AC-06). 기본은 worktree 없이 그 호스트의 홈을 바로 연다 */
+    /** Why: 기본은 worktree 없이 그 호스트의 홈을 바로 연다 */
     async open(t: IssueTarget) {
       if (isDefaultTarget(t)) return openDefault(host, homeOf(host.alias, home))
       const id = worktreeId(t.owner, t.repo, t.key)

@@ -11,7 +11,7 @@ const KEY = 'minmo-window-view'
 /** 이 화면(창)의 id — 새로 고치면 바뀐다 */
 const ME = Math.random().toString(36).slice(2)
 
-/** tab: 그 창이 보는 이슈의 고른 터미널 탭(창마다 따로다). 패널이 없으면 null */
+/** Why: tab 은 창마다 따로 고른다. 패널이 없으면 null */
 type View = { by: string; issueId: string | null; terminal: boolean; tab: string | null }
 
 function readView(): View | null {
@@ -23,7 +23,7 @@ function readView(): View | null {
   }
 }
 
-/** 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 — tabId 를 주면 그 창이 같은 터미널 탭을 볼 때만 */
+/** Why: tabId 를 주면 그 창이 같은 터미널 탭을 볼 때만 본 것으로 친다 */
 export function viewedInOtherWindow(issueId: string, tabId?: string | null): boolean {
   const v = readView()
   if (v === null || v.by === ME || v.issueId !== issueId || !v.terminal) return false

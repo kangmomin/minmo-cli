@@ -23,15 +23,14 @@ export type IssuePanes = {
   focused: string | null
   seq: number
   first?: string
-  /** 고른 터미널 탭(기기·창마다, TabsNode 일 때만). 없거나 사라졌으면 첫 탭 */
+  /** Why: 기기·창마다 따로 고른다. 없거나 사라졌으면 첫 탭 */
   tab?: string
-  /** 그 이슈에서 만든 탭 수 — 새 탭의 번호 이름(공유, TabsNode 일 때만) */
   tabSeq?: number
 }
 
 /**
- * 탭 이름·고른 탭·포커스 정리 규칙 — store 동작과 applySharedUi 가 같은 함수를 쓴다.
- * Why: 깨진 트리는 다른 기기의 값이라 고치지 않는다(되올리면 그 기기의 터미널이 꺼진다)
+ * Why: store 동작과 applySharedUi 가 같은 함수로 탭 이름·고른 탭·포커스를 정리한다.
+ * 깨진 트리는 다른 기기의 값이라 고치지 않는다(되올리면 그 기기의 터미널이 꺼진다)
  */
 export function reconcileIssuePanes(p: IssuePanes, names: Record<string, string> | undefined): { p: IssuePanes; names?: Record<string, string> } {
   if (p.tree !== null && !isPaneTree(p.tree)) return { p, names }
@@ -134,7 +133,7 @@ export interface UiState {
    * 터미널은 처리하지 않은 새 요청(객체)만 처리한다(자동 포커스 금지 AX-02)
    */
   focusRequest: { paneId: string; token: number } | null
-  /** [#120] 이슈별 터미널 탭 이름 issueId → tabId → 이름(공유, persist 안 함) */
+  /** Why: 공유하되 persist 하지 않는다 */
   tabNames: Record<string, Record<string, string>>
 
   setExpanded(id: string, v: boolean): void
@@ -187,13 +186,9 @@ export interface UiState {
   focusPane(issueId: string, paneId: string): void
   /** 모든 패널을 닫은 뒤 [새 터미널] */
   newPane(issueId: string): void
-  /** [#120] 기본·기타: 새 터미널 탭(패널 1개)을 만들고 그 탭으로 바꾼다 */
   newTab(issueId: string): void
-  /** [#120] 터미널 탭을 고른다 */
   selectTab(issueId: string, tabId: string): void
-  /** [#120] 터미널 탭을 닫는다 */
   closeTab(issueId: string, tabId: string): void
-  /** [#120] 터미널 탭 이름을 바꾼다(빈 값 = 번호 이름) */
   renameTab(issueId: string, tabId: string, name: string): void
 }
 
@@ -272,7 +267,7 @@ export const useUiStore = create<UiState>()(
           return id
         }
         if (!cur || leaves.length === 0) {
-          // 패널이 없으면(모두 닫음·아직 안 만듦·깨진 트리) 새로 만든다 — 옛 탭 이름은 새 터미널에 붙이지 않는다
+          // Why: 패널이 없으면(모두 닫음·아직 안 만듦·깨진 트리) 새로 만든다 — 옛 탭 이름은 새 터미널에 붙이지 않는다
           const fresh = freshPanes(issueId, (cur?.seq ?? 0) + 1)
           cur = fresh
           names = undefined
@@ -291,7 +286,7 @@ export const useUiStore = create<UiState>()(
         const s = get()
         const cur = s.panes[issueId]
         const leaves = leafIds(activeTabOf(cur?.tree ?? null, cur?.tab)?.node ?? null)
-        // 이미 연 이슈는 항상 새 패널(기본·기타는 새 탭) — 첫 터미널이 아직 뜨는 중(terminalIds 에 없음)이어도 그 자리를 다시 쓰지 않는다
+        // Why: 이미 연 이슈는 항상 새 패널(기본·기타는 새 탭) — 첫 터미널이 아직 뜨는 중(terminalIds 에 없음)이어도 그 자리를 다시 쓰지 않는다
         if (s.startedTerminals[issueId] && cur && leaves.length > 0) {
           if (hasTerminalTabs(issueId)) s.newTab(issueId)
           else s.splitPane(issueId, cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[leaves.length - 1], 'row')
@@ -339,7 +334,7 @@ export const useUiStore = create<UiState>()(
         set((s) => {
           if (workTabOf(issueId, s.tab) !== 'terminal') return s
           const cur = s.panes[issueId]
-          // 이 화면이 연 터미널, 또는 다른 화면이 열어 이미 떠 있는 터미널(보이면 붙는다 — 어느 탭이든)
+          // Why: 이 화면이 연 터미널, 또는 다른 화면이 열어 이미 떠 있는 터미널(보이면 붙는다 — 어느 탭이든)
           if (!s.startedTerminals[issueId] && !leafIds(cur?.tree ?? null).some((p) => p in s.terminalIds)) return s
           const leaves = leafIds(activeTabOf(cur?.tree ?? null, cur?.tab)?.node ?? null)
           const paneId = cur && cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[0]

@@ -3,7 +3,6 @@ import { remotePty } from '../../lib/sshHost'
 import type { PtyTmux, TauriApi } from '../../lib/tauri'
 import type { TerminalSessionSpec } from './TerminalTab'
 
-/** 패널 id `<이슈id>::<seq>` 의 seq */
 export function paneSeq(paneId: string): number {
   return Number(paneId.slice(paneId.lastIndexOf('::') + 2)) || 1
 }

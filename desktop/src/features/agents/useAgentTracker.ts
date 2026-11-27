@@ -57,14 +57,14 @@ type Tracked = PaneSignals & {
 
 const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false, claudeSince: 0 })
 
-/** 사용자가 지금 그 패널(그 이슈의 고른 터미널 탭)을 보고 있는가 — 대화상자가 덮고 있으면 보는 것이 아니다 */
+/** Why: 대화상자가 덮고 있으면 보는 것이 아니다 */
 function isViewed(issueId: string, paneId: string): boolean {
   if (typeof document === 'undefined') return false
   const ui = useUiStore.getState()
   const tree = ui.panes[issueId]?.tree ?? null
   // Why: 트리에 없는 패널은 탭을 모른다(null) — 지금처럼 이슈만 본다
   const paneTab = tabOfPane(tree, paneId)
-  // 보조 창에서 보고 있어도 본 것이다 — 알림은 주 창이 띄운다(#105)
+  // Why: 보조 창에서 보고 있어도 본 것이다 — 알림은 주 창이 띄운다(#105)
   if (viewedInOtherWindow(issueId, paneTab)) return true
   if (ui.selectedIssueId !== issueId || workTabOf(issueId, ui.tab) !== 'terminal') return false
   if (paneTab !== null && paneTab !== selectedTabId(tree, ui.panes[issueId]?.tab)) return false

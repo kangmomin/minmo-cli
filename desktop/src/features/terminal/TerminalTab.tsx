@@ -315,7 +315,7 @@ type TabPanesProps = {
   onLastClose: () => void
 }
 
-/** 탭 하나의 패널들. 트리 대신 평면 목록으로 배치해 분할·닫기 때 다른 패널이 다시 마운트되지 않게 한다 */
+/** Why: 트리 대신 평면 목록으로 배치해 분할·닫기 때 다른 패널이 다시 마운트되지 않게 한다 */
 function TabPanes({ spec, node, focused, active, hintId, onExit, onLastClose }: TabPanesProps) {
   const focusPane = useUiStore((s) => s.focusPane)
   const narrow = useNarrow()
