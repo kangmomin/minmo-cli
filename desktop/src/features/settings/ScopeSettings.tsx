@@ -219,7 +219,7 @@ function SettingsBody({ scope, previewIssue }: { scope: SettingsScope; previewIs
   return (
     <>
       {ready ? (
-        // 레코드가 바뀌면(저장 후 재조회) 폼을 새로 초기화한다
+        // Why: 레코드가 바뀌면(저장 후 재조회) 폼을 새로 초기화한다
         <SettingsForm
           key={s.record!.updatedAt ?? 'empty'}
           scope={scope}

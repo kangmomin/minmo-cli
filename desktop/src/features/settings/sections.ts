@@ -1,4 +1,4 @@
-// 설정 화면(#115)의 분류 목록과 검색 — 순수 함수만 둔다
+// Why: 설정 화면(#115)의 분류 목록과 검색 — 순수 함수만 둔다
 import type { RuntimeKind } from '../../lib/tauri'
 
 export type SectionId = 'appearance' | 'notify' | 'agents' | 'workspace' | 'sync' | 'hosts' | 'remote' | 'cli' | 'server'

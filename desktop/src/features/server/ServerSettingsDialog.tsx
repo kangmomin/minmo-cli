@@ -35,7 +35,7 @@ export function ServerSettingsDialog({ tauri = getTauri() }: ServerSettingsDialo
   )
 }
 
-/** 서버·앱 설정 폼 — onDone 이 있으면 대화상자(저장·취소 후 닫음), 없으면 설정 화면(열린 채 저장 결과를 보인다)에서 쓴다 */
+/** Why: 대화상자와 설정 화면이 함께 쓴다 — onDone 이 있으면 대화상자(저장·취소 후 닫음), 없으면 설정 화면(열린 채 저장 결과를 보인다) */
 export function ServerSettingsForm({ tauri, onDone }: { tauri: TauriApi; onDone?: () => void }) {
   const uid = useId()
   const fid = (name: string) => `${uid}-${name}`

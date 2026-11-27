@@ -17,7 +17,7 @@ export function AppearanceSection() {
   const setTheme = useUiStore((s) => s.setTheme)
   const fontSize = useUiStore((s) => s.fontSize)
   const setFontSize = useUiStore((s) => s.setFontSize)
-  // 입력 중인 글자 — 범위 안의 숫자가 됐을 때만 적용한다("1" 을 치는 순간 9 로 바뀌지 않게)
+  // Why: 입력 중인 글자 — 범위 안의 숫자가 됐을 때만 적용한다("1" 을 치는 순간 9 로 바뀌지 않게)
   const [fontDraft, setFontDraft] = useState(String(fontSize))
   useEffect(() => setFontDraft(String(fontSize)), [fontSize])
 

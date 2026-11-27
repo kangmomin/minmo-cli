@@ -5,7 +5,7 @@ import type { SettingsScope } from '@minmo/api-client'
 import type { SectionId } from '../features/settings/sections'
 import type { PreviewIssue } from '../features/settings/ScopeSettings'
 
-/** 작업 공간 분류의 범위 문맥 — 트리 ⚙ 로 연 조직·저장소, 또는 상단 ⚙ 때 고른 이슈의 저장소 */
+/** Why: 전역은 늘 범위 후보라 문맥에서 뺀다 — 문맥은 트리 ⚙ 로 연 조직·저장소, 또는 상단 ⚙ 때 고른 이슈의 저장소 */
 export type SettingsTarget = { context: Exclude<SettingsScope, { kind: 'global' }>; preview: PreviewIssue | null }
 
 export interface OpenSettingsOptions {
