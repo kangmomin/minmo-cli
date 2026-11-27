@@ -26,7 +26,7 @@ export function AppUpdateSection({ tauri, headingId }: { tauri: TauriApi; headin
     setResult('')
     try {
       const info = await checkForUpdate(tauri, true)
-      setResult(info ? `새 버전 v${info.version} 이 있습니다 — 화면 위 안내에서 설치하세요` : '최신 버전입니다')
+      setResult(info ? `새 버전 v${info.version} 이 있습니다 — 설정을 닫으면 화면 위 안내에서 설치할 수 있습니다` : '최신 버전입니다')
     } catch (e) {
       setResult(`확인하지 못했습니다: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
