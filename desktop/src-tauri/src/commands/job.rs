@@ -15,8 +15,9 @@ unsafe impl Send for Job {}
 unsafe impl Sync for Job {}
 
 impl Job {
-    pub fn for_process(pid: u32) -> Option<Job> {
-        // SAFETY: 각 호출의 반환값을 검사하고, 실패 경로에서 만든 핸들은 모두 닫는다
+    /// 빈 Job — 프로세스는 assign 으로 넣는다
+    pub fn new() -> Option<Job> {
+        // SAFETY: 각 호출의 반환값을 검사하고, 실패 경로에서 만든 핸들은 Drop 이 닫는다
         unsafe {
             let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if handle.is_null() {
@@ -31,16 +32,26 @@ impl Job {
                 &info as *const _ as *const core::ffi::c_void,
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             );
-            if set == 0 {
-                return None;
-            }
+            (set != 0).then_some(job)
+        }
+    }
+
+    pub fn for_process(pid: u32) -> Option<Job> {
+        let job = Job::new()?;
+        job.assign(pid).then_some(job)
+    }
+
+    /// pid 의 프로세스를 이 Job 에 넣는다
+    pub fn assign(&self, pid: u32) -> bool {
+        // SAFETY: 연 프로세스 핸들은 넣은 뒤 바로 닫는다
+        unsafe {
             let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
             if process.is_null() {
-                return None;
+                return false;
             }
-            let assigned = AssignProcessToJobObject(job.0, process);
+            let assigned = AssignProcessToJobObject(self.0, process);
             CloseHandle(process);
-            (assigned != 0).then_some(job)
+            assigned != 0
         }
     }
 
