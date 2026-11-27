@@ -1,6 +1,6 @@
 import { AppWindowIcon, ListTreeIcon, LogOutIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { SettingsScope } from '@minmo/api-client'
 
@@ -11,6 +11,7 @@ import { AgentsButton, AgentsOverview, useLocalRows } from '../features/agents/A
 import { useNotifyClick } from '../features/agents/navigate'
 import { useAgentTracker } from '../features/agents/useAgentTracker'
 import { useWindowViewBroadcast } from '../features/agents/windowView'
+import { ensureDefaultOpen, homeOf } from '../features/issue/defaultOpen'
 import { useLegacyE2eCleanup } from '../features/issue/legacyE2eCleanup'
 import { useDeepLinkOpen } from '../features/remote/deepLink'
 import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
@@ -31,6 +32,7 @@ import { Sidebar } from '../features/tree/Sidebar'
 import { UsageBar } from '../features/usage/UsageBar'
 import { NEW_WINDOW_KEY, useNewWindowShortcut, useTerminalOpenShortcut } from '../features/terminal/keys'
 import { openWindow } from '../features/tree/openWindow'
+import { isDefaultIssueId, isDefaultTarget } from '../lib/defaultWorkspace'
 import { useFontSizeShortcuts } from '../lib/fontSize'
 import { openServerSettings } from '../store/server'
 import { HostStatusNotice } from './HostGate'
@@ -90,10 +92,19 @@ export function Workspace() {
   useNotifyClick()
   const connection = useHostConnection()
 
-  const selectedPreview: PreviewIssue | null = target ?? null
+  // Why: 기본은 저장소가 없어 설정 미리보기 기준이 되지 않는다
+  const selectedPreview: PreviewIssue | null = target && !isDefaultTarget(target) ? target : null
   const issueAlias = selectedId ? aliasOfIssue(selectedId) : null
   // 고른 이슈의 호스트에 아직 연결하지 않았으면 연결한다(앱을 다시 켠 뒤, 호스트 정보를 고친 뒤 등)
   const issueHost = useHostStatus(issueAlias)
+  // Why: 다시 켠 뒤·새 창에서는 열기 상태·targets 가 비어 있다 — 기본이 골라져 있으면 호스트가 준비될 때 다시 만든다.
+  // 선택·작업 탭은 바꾸지 않는다(좁은 화면이 다시 연결될 때마다 작업 화면으로 넘어가지 않게)
+  const openPhase = openState?.phase
+  const baseHome = baseDeps.home
+  useEffect(() => {
+    if (!selectedId || !isDefaultIssueId(selectedId) || !issueHost.ready) return
+    if (openPhase === undefined || openPhase === 'error') ensureDefaultOpen(selectedId, homeOf(issueAlias, baseHome))
+  }, [selectedId, issueAlias, issueHost.ready, openPhase, baseHome])
 
   // 사이드바·설정은 고른 호스트 기준, 오른쪽 이슈 패널은 그 이슈가 있는 호스트 기준이다
   // (사이드바에서 다른 호스트를 보는 동안에도 열어 둔 이슈와 터미널은 그대로 쓴다)

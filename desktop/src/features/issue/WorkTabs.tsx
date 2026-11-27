@@ -3,6 +3,7 @@ import { useMemo, useRef } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import type { IssueTarget } from '@minmo/core'
 import { aliasOfIssue, useHost } from '../../app/host'
+import { isDefaultIssueId, workTabOf } from '../../lib/defaultWorkspace'
 import { useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
 import type { IssueOpenState } from '../../store/setup'
@@ -33,6 +34,9 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
   const useTmux = useHostsStore((s) => s.useTmux)
   const scopedId = useHost().issueId(target.owner, target.repo, target.key)
   const id = issueId ?? scopedId
+  // Why: 기본은 터미널만 쓴다 — 저장된 작업 탭과 관계없이 터미널을 보이고, 탭 줄은 DOM 을 남긴 채 감춘다(TerminalTab 이 다시 마운트되지 않게)
+  const isDefault = isDefaultIssueId(id)
+  const effectiveTab = workTabOf(id, tab)
   const terminalTrigger = useRef<HTMLButtonElement>(null)
 
   const sessions = useMemo(
@@ -48,8 +52,8 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
   const hasSession = sessions.some((s) => s.issueId === id)
 
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as WorkTab)} className="min-h-0 flex-1 gap-0">
-      <TabsList className="mx-3 mt-2">
+    <Tabs value={effectiveTab} onValueChange={(v) => setTab(v as WorkTab)} className="min-h-0 flex-1 gap-0">
+      <TabsList className="mx-3 mt-2" hidden={isDefault}>
         <TabsTrigger ref={terminalTrigger} value="terminal">
           터미널
         </TabsTrigger>
@@ -65,14 +69,14 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
         <TabsContent
           value="terminal"
           forceMount
-          hidden={tab !== 'terminal'}
+          hidden={effectiveTab !== 'terminal'}
           tabIndex={hasSession ? -1 : 0}
           className="absolute inset-0 after:pointer-events-none after:absolute after:inset-0 focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring"
         >
           <TerminalTab
             sessions={sessions}
             activeId={id}
-            visible={tab === 'terminal'}
+            visible={effectiveTab === 'terminal'}
             // Ctrl+Shift+M: 터미널 밖(탭 목록)으로 포커스 이동 — 화살표로 다른 탭, Tab 으로 다음 영역(AX-02)
             onExit={() => terminalTrigger.current?.focus()}
           />
