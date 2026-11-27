@@ -27,6 +27,7 @@ import { WorkTabs } from '../features/issue/WorkTabs'
 import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
 import type { PreviewIssue } from '../features/settings/SettingsDialog'
+import { TakerActionsProvider, useIssueTaker } from '../features/taker/useIssueTaker'
 import { Sidebar } from '../features/tree/Sidebar'
 import { UsageBar } from '../features/usage/UsageBar'
 import { NEW_WINDOW_KEY, useNewWindowShortcut, useTerminalOpenShortcut } from '../features/terminal/keys'
@@ -90,6 +91,7 @@ export function Workspace() {
   // 그 알림을 누르면 해당 터미널로 간다
   useNotifyClick()
   const connection = useHostConnection()
+  const takerActions = useIssueTaker()
 
   const selectedPreview: PreviewIssue | null = target ?? null
   const issueAlias = selectedId ? aliasOfIssue(selectedId) : null
@@ -101,6 +103,7 @@ export function Workspace() {
   // 사이드바·설정은 고른 호스트 기준, 오른쪽 이슈 패널은 그 이슈가 있는 호스트 기준이다
   // (사이드바에서 다른 호스트를 보는 동안에도 열어 둔 이슈와 터미널은 그대로 쓴다)
   return (
+    <TakerActionsProvider value={takerActions}>
     <HostScope alias={connection.ready ? connection.selected : null}>
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2 max-md:px-2">
@@ -244,5 +247,6 @@ export function Workspace() {
       )}
     </div>
     </HostScope>
+    </TakerActionsProvider>
   )
 }
