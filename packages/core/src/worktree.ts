@@ -104,7 +104,6 @@ export type WorktreeErrorCode =
   | 'branch_conflicts_etc'
   | 'git_failed'
   | 'server_required'
-  | 'etc_not_deletable'
   | 'not_found'
   | 'path_not_absolute'
 
@@ -809,8 +808,7 @@ export function createWorktreeService(deps: WorktreeDeps): WorktreeService {
     },
 
     async deleteWorktree(t, opts) {
-      // EC-16: ★기타는 삭제하지 않는다
-      if (t.key === 'etc') throw new WorktreeError('etc_not_deletable', { message: '기타 worktree 는 삭제할 수 없습니다' })
+      // EC-16(#119): ★기타도 다른 이슈처럼 지운다 — 트리의 ★기타 행은 그대로 있다
       const issueId = worktreeId(t.owner, t.repo, t.key)
       const entry = deps.pathStore.get(issueId)
       if (!entry) throw new WorktreeError('not_found', { message: 'worktree 가 없습니다' })
