@@ -57,7 +57,7 @@ export function SummarySettingsSection({ tauri, draft, onDraftChange }: SummaryS
       <h3 id={fid('summary')} className="text-sm font-semibold">
         세션 요약
       </h3>
-      <p className="text-xs text-muted-foreground">답변 모드 요약 카드에 보일 것을 고릅니다. 바꾸면 바로 적용되고 이 PC 에 저장됩니다.</p>
+      <p className="text-xs text-muted-foreground">답변 모드 요약 카드에 보일 것을 고릅니다. 체크는 바로 적용되고 이 PC 에 저장됩니다.</p>
       <div className="grid gap-1">
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={claudeReply} onChange={(e) => setClaudeReply(e.target.checked)} aria-describedby={fid('claude-hint')} />
