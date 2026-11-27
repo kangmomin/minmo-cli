@@ -24,6 +24,13 @@ pub struct SubagentFile {
     pub updated_ms: u64,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeReplyTail {
+    pub tail: String,
+    pub updated_ms: u64,
+}
+
 /// Claude Code 가 작업 폴더 경로로 폴더 이름을 만드는 방식: 영문·숫자가 아닌 글자를 모두 `-` 로 바꾼다
 pub(crate) fn project_slug(cwd: &str) -> String {
     cwd.chars()
@@ -134,6 +141,12 @@ pub async fn claude_subagents(cwd: String, since_ms: u64) -> Result<Vec<Subagent
     tauri::async_runtime::spawn_blocking(move || subagent_files(&projects, &cwd, since_ms))
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn claude_last_reply(cwd: String) -> Result<Option<ClaudeReplyTail>, String> {
+    let _ = cwd;
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -262,5 +275,17 @@ mod tests {
         assert!(subagent_files(&projects, "/w/app", 0).is_empty());
         assert!(subagent_files(&projects.join("missing"), "/w/app", 0).is_empty());
         let _ = fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn reply_tail_serializes_with_the_webview_field_names() {
+        let tail = ClaudeReplyTail {
+            tail: "x".into(),
+            updated_ms: 5,
+        };
+        assert_eq!(
+            serde_json::to_value(&tail).unwrap(),
+            serde_json::json!({ "tail": "x", "updatedMs": 5 })
+        );
     }
 }

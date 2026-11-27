@@ -59,6 +59,7 @@ const ALLOWED: &[&str] = &[
     "ptyList",
     "ptyProcesses",
     "claudeSubagents",
+    "claudeLastReply",
     "agentUsage",
     "scriptRun",
     "scriptCancel",
@@ -1955,6 +1956,15 @@ mod tests {
     fn terminal_link_events_reach_attached_devices() {
         for e in ["pty-data", "pty-exit", "pty-resized", "pty-link"] {
             assert!(FORWARDED_EVENTS.contains(&e), "{e}");
+        }
+    }
+
+    #[test]
+    fn remote_can_read_claude_replies_but_cannot_call_jev() {
+        let none = json!([]);
+        assert!(allowed("claudeLastReply", &none));
+        for m in ["jevDecide", "jevKeyStatus", "jevKeySet", "jevKeyDelete"] {
+            assert!(!allowed(m, &none), "{m}");
         }
     }
 

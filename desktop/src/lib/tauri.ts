@@ -350,6 +350,11 @@ export const TAURI_COMMANDS = {
   ptyReconnect: 'pty_reconnect',
   ptyProcesses: 'pty_processes',
   claudeSubagents: 'claude_subagents',
+  claudeLastReply: 'claude_last_reply',
+  jevDecide: 'jev_decide',
+  jevKeyStatus: 'jev_key_status',
+  jevKeySet: 'jev_key_set',
+  jevKeyDelete: 'jev_key_delete',
   agentUsage: 'agent_usage',
   scriptRun: 'script_run',
   scriptCancel: 'script_cancel',
@@ -517,16 +522,11 @@ export function createTauriApi(): TauriApi {
 
     ptyProcesses: (id) => call(C.ptyProcesses, { id }),
     claudeSubagents: (cwd, sinceMs) => call(C.claudeSubagents, { cwd, sinceMs: Math.max(0, Math.floor(sinceMs)) }),
-    // #122 자리 표시 — 네이티브 명령은 Phase 5.2(U6·U7)에서 연결한다
-    claudeLastReply: async () => null,
-    jevDecide: async () => {
-      throw new Error('jev_unavailable')
-    },
-    jevKeyStatus: async () => false,
-    jevKeySet: async () => {
-      throw new Error('jev_unavailable')
-    },
-    jevKeyDelete: async () => {},
+    claudeLastReply: (cwd) => call(C.claudeLastReply, { cwd }),
+    jevDecide: (body) => call(C.jevDecide, { body }),
+    jevKeyStatus: () => call(C.jevKeyStatus),
+    jevKeySet: (key) => call(C.jevKeySet, { key }),
+    jevKeyDelete: () => call(C.jevKeyDelete),
     agentUsage: (sinceMs) => call(C.agentUsage, { sinceMs: Math.max(0, Math.floor(sinceMs)) }),
     notify: async (title, body, target) => {
       // 모든 창이 에이전트 상태를 추적한다 — OS 알림은 주 창만 띄워 한 번만 뜨게 한다(#105)

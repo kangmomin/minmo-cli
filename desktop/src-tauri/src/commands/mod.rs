@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod fs;
 pub mod git;
+pub mod jev;
 #[cfg(windows)]
 pub mod job;
 pub mod keychain;
