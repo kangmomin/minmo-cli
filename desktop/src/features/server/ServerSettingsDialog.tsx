@@ -180,16 +180,15 @@ export function ServerSettingsForm({ tauri, onDone }: { tauri: TauriApi; onDone?
       )}
 
       <DialogFooter className="items-center">
-        {/* Why: live region 은 미리 렌더해 두어야 변화가 읽힌다 */}
-        {!onDone && (
-          <p className="mr-auto text-sm text-muted-foreground" role="status">
-            {saved ? '저장했습니다' : ''}
-          </p>
-        )}
-        {onDone && (
+        {onDone ? (
           <Button type="button" variant="ghost" onClick={onDone}>
             취소
           </Button>
+        ) : (
+          // Why: live region 은 미리 렌더해 두어야 변화가 읽힌다
+          <p className="mr-auto text-sm text-muted-foreground" role="status">
+            {saved ? '저장했습니다' : ''}
+          </p>
         )}
         <Button ref={saveButton} type="submit" disabled={saving}>
           저장

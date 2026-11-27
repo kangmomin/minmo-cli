@@ -429,7 +429,7 @@ function SettingsForm(props: {
     setErrors({})
     setFormError(null)
     props.onSaveStart()
-    const value =(f: TextField): string | null => (isGlobal ? text[f] : text[f] === '' ? null : text[f])
+    const value = (f: TextField): string | null => (isGlobal ? text[f] : text[f] === '' ? null : text[f])
     const input: SettingsInput = {
       branchTemplate: value('branchTemplate'),
       etcBranchName: value('etcBranchName'),
