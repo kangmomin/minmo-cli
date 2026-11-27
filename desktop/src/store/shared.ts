@@ -29,6 +29,8 @@ type SharedUi = {
    * 다른 PC 에서 그 이슈를 바로 열 수 있다
    */
   targets?: SetupState['targets']
+  /** [Red 스텁 #120] 터미널 탭 이름(공유) — 보내고 받는 동작은 Phase 5.2 에서 구현한다 */
+  tabNames?: UiState['tabNames']
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

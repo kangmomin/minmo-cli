@@ -8,6 +8,7 @@ import { TooltipProvider } from '../../components/ui/tooltip'
 import { worktreeId } from '@minmo/core'
 import type { GitHubClient, IssueTarget } from '@minmo/core'
 import { HostScope } from '../../app/host'
+import { DEFAULT_TARGET } from '../../lib/defaultWorkspace'
 import { useHostsStore } from '../../store/hosts'
 import { useSessionStore } from '../../store/session'
 import { MAX_LOG_LINES, useSetupStore } from '../../store/setup'
@@ -155,6 +156,46 @@ describe('AX-02 터미널에서 Ctrl+Shift+M → 탭 목록으로 포커스 이�
       xterm.handlers[0](new KeyboardEvent('keydown', { key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true }))
     })
     expect(screen.getByRole('tab', { name: '터미널' })).toHaveFocus()
+  })
+})
+
+// #120 기본·★기타 — 터미널 탭 줄이 있다. 기본은 작업 탭 줄을 감추므로 Ctrl+Shift+M 은 고른 터미널 탭 버튼으로 간다(AX)
+describe('기본·★기타의 터미널 탭 (#120)', () => {
+  const ETC: IssueTarget = { owner: 'o', repo: 'r', key: 'etc', number: null, title: '' }
+
+  function renderFor(target: IssueTarget, path: string) {
+    const id = worktreeId(target.owner, target.repo, target.key)
+    useSetupStore.setState({ open: { [id]: { phase: 'ready', path, branch: '', pathChanged: false } } })
+    return renderWithDeps(
+      <TooltipProvider>
+        <WorktreeProvider>
+          <WorkTabs target={target} state={useSetupStore.getState().open[id]} />
+        </WorktreeProvider>
+      </TooltipProvider>,
+      makeDeps({ api: createFakeApi({ getNotes: async () => ({ body: '', updatedAt: null }) }) }),
+    )
+  }
+
+  it.each([
+    ['★기타', ETC, '/w/etc'],
+    ['기본', DEFAULT_TARGET, '/home/u'],
+  ])('AX %s: 터미널에서 Ctrl+Shift+M → 고른 터미널 탭 버튼으로 포커스', async (_, target, path) => {
+    renderFor(target, path)
+    fireEvent.click(screen.getByRole('button', { name: '터미널 열기' }))
+    await vi.waitFor(() => expect(xterm.handlers.length).toBeGreaterThan(0))
+    act(() => {
+      xterm.handlers[0](new KeyboardEvent('keydown', { key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true }))
+    })
+    expect(screen.getByRole('tab', { name: '터미널 1' })).toHaveFocus()
+  })
+
+  it('AC-02 기본은 작업 탭 줄(터미널·변경·파일·메모)을 감추고, 저장된 작업 탭과 관계없이 터미널만 보인다', () => {
+    useUiStore.setState({ tab: 'files' })
+    renderFor(DEFAULT_TARGET, '/home/u')
+    expect(screen.queryByRole('tab', { name: '변경' })).toBeNull()
+    expect(screen.queryByRole('tab', { name: '메모' })).toBeNull()
+    expect(screen.getByTestId('terminal-tab').closest('[role="tabpanel"]')).not.toHaveAttribute('hidden')
+    expect(screen.getByRole('button', { name: '터미널 열기' })).toBeInTheDocument()
   })
 })
 

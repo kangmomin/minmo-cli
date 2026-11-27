@@ -20,8 +20,8 @@ function readView(): View | null {
   }
 }
 
-/** 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 */
-export function viewedInOtherWindow(issueId: string): boolean {
+/** 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 — [Red 스텁 #120] tabId(고른 터미널 탭) 비교는 Phase 5.2 에서 구현한다 */
+export function viewedInOtherWindow(issueId: string, _tabId?: string | null): boolean {
   const v = readView()
   return v !== null && v.by !== ME && v.issueId === issueId && v.terminal
 }

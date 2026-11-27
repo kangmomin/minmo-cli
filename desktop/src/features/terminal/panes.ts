@@ -7,13 +7,53 @@ export type PaneNode = { kind: 'leaf'; id: string } | { kind: 'split'; dir: Spli
 
 export const leaf = (id: string): PaneNode => ({ kind: 'leaf', id })
 
-export function leafIds(tree: PaneNode | null): string[] {
-  if (!tree) return []
+// [Red 스텁 #120] 터미널 탭 — 이름 계약만 둔다(동작은 Phase 5.2 에서 구현)
+export type TermTab = { id: string; no: number; node: PaneNode }
+export type TabsNode = { kind: 'tabs'; tabs: TermTab[] }
+export type PaneTree = PaneNode | TabsNode
+/** 탭 없는 트리를 읽을 때의 가상 탭 id */
+export const FIRST_TAB_ID = 't0'
+
+export function isPaneTree(_v: unknown): _v is PaneTree {
+  return false
+}
+
+export function tabList(_tree: PaneTree | null): TermTab[] {
+  return []
+}
+
+export function activeTabOf(_tree: PaneTree | null, _tabId: string | undefined): TermTab | null {
+  return null
+}
+
+export function selectedTabId(_tree: PaneTree | null, _tabId: string | undefined): string | null {
+  return null
+}
+
+export function tabOfPane(_tree: PaneTree | null, _paneId: string): string | null {
+  return null
+}
+
+export function addTab(tree: PaneTree | null, _tab: TermTab): TabsNode {
+  return tree as TabsNode
+}
+
+export function removeTab(tree: PaneTree, _tabId: string): { tree: PaneTree | null; focus: string | null } {
+  return { tree, focus: null }
+}
+
+export function leafIds(tree: PaneTree | null): string[] {
+  // [Red 스텁 #120] TabsNode 는 아직 읽지 않는다
+  if (!tree || tree.kind === 'tabs') return []
   return tree.kind === 'leaf' ? [tree.id] : [...leafIds(tree.a), ...leafIds(tree.b)]
 }
 
 /** target 패널을 둘로 나눈다. 기존 패널은 왼쪽/위, 새 패널은 오른쪽/아래. target 이 없으면 그대로 */
-export function splitPane(tree: PaneNode, target: string, dir: SplitDir, newId: string): PaneNode {
+export function splitPane(tree: PaneNode, target: string, dir: SplitDir, newId: string): PaneNode
+export function splitPane(tree: PaneTree, target: string, dir: SplitDir, newId: string): PaneTree
+export function splitPane(tree: PaneTree, target: string, dir: SplitDir, newId: string): PaneTree {
+  // [Red 스텁 #120] TabsNode 는 아직 나누지 않는다
+  if (tree.kind === 'tabs') return tree
   if (tree.kind === 'leaf') return tree.id === target ? { kind: 'split', dir, a: tree, b: leaf(newId) } : tree
   const a = splitPane(tree.a, target, dir, newId)
   const b = a === tree.a ? splitPane(tree.b, target, dir, newId) : tree.b
@@ -24,7 +64,11 @@ export function splitPane(tree: PaneNode, target: string, dir: SplitDir, newId: 
  * target 패널을 닫는다. 형제가 그 자리를 채우고, 포커스는 형제 쪽의 첫 패널로 옮긴다.
  * 마지막 패널이면 tree=null. target 이 없으면 그대로(focus=null).
  */
-export function closePane(tree: PaneNode, target: string): { tree: PaneNode | null; focus: string | null } {
+export function closePane(tree: PaneNode, target: string): { tree: PaneNode | null; focus: string | null }
+export function closePane(tree: PaneTree, target: string): { tree: PaneTree | null; focus: string | null }
+export function closePane(tree: PaneTree, target: string): { tree: PaneTree | null; focus: string | null } {
+  // [Red 스텁 #120] TabsNode 는 아직 닫지 않는다
+  if (tree.kind === 'tabs') return { tree, focus: null }
   if (tree.kind === 'leaf') return tree.id === target ? { tree: null, focus: null } : { tree, focus: null }
   if (tree.a.kind === 'leaf' && tree.a.id === target) return { tree: tree.b, focus: leafIds(tree.b)[0] }
   if (tree.b.kind === 'leaf' && tree.b.id === target) return { tree: tree.a, focus: leafIds(tree.a).at(-1) ?? null }

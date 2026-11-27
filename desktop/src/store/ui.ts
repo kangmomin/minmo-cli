@@ -4,7 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 import { DEFAULT_AGENT_COMMANDS, LAUNCH_KINDS } from '../features/agents/launch'
 import type { LaunchKind } from '../features/agents/launch'
 import { closePane, leaf, leafIds, splitPane } from '../features/terminal/panes'
-import type { PaneNode, SplitDir } from '../features/terminal/panes'
+import type { PaneTree, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
 import { followOtherWindows, perWindowStorage } from '../lib/windowScope'
 
@@ -16,7 +16,24 @@ export type Theme = 'ghostty' | 'black' | 'light'
  * 이슈별 터미널 패널 배치. tree=null 이면 모든 패널을 닫은 상태.
  * first: 패널이 없을 때 처음 만든 패널 — 원격 tmux 의 기본 세션을 쓰는 패널이다(분할·닫기로 바뀌지 않는다, #89 D-26)
  */
-export type IssuePanes = { tree: PaneNode | null; focused: string | null; seq: number; first?: string }
+export type IssuePanes = {
+  tree: PaneTree | null
+  focused: string | null
+  seq: number
+  first?: string
+  /** [#120] 고른 터미널 탭(기기·창마다, TabsNode 일 때만) */
+  tab?: string
+  /** [#120] 그 이슈에서 만든 탭 수(공유, TabsNode 일 때만) */
+  tabSeq?: number
+}
+
+/**
+ * [Red 스텁 #120] 탭 이름·고른 탭·포커스 정리 규칙 — store 동작과 applySharedUi 가 같은 함수를 쓴다.
+ * 동작은 Phase 5.2 에서 구현한다(지금은 입력 그대로)
+ */
+export function reconcileIssuePanes(p: IssuePanes, names: Record<string, string> | undefined): { p: IssuePanes; names?: Record<string, string> } {
+  return { p, names }
+}
 
 /** 패널이 없을 때 새로 만드는 패널 하나 — 이 패널이 first 가 된다(패널을 처음 만드는 모든 경로가 쓴다) */
 function freshPanes(issueId: string, seq: number): IssuePanes & { focused: string } {
@@ -94,6 +111,8 @@ export interface UiState {
    * 터미널은 처리하지 않은 새 요청(객체)만 처리한다(자동 포커스 금지 AX-02)
    */
   focusRequest: { paneId: string; token: number } | null
+  /** [#120] 이슈별 터미널 탭 이름 issueId → tabId → 이름(공유, persist 안 함) */
+  tabNames: Record<string, Record<string, string>>
 
   setExpanded(id: string, v: boolean): void
   selectIssue(id: string | null): void
@@ -145,6 +164,14 @@ export interface UiState {
   focusPane(issueId: string, paneId: string): void
   /** 모든 패널을 닫은 뒤 [새 터미널] */
   newPane(issueId: string): void
+  /** [#120] 기본·기타: 새 터미널 탭(패널 1개)을 만들고 그 탭으로 바꾼다 */
+  newTab(issueId: string): void
+  /** [#120] 터미널 탭을 고른다 */
+  selectTab(issueId: string, tabId: string): void
+  /** [#120] 터미널 탭을 닫는다 */
+  closeTab(issueId: string, tabId: string): void
+  /** [#120] 터미널 탭 이름을 바꾼다(빈 값 = 번호 이름) */
+  renameTab(issueId: string, tabId: string, name: string): void
 }
 
 export const useUiStore = create<UiState>()(
@@ -171,6 +198,7 @@ export const useUiStore = create<UiState>()(
       panes: {},
       startedTerminals: {},
       focusRequest: null,
+      tabNames: {},
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
       selectIssue: (selectedIssueId) => set((s) => ({ selectedIssueId, selectSeq: s.selectSeq + 1 })),
       setTab: (tab) => set({ tab }),
@@ -339,6 +367,11 @@ export const useUiStore = create<UiState>()(
             focusRequest: { paneId: next.focused, token: (s.focusRequest?.token ?? 0) + 1 },
           }
         }),
+      // [Red 스텁 #120] 터미널 탭 동작 — state 를 바꾸지 않는다(Phase 5.2 에서 구현)
+      newTab: () => undefined,
+      selectTab: () => undefined,
+      closeTab: () => undefined,
+      renameTab: () => undefined,
     }),
     {
       name: 'minmo-ui',
