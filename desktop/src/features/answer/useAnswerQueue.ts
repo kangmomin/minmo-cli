@@ -5,6 +5,7 @@ import { useBaseDeps } from '../../app/deps'
 import { aliasOfIssue } from '../../app/host'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
+import type { UiState } from '../../store/ui'
 import { useLocalRows } from '../agents/AgentsOverview'
 import { STATUS_LABEL, useAgentStore } from '../agents/agentStore'
 import { goToPane, openPaneTarget } from '../agents/navigate'
@@ -66,9 +67,13 @@ type Arrival = { focus: boolean; text: string }
 // Why: step 은 부를 때마다 새 session 객체를 돌려준다 — 값이 같으면 다시 그리지 않는다.
 const sameSession = (a: Session | null, b: Session | null) => a === b || (a !== null && b !== null && (Object.keys(a) as (keyof Session)[]).every((k) => a[k] === b[k]))
 
+/** 고른 이슈에서 보이는 패널(store selector) — 대기열과 요약 카드가 같은 패널을 본다 */
+export const shownPaneOf = (s: Pick<UiState, 'selectedIssueId' | 'panes'>): string | null =>
+  s.selectedIssueId === null ? null : effectivePane(s.panes[s.selectedIssueId])
+
 function shownNow(): Shown {
-  const { selectedIssueId: issueId, panes } = useUiStore.getState()
-  return { issueId, paneId: issueId === null ? null : effectivePane(panes[issueId]) }
+  const s = useUiStore.getState()
+  return { issueId: s.selectedIssueId, paneId: shownPaneOf(s) }
 }
 
 const isReady = (issueId: string | null) => issueId !== null && useSetupStore.getState().open[issueId]?.phase === 'ready'
@@ -83,7 +88,7 @@ export function useAnswerQueue(enabled: boolean, { narrowListOpen }: { narrowLis
   const local = useLocalRows()
   const panes = useUiStore((s) => s.panes)
   const shownIssue = useUiStore((s) => s.selectedIssueId)
-  const shownPane = useUiStore((s) => (s.selectedIssueId === null ? null : effectivePane(s.panes[s.selectedIssueId])))
+  const shownPane = useUiStore(shownPaneOf)
   const rows = useMemo(() => answerRows(local, panes), [local, panes])
   const [view, setView] = useState<View>(EMPTY)
   const [arrival, setArrival] = useState<Arrival | null>(null)
@@ -278,7 +283,7 @@ export function useAnswerQueue(enabled: boolean, { narrowListOpen }: { narrowLis
   }, [enabled, api])
 
   useEffect(() => {
-    if (narrowListOpen && live.current.enabled) api.cancel()
+    if (narrowListOpen) api.cancel()
   }, [narrowListOpen, api])
 
   useEffect(() => {

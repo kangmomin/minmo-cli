@@ -91,6 +91,9 @@ export function isWaiting(status: AgentStatus): boolean {
   return status !== 'working'
 }
 
+/** 지난 시간의 시작 — 작업 중이면 작업을 시작한 때, 기다리면 기다리기 시작한 때 */
+export const sinceOf = (r: AgentRow) => (r.status === 'working' ? r.since : (r.waitingSince ?? r.since))
+
 /** Why: 건너뛴 기록은 그때의 기다림에만 쓴다 — 다시 기다리는 상태가 되면(waitingSince 가 바뀜) 원래 순서로 돌아온다. */
 const skipOf = (skipped: Skipped, r: AgentRow) => {
   const s = skipped[rowKey(r)]
@@ -130,16 +133,7 @@ export function urgentRows(waiting: AgentRow[], session: Session | null, skipped
 
 export function sessionFromRow(row: AgentRow): Session {
   const waiting = isWaiting(row.status)
-  return {
-    issueId: row.issueId,
-    paneId: row.paneId,
-    shownWaiting: waiting,
-    waitStart: row.waitingSince,
-    shownStatus: waiting ? row.status : null,
-    agentSeen: true,
-    goneAt: null,
-    closedAt: null,
-  }
+  return { ...newSession(row), shownWaiting: waiting, waitStart: row.waitingSince, shownStatus: waiting ? row.status : null, agentSeen: true }
 }
 
 export function newSession(shown: Shown): Session {
@@ -189,16 +183,14 @@ function observe(s: Session, input: StepInput): Session {
 
 export function step(state: QueueState, input: StepInput): StepResult {
   const { now, shown, row, lastInput } = input
-  let pending = state.pending
-  let cancelled = false
+  const { pending } = state
   if (pending) {
     // Why: 이동 중 같은 이슈 안의 화면 변화는 열기 과정이라 사용자 선택이 아니다 — 다른 이슈를 고르거나 옛 패널에 쳐야 취소한다.
     const elsewhere = shown.issueId !== pending.from.issueId && shown.issueId !== pending.issueId
     const typedInFrom = shown.issueId === pending.from.issueId && shown.paneId === pending.from.paneId && input.fromInput > pending.at
     if (!elsewhere && !typedInFrom) return { state }
-    pending = null
-    cancelled = true
   }
+  const cancelled = pending !== null
 
   const session = observe(follow(state.session, input), input)
   let entry = state.entry !== null && state.entry.issueId === shown.issueId ? state.entry : null
@@ -209,7 +201,7 @@ export function step(state: QueueState, input: StepInput): StepResult {
     delete blocked[rowKey(row)]
   }
   const done = (go?: StepResult['go']): StepResult => {
-    const next: QueueState = { session, entry, pending, skipped: state.skipped, blocked }
+    const next: QueueState = { session, entry, pending: null, skipped: state.skipped, blocked }
     return go ? { state: next, go } : cancelled ? { state: next, cancelled: true } : { state: next }
   }
   const isBlocked = (r: AgentRow) => blocked[rowKey(r)] === true

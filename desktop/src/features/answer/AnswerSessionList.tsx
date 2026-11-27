@@ -8,6 +8,7 @@ import { STATUS_LABEL } from '../agents/agentStore'
 import { rowKey } from '../agents/overview'
 import type { AgentRow } from '../agents/overview'
 import { Elapsed } from './Elapsed'
+import { sinceOf } from './queue'
 import type { AnswerQueue } from './useAnswerQueue'
 
 export interface AnswerSessionListProps {
@@ -15,8 +16,6 @@ export interface AnswerSessionListProps {
   onNewSession(): void
   newSessionRef?: Ref<HTMLButtonElement>
 }
-
-const sinceOf = (r: AgentRow) => (r.status === 'working' ? r.since : (r.waitingSince ?? r.since))
 
 export function AnswerSessionList({ queue, onNewSession, newSessionRef }: AnswerSessionListProps) {
   const uid = useId()

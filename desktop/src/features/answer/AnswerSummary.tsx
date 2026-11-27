@@ -10,10 +10,11 @@ import { StatusDot } from '../agents/AgentBadge'
 import { STATUS_LABEL } from '../agents/agentStore'
 import { goToPane } from '../agents/navigate'
 import type { AgentRow } from '../agents/overview'
-import { effectivePane } from '../terminal/panes'
 import { ClaudeReply } from './ClaudeLastReply'
 import { Elapsed } from './Elapsed'
 import { JevVerdict } from './JevVerdict'
+import { sinceOf } from './queue'
+import { shownPaneOf } from './useAnswerQueue'
 import type { AnswerQueue } from './useAnswerQueue'
 
 export interface AnswerSummaryProps {
@@ -30,7 +31,7 @@ export function AnswerSummary({ queue, whereId, headingRef, onNewSession }: Answ
   const ids = { heading: `${uid}-h`, answer: `${uid}-a`, skip: `${uid}-s`, urgent: `${uid}-u` }
   const { waiting, current, urgent } = queue
   const issueId = useUiStore((s) => s.selectedIssueId)
-  const paneId = useUiStore((s) => (s.selectedIssueId === null ? null : effectivePane(s.panes[s.selectedIssueId])))
+  const paneId = useUiStore(shownPaneOf)
   const hasTerminal = useUiStore((s) => paneId !== null && paneId in s.terminalIds)
   const ready = useSetupStore((s) => issueId !== null && s.open[issueId]?.phase === 'ready')
   const where = useWhere(current, issueId)
@@ -158,7 +159,7 @@ function StatusLine({ row }: { row: AgentRow }) {
   return (
     <span className="flex items-center gap-1.5">
       <StatusDot status={row.status} />
-      {STATUS_LABEL[row.status]} · <Elapsed since={working ? row.since : (row.waitingSince ?? row.since)} />
+      {STATUS_LABEL[row.status]} · <Elapsed since={sinceOf(row)} />
       {working ? '째 작업 중' : ' 기다림'}
     </span>
   )
