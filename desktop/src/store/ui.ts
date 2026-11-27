@@ -120,7 +120,7 @@ export interface UiState {
    * keepFirst: 첫 패널을 쓰지 않는다 — 원격 호스트의 첫 패널은 앱을 꺼도 남는 tmux 세션에 다시 붙으므로,
    * 거기서 돌고 있을지 모르는 프로그램에 명령이 입력되지 않게 항상 새 패널을 만든다.
    */
-  launchPane(issueId: string, keepFirst?: boolean): string
+  launchPane(issueId: string, keepFirst?: boolean, focus?: boolean): string
   /** 이슈의 터미널을 연다(Ctrl+T·[터미널 열기]): 아직 없으면 첫 터미널을 시작하고, 이미 있으면 오른쪽에 새 패널을 만든다 */
   openTerminal(issueId: string): void
   /** 이미 떠 있는 터미널에 붙을 때 — 패널 구성·포커스는 건드리지 않고 터미널만 보이게 한다 */
@@ -205,7 +205,7 @@ export const useUiStore = create<UiState>()(
       setLastLaunchKind: (lastLaunchKind) => set({ lastLaunchKind }),
       setPeerSync: (peerSync) => set({ peerSync }),
       setLaunchRequest: (launchRequest) => set({ launchRequest }),
-      launchPane: (issueId, keepFirst = false) => {
+      launchPane: (issueId, keepFirst = false, _focus = true) => {
         const s = get()
         let cur = s.panes[issueId]
         const leaves = leafIds(cur?.tree ?? null)

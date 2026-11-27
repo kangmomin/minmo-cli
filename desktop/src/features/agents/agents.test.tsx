@@ -12,9 +12,21 @@ import { makeDeps, renderHookWithDeps, renderWithDeps } from '../../test/render'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import { IssueAgentDot, PaneAgentStrip } from './AgentBadge'
 import { AgentsButton, AgentsOverview } from './AgentsOverview'
-import { QUIET_MS, derive, issueStatus, statusOf, useAgentStore } from './agentStore'
+import { PROCESS_POLL_MS, QUIET_MS, derive, issueStatus, shellOnly, statusOf, useAgentStore } from './agentStore'
 import type { PaneAgent, PaneSignals } from './agentStore'
 import { guessProgram, parseTitle, titleSignal } from './detect'
+import {
+  LAUNCH_TTL_MS,
+  cancelLaunch,
+  clearLaunchResult,
+  dropLaunch,
+  isLaunchCancelled,
+  launchResult,
+  markLaunched,
+  queueLaunch,
+  resetLaunchQueue,
+  takeLaunch,
+} from './launchQueue'
 import { ago, filterRows, groupRows, sortRows, toRows } from './overview'
 import type { AgentRow } from './overview'
 import { PtyStreamParser } from './ptyStream'
@@ -23,6 +35,10 @@ import type { Subagent } from './subagents'
 import { DONE_BELL_MS, ECHO_MS, muteTerminalActivity, noteTerminalInput, useAgentTracker } from './useAgentTracker'
 
 const osc = (title: string, end = '\x07') => `\x1b]0;${title}${end}`
+
+afterEach(() => {
+  resetLaunchQueue()
+})
 
 describe('PtyStreamParser', () => {
   it('창 제목(OSC 0·2, BEL 또는 ESC \\ 로 끝남)을 순서대로 읽는다 — 다른 OSC(링크 등)는 무시', () => {
@@ -752,5 +768,171 @@ describe('표시', () => {
     useAgentStore.getState().clear()
     renderWithDeps(<AgentsOverview open onOpenChange={() => {}} />, makeDeps())
     expect(screen.getByRole('status')).toHaveTextContent('터미널에서 도는 에이전트가 없습니다')
+  })
+})
+
+describe('셸만 남았는가 — shellOnly · shellSince (이슈 테이커)', () => {
+  const P = 'acme/app#1::1'
+  const Q = 'acme/app#1::2'
+  const agent = (paneId: string): PaneAgent => ({ paneId, issueId: 'acme/app#1', agent: 'claude', program: 'claude', label: '', activity: 'idle', unseen: false, lastOutputAt: 0, since: 0 })
+  const sub: Subagent = { id: 's1', type: 'Explore', description: 'x', finished: false, updatedAt: 0 }
+
+  beforeEach(() => {
+    useAgentStore.setState({ panes: {}, subagents: {}, shellSince: {} })
+  })
+
+  it.each<[string, Pick<PaneSignals, 'processes' | 'tmuxProgram'>, boolean | null]>([
+    ['이 PC 에서 셸 아래에 셸뿐이면 true', { processes: ['conhost.exe'] }, true],
+    ['이 PC 에서 셸 아래에 프로그램이 있으면 false', { processes: ['conhost.exe', 'claude.exe'] }, false],
+    ['이 PC 에서 아직 프로세스를 모르면 null', { processes: null }, null],
+    ['tmux 원격에서 앞 프로그램이 셸이면 true', { processes: null, tmuxProgram: 'bash' }, true],
+  ])('EC-29 shellOnly: %s', (_label, sig, expected) => {
+    expect(shellOnly(sig)).toBe(expected)
+  })
+
+  it('EC-29 프로세스 확인 간격 PROCESS_POLL_MS 는 agentStore 에 있다(3초)', () => {
+    expect(PROCESS_POLL_MS).toBe(3000)
+  })
+
+  it('EC-29 setShell 은 시각을 기록하고, 같은 값이면 store 를 그대로 두고, null 이면 지운다', () => {
+    useAgentStore.getState().setShell(P, 1000)
+    expect(useAgentStore.getState().shellSince).toEqual({ [P]: 1000 })
+    const before = useAgentStore.getState()
+    useAgentStore.getState().setShell(P, 1000)
+    expect(useAgentStore.getState()).toBe(before)
+    useAgentStore.getState().setShell(P, null)
+    expect(useAgentStore.getState().shellSince).toEqual({})
+  })
+
+  it('EC-29 set(paneId, null) 은 shellSince 를 그대로 둔다', () => {
+    useAgentStore.setState({ panes: { [P]: agent(P) }, shellSince: { [P]: 5 } })
+    useAgentStore.getState().set(P, null)
+    expect(useAgentStore.getState().panes).toEqual({})
+    expect(useAgentStore.getState().shellSince).toEqual({ [P]: 5 })
+  })
+
+  it('EC-29 clear() 는 shellSince 도 비운다', () => {
+    useAgentStore.setState({ panes: { [P]: agent(P) }, shellSince: { [P]: 5 } })
+    useAgentStore.getState().clear()
+    expect(useAgentStore.getState().shellSince).toEqual({})
+  })
+
+  it('EC-28 clearPane 은 닫힌 패널의 panes·subagents·shellSince 를 지우고 다른 패널은 둔다', () => {
+    useAgentStore.setState({ panes: { [P]: agent(P), [Q]: agent(Q) }, subagents: { [P]: [sub], [Q]: [sub] }, shellSince: { [P]: 5, [Q]: 6 } })
+    useAgentStore.getState().clearPane(P)
+    const s = useAgentStore.getState()
+    expect(Object.keys(s.panes)).toEqual([Q])
+    expect(Object.keys(s.subagents)).toEqual([Q])
+    expect(s.shellSince).toEqual({ [Q]: 6 })
+  })
+})
+
+describe('[에이전트 실행] 대기열 결과 (이슈 테이커)', () => {
+  const P = 'acme/app#1::1'
+  const Q = 'acme/app#1::2'
+
+  it('EC-07 track 해 맡긴 명령은 꺼내기 전에도, 꺼낸 뒤에도 pending', () => {
+    queueLaunch(P, 'claude', { track: true })
+    expect(launchResult(P)).toBe('pending')
+    expect(takeLaunch(P)).toBe('claude')
+    expect(launchResult(P)).toBe('pending')
+  })
+
+  it('EC-07 터미널에 넣으면(markLaunched) written', () => {
+    queueLaunch(P, 'claude', { track: true })
+    takeLaunch(P)
+    markLaunched(P)
+    expect(launchResult(P)).toBe('written')
+  })
+
+  it('EC-07 넣지 못하면(dropLaunch) dropped', () => {
+    queueLaunch(P, 'claude', { track: true })
+    takeLaunch(P)
+    dropLaunch(P)
+    expect(launchResult(P)).toBe('dropped')
+  })
+
+  it('AC-08 대기 중에 cancelLaunch 하면 cancelled 이고 다시 꺼낼 수 없다', () => {
+    queueLaunch(P, 'claude', { track: true })
+    expect(isLaunchCancelled(P)).toBe(false)
+    cancelLaunch(P)
+    expect(launchResult(P)).toBe('cancelled')
+    expect(isLaunchCancelled(P)).toBe(true)
+    expect(takeLaunch(P)).toBeUndefined()
+  })
+
+  it('AC-08 꺼낸 뒤(taken) cancelLaunch 해도 cancelled', () => {
+    queueLaunch(P, 'claude', { track: true })
+    takeLaunch(P)
+    cancelLaunch(P)
+    expect(launchResult(P)).toBe('cancelled')
+    expect(isLaunchCancelled(P)).toBe(true)
+  })
+
+  it('AC-08 맡긴 명령이 없는 패널의 cancelLaunch 는 아무것도 기록하지 않는다', () => {
+    queueLaunch(P, 'claude', { track: true })
+    cancelLaunch(P)
+    cancelLaunch(Q)
+    expect(launchResult(P)).toBe('cancelled')
+    expect(launchResult(Q)).toBeNull()
+  })
+
+  it('EC-07 TTL(120초)이 지나면 꺼낼 수 없고, track 한 명령만 expired 로 남는다', () => {
+    vi.useFakeTimers()
+    try {
+      queueLaunch(P, 'claude', { track: true })
+      queueLaunch(Q, 'codex')
+      vi.advanceTimersByTime(LAUNCH_TTL_MS + 1)
+      expect(takeLaunch(P)).toBeUndefined()
+      expect(takeLaunch(Q)).toBeUndefined()
+      expect(launchResult(P)).toBe('expired')
+      expect(launchResult(Q)).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('EC-07 written 뒤 같은 패널에 다시 맡기면 옛 결과를 지우고 pending', () => {
+    queueLaunch(P, 'claude', { track: true })
+    takeLaunch(P)
+    markLaunched(P)
+    queueLaunch(P, 'claude --continue', { track: true })
+    expect(launchResult(P)).toBe('pending')
+  })
+
+  it('EC-07 track 없이 맡긴 명령([에이전트 실행])은 결과를 남기지 않는다', () => {
+    queueLaunch(P, 'claude')
+    queueLaunch(Q, 'claude', { track: true })
+    expect(launchResult(P)).toBeNull()
+    expect(takeLaunch(P)).toBe('claude')
+    markLaunched(P)
+    expect(launchResult(P)).toBeNull()
+    expect(launchResult(Q)).toBe('pending')
+  })
+
+  it('EC-07 track 없는 queueLaunch 가 track 한 대기·꺼낸 항목을 덮으면 그 항목은 dropped', () => {
+    queueLaunch(P, 'claude', { track: true })
+    queueLaunch(P, 'codex')
+    expect(launchResult(P)).toBe('dropped')
+    expect(takeLaunch(P)).toBe('codex')
+
+    queueLaunch(Q, 'claude', { track: true })
+    takeLaunch(Q)
+    queueLaunch(Q, 'codex')
+    expect(launchResult(Q)).toBe('dropped')
+  })
+
+  it('EC-07 패널 id 가 없으면(null) 결과도 null', () => {
+    queueLaunch(P, 'claude', { track: true })
+    expect(launchResult(null)).toBeNull()
+    expect(launchResult(P)).toBe('pending')
+  })
+
+  it('EC-07 clearLaunchResult 는 기록된 결과를 지운다', () => {
+    queueLaunch(P, 'claude', { track: true })
+    takeLaunch(P)
+    markLaunched(P)
+    clearLaunchResult(P)
+    expect(launchResult(P)).toBeNull()
   })
 })

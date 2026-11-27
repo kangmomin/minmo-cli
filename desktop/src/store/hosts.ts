@@ -103,6 +103,14 @@ export function repoAliasOf(s: Pick<HostsState, 'repoHosts'>, owner: string, rep
   return id === undefined ? undefined : aliasOfHostId(id)
 }
 
+export function workHostAliasOf(_s: Pick<HostsState, 'repoHosts' | 'selected'>, _owner: string, _repo: string): string | null {
+  throw new Error('not implemented')
+}
+
+export function usesTmux(_s: Pick<HostsState, 'useTmux' | 'probes'>, _alias: string | null): boolean {
+  throw new Error('not implemented')
+}
+
 export const useHostsStore = create<HostsState>()(
   persist(
     (set) => ({

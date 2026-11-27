@@ -13,6 +13,7 @@ import type {
   GitHubPr,
   GitHubRepo,
   IssueCloseReason,
+  RecentIssue,
   UpdateIssueInput,
 } from './types'
 
@@ -50,6 +51,8 @@ export interface GitHubClient {
   defaultBranch(owner: string, repo: string): Promise<string>
   /** 저장소 하나 — 대소문자를 GitHub 표기(canonical)로 맞출 때 쓴다 */
   getRepo(owner: string, repo: string): Promise<GitHubRepo>
+  listRecentIssues(owner: string, repo: string, opts?: { creator?: string }): Promise<RecentIssue[]>
+  latestNumber(owner: string, repo: string): Promise<number>
   /** 이슈 하나(PR 이면 not_found). 본문 줄바꿈은 \n 으로 맞춘다 */
   getIssue(owner: string, repo: string, number: number): Promise<GitHubIssueDetail>
   openPrForBranch(owner: string, repo: string, branch: string): Promise<GitHubPr | null>
@@ -218,6 +221,14 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
       withTransport(async (t) => toRepo((await t.get(`repos/${enc(owner)}/${enc(repo)}`)).data as RawRepo).defaultBranch),
 
     getRepo: (owner, repo) => withTransport(async (t) => toRepo((await t.get(`repos/${enc(owner)}/${enc(repo)}`)).data as RawRepo)),
+
+    listRecentIssues: async () => {
+      throw new Error('not implemented')
+    },
+
+    latestNumber: async () => {
+      throw new Error('not implemented')
+    },
 
     getIssue: (owner, repo, number) =>
       withTransport(async (t) => {

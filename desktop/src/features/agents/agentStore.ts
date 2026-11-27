@@ -39,6 +39,7 @@ export const issueOfPane = (paneId: string) => paneId.slice(0, paneId.lastIndexO
 
 /** 출력이 이만큼 끊기면 "작업 중"이 아니라고 본다(제목으로 상태를 알 수 없는 프로그램) */
 export const QUIET_MS = 4000
+export const PROCESS_POLL_MS = 3000
 
 /** 패널에서 모은 신호 */
 export type PaneSignals = {
@@ -93,12 +94,19 @@ export function derive(paneId: string, sig: PaneSignals, prev: PaneAgent | null,
   return { next, event }
 }
 
+export function shellOnly(_sig: Pick<PaneSignals, 'processes' | 'tmuxProgram'>): boolean | null {
+  throw new Error('not implemented')
+}
+
 export interface AgentState {
   panes: Record<string, PaneAgent>
   /** 패널의 Claude Code 가 띄운 하위 에이전트들(실행 중인 것 먼저) */
   subagents: Record<string, Subagent[]>
+  shellSince: Record<string, number>
   set(paneId: string, next: PaneAgent | null): void
   setSubagents(paneId: string, subs: Subagent[]): void
+  setShell(paneId: string, at: number | null): void
+  clearPane(paneId: string): void
   clear(): void
 }
 
@@ -110,6 +118,13 @@ const sameSubs = (a: Subagent[], b: Subagent[]) => a.length === b.length && a.ev
 export const useAgentStore = create<AgentState>()((set) => ({
   panes: {},
   subagents: {},
+  shellSince: {},
+  setShell: () => {
+    throw new Error('not implemented')
+  },
+  clearPane: () => {
+    throw new Error('not implemented')
+  },
   setSubagents: (paneId, subs) =>
     set((s) => {
       const cur = s.subagents[paneId]

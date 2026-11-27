@@ -457,3 +457,63 @@ describe('담당자(#86) — assignees 매핑 · assignIssue · unassignIssue', 
     ])
   })
 })
+
+describe.each(['rest', 'gh'] as const)('이슈 테이커 — 최근 이슈·마지막 번호 (%s)', (kind) => {
+  function via(body: unknown) {
+    if (kind === 'rest') {
+      const t = setup({ route: () => json(body) })
+      const query = (i = 0) => new URL(t.rest.calls[i].url)
+      return { gh: t.gh, query, calls: () => t.rest.calls.length }
+    }
+    const ghRun = vi.fn<GhHost['ghRun']>(async () => ok(JSON.stringify(body)))
+    const t = setup({ ghAvailable: true, ghRun })
+    const query = (i = 0) => {
+      const args = ghRun.mock.calls[i][0]
+      return new URL(`${API}/${args[args.length - 1]}`)
+    }
+    return { gh: t.gh, query, calls: () => ghRun.mock.calls.length + t.rest.calls.length }
+  }
+
+  it('AC-11 listRecentIssues 는 작성자(user.login)와 author_association 을 함께 돌려준다', async () => {
+    const t = via([issue(7, 'open', { user: { login: 'Alice' }, author_association: 'MEMBER', assignees: [{ login: 'bob' }] }), issue(8)])
+    await expect(t.gh.listRecentIssues('o', 'r')).resolves.toEqual([
+      { number: 7, title: 'Issue 7', state: 'open', htmlUrl: 'https://github.com/o/r/issues/7', assignees: ['bob'], author: 'Alice', authorAssociation: 'MEMBER' },
+      { number: 8, title: 'Issue 8', state: 'open', htmlUrl: 'https://github.com/o/r/issues/8', assignees: [], author: null, authorAssociation: null },
+    ])
+  })
+
+  it('EC-18 listRecentIssues 는 PR 을 빼고 이슈만 돌려준다', async () => {
+    const t = via([issue(3), issue(4, 'open', { pull_request: { url: 'x' } }), issue(5)])
+    expect((await t.gh.listRecentIssues('o', 'r')).map((i) => i.number)).toEqual([3, 5])
+  })
+
+  it('EC-20 listRecentIssues 는 열린 이슈를 최근 만든 순서로 50개만 한 번에 묻고, creator 를 주면 함께 보낸다', async () => {
+    const t = via([])
+    await t.gh.listRecentIssues('o', 'r', { creator: 'me' })
+    await t.gh.listRecentIssues('o', 'r')
+    expect(t.calls()).toBe(2)
+    const first = t.query(0)
+    expect(first.pathname).toBe('/repos/o/r/issues')
+    expect(Object.fromEntries(first.searchParams)).toEqual({ state: 'open', sort: 'created', direction: 'desc', per_page: '50', creator: 'me' })
+    expect(Object.fromEntries(t.query(1).searchParams)).toEqual({ state: 'open', sort: 'created', direction: 'desc', per_page: '50' })
+  })
+
+  it('EC-24 latestNumber 는 state=all·per_page=1 로 최근 만든 항목 하나를 묻는다', async () => {
+    const t = via([issue(12)])
+    await expect(t.gh.latestNumber('o', 'r')).resolves.toBe(12)
+    expect(t.calls()).toBe(1)
+    const u = t.query(0)
+    expect(u.pathname).toBe('/repos/o/r/issues')
+    expect(Object.fromEntries(u.searchParams)).toEqual({ state: 'all', sort: 'created', direction: 'desc', per_page: '1' })
+  })
+
+  it('EC-24 latestNumber 는 이슈·PR 이 하나도 없으면 0', async () => {
+    const t = via([])
+    await expect(t.gh.latestNumber('o', 'r')).resolves.toBe(0)
+  })
+
+  it('EC-24 latestNumber 는 받은 항목(PR·닫힌 이슈 포함)의 가장 큰 번호', async () => {
+    const t = via([issue(3), issue(9, 'closed', { pull_request: { url: 'x' } }), issue(5, 'closed')])
+    await expect(t.gh.latestNumber('o', 'r')).resolves.toBe(9)
+  })
+})

@@ -6,7 +6,7 @@ const queued = new Map<string, { command: string; at: number }>()
 export const LAUNCH_TTL_MS = 120_000
 
 /** paneId 의 터미널이 준비되면 command 를 실행하게 맡긴다 */
-export function queueLaunch(paneId: string, command: string) {
+export function queueLaunch(paneId: string, command: string, _opts?: { track?: boolean }) {
   queued.set(paneId, { command, at: Date.now() })
 }
 
@@ -15,6 +15,36 @@ export function takeLaunch(paneId: string): string | undefined {
   const q = queued.get(paneId)
   queued.delete(paneId)
   return q !== undefined && Date.now() - q.at <= LAUNCH_TTL_MS ? q.command : undefined
+}
+
+export type LaunchResult = 'pending' | 'written' | 'dropped' | 'cancelled' | 'expired'
+
+export function markLaunched(_paneId: string): void {
+  throw new Error('not implemented')
+}
+
+export function dropLaunch(_paneId: string): void {
+  throw new Error('not implemented')
+}
+
+export function cancelLaunch(_paneId: string): void {
+  throw new Error('not implemented')
+}
+
+export function isLaunchCancelled(_paneId: string): boolean {
+  throw new Error('not implemented')
+}
+
+export function launchResult(_paneId: string | null): LaunchResult | null {
+  throw new Error('not implemented')
+}
+
+export function clearLaunchResult(_paneId: string): void {
+  throw new Error('not implemented')
+}
+
+export function resetLaunchQueue(): void {
+  queued.clear()
 }
 
 /**

@@ -2,6 +2,7 @@ export type GitHubOwner = { login: string; kind: 'user' | 'org'; avatarUrl: stri
 export type GitHubRepo = { owner: string; name: string; defaultBranch: string }
 /** assignees = 담당자의 login 목록(없으면 빈 배열) */
 export type GitHubIssue = { number: number; title: string; state: 'open' | 'closed'; htmlUrl: string; assignees: string[] }
+export type RecentIssue = GitHubIssue & { author: string | null; authorAssociation: string | null }
 /** 이슈 하나를 조회할 때만 본문을 받는다(목록 캐시에는 본문을 두지 않음) */
 export type GitHubIssueDetail = GitHubIssue & { body: string }
 /** 보낼 필드만 넣는다 — 넣지 않은 필드는 GitHub 값을 그대로 둔다 */

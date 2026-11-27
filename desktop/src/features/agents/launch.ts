@@ -1,4 +1,5 @@
 // minmo 에서 에이전트를 실행할 때 터미널에 넣을 명령을 만든다(순수 함수 — 화면은 LaunchAgentDialog.tsx)
+import type { Platform } from '@minmo/api-client'
 import type { IssueTarget } from '@minmo/core'
 
 import { isLocalOwner } from '../../store/repos'
@@ -19,6 +20,10 @@ export const DEFAULT_AGENT_COMMANDS: Record<LaunchKind, string> = {
 
 /** 명령을 받는 셸 — 이 PC(Windows)의 터미널은 PowerShell, 원격·macOS·Linux 는 POSIX 셸 */
 export type ShellKind = 'powershell' | 'posix'
+
+export function shellFor(_alias: string | null, _platform: Platform): ShellKind {
+  throw new Error('not implemented')
+}
 
 /**
  * 지시문을 한 인자로 넘기도록 감싼다. 두 셸 모두 작은따옴표 안에서는 변수·명령 치환이 일어나지 않는다.

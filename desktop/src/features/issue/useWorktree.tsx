@@ -124,7 +124,7 @@ function issueActionsOf(service: WorktreeService, host: Host) {
   const worktreeId = host.issueId
   return {
     /** 이슈 선택 + worktree 준비(AC-05~07). 이미 있으면 전환(AC-06) */
-    async open(t: IssueTarget) {
+    async open(t: IssueTarget, _opts: { select?: boolean } = {}) {
       const id = worktreeId(t.owner, t.repo, t.key)
       const st = useSetupStore.getState()
       st.setTarget(id, t)

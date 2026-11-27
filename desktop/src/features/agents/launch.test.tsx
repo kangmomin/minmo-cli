@@ -1,7 +1,7 @@
 // [에이전트 실행] — 명령 만들기(따옴표·한 줄·빈 지시문), 실행할 패널 마련, 대화상자, 터미널이 준비되면 명령 넣기
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { IssueTarget } from '@minmo/core'
 
@@ -11,8 +11,8 @@ import { useUiStore } from '../../store/ui'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { leafIds } from '../terminal/panes'
 import { LaunchAgentDialog } from './LaunchAgentDialog'
-import { DEFAULT_AGENT_COMMANDS, buildCommand, defaultPrompt, oneLine, quoteArg } from './launch'
-import { LAUNCH_TTL_MS, looksLikeAuthPrompt, queueLaunch, takeLaunch } from './launchQueue'
+import { DEFAULT_AGENT_COMMANDS, buildCommand, defaultPrompt, oneLine, quoteArg, shellFor } from './launch'
+import { LAUNCH_TTL_MS, looksLikeAuthPrompt, queueLaunch, resetLaunchQueue, takeLaunch } from './launchQueue'
 
 const ISSUE = 'acme/app#42'
 const TARGET: IssueTarget = { owner: 'acme', repo: 'app', key: '42', number: 42, title: 'Add login' }
@@ -21,6 +21,22 @@ beforeEach(() => {
   localStorage.clear()
   useUiStore.setState({ panes: {}, terminalIds: {}, focusRequest: null, tab: 'notes', agentCommands: DEFAULT_AGENT_COMMANDS, lastLaunchKind: 'claude', launchRequest: null })
   useHostsStore.setState({ probes: {} })
+})
+
+afterEach(() => {
+  resetLaunchQueue()
+})
+
+describe('shellFor — 명령을 받는 셸', () => {
+  it.each<[string | null, 'win32' | 'darwin' | 'linux', 'powershell' | 'posix']>([
+    [null, 'win32', 'powershell'],
+    [null, 'darwin', 'posix'],
+    [null, 'linux', 'posix'],
+    ['my-server', 'win32', 'posix'],
+    ['my-server', 'linux', 'posix'],
+  ])('EC-19 호스트 %s · 플랫폼 %s → %s', (alias, platform, expected) => {
+    expect(shellFor(alias, platform)).toBe(expected)
+  })
 })
 
 describe('명령 만들기', () => {

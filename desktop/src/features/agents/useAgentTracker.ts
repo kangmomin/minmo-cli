@@ -8,7 +8,7 @@ import { repoShortNameOf, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { viewedInOtherWindow } from './windowView'
-import { STATUS_LABEL, derive, issueOfPane, useAgentStore } from './agentStore'
+import { PROCESS_POLL_MS, STATUS_LABEL, derive, issueOfPane, useAgentStore } from './agentStore'
 import type { PaneSignals } from './agentStore'
 import { AGENT_LABEL, guessProgram, parseTitle, titleSignal } from './detect'
 import { PtyStreamParser } from './ptyStream'
@@ -19,8 +19,6 @@ export const ECHO_MS = 400
 /** 작업이 끝난 직후의 벨은 "끝났다"는 알림음이다 — 이 시간 안의 벨은 입력 대기로 치지 않는다 */
 export const DONE_BELL_MS = 1500
 const TICK_MS = 1000
-/** 이 PC 의 터미널에서 도는 프로세스를 다시 묻는 간격 */
-const PROCESS_POLL_MS = 3000
 /** Claude Code 의 하위 에이전트 목록을 다시 읽는 간격 */
 const SUBAGENT_POLL_MS = 5000
 
