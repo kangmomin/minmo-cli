@@ -1,6 +1,8 @@
 // 화면 키보드에 없는 키 줄 — 휴대폰·태블릿에서 터미널(에이전트 CLI)을 쓸 때 Esc·Tab·방향키·Ctrl+C 를 누를 수 있게 한다.
 import { useSyncExternalStore } from 'react'
 
+import { goToPane } from '../agents/navigate'
+
 /** 패널 id → 그 터미널에 "사용자가 친 것처럼" 글자를 넣는 함수(TerminalTab 이 등록한다) */
 const inputs = new Map<string, (data: string) => void>()
 
@@ -47,7 +49,25 @@ export function useTouch(): boolean {
   return useSyncExternalStore(coarse.subscribe, coarse.get, () => false)
 }
 
-export function TerminalKeyBar({ paneId }: { paneId: string | null }) {
+export function TerminalKeyBar({
+  issueId,
+  paneId,
+  singlePane = false,
+}: {
+  issueId: string | null
+  paneId: string | null
+  singlePane?: boolean
+}) {
+  const press = (data: string) => {
+    if (paneId === null) return
+    const focusedPane = document.activeElement?.closest('[data-pane-id]')?.getAttribute('data-pane-id')
+    // Why: 자동 이동 직후 누른 키가 사용자가 고르지 않은 세션으로 가지 않게 — 첫 누름은 그 터미널로 포커스만
+    if (singlePane && issueId !== null && focusedPane !== paneId) {
+      goToPane(issueId, paneId, true)
+      return
+    }
+    inputs.get(paneId)?.(data)
+  }
   return (
     <div role="toolbar" aria-label="터미널 키" className="flex shrink-0 gap-1 overflow-x-auto px-2 py-1" data-testid="terminal-key-bar">
       {KEY_BAR_KEYS.map((k) => (
@@ -57,7 +77,7 @@ export function TerminalKeyBar({ paneId }: { paneId: string | null }) {
           aria-label={k.name}
           // 누를 때 화면 키보드가 내려가지 않게 터미널의 포커스를 유지한다
           onPointerDown={(e) => e.preventDefault()}
-          onClick={() => paneId !== null && inputs.get(paneId)?.(k.data)}
+          onClick={() => press(k.data)}
           className="min-w-10 shrink-0 rounded border border-neutral-600 px-2 py-1.5 font-mono text-xs text-neutral-200 active:bg-neutral-700"
         >
           {k.label}

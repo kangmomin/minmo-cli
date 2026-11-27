@@ -7,7 +7,7 @@ import { SIDEBAR_WIDTH, clampSidebarWidth, useUiStore } from '../../store/ui'
 interface SidebarFrameProps {
   className?: string
   children: ReactNode
-  /** aside 이름(기본 "이슈 트리") — 스텁: Phase 5.2(U4)에서 구현(#122) */
+  /** aside 이름(기본 "이슈 트리") — 답변 모드(#122)는 "답변 모드" */
   label?: string
 }
 
@@ -19,7 +19,7 @@ const DRAG_THRESHOLD = 3
  * 폭의 주인은 store 다 — 끄는 동안에는 화면에만 반영하고 놓을 때 한 번 저장한다.
  * 트리는 children 으로 받아 끄는 동안 다시 렌더하지 않는다.
  */
-export function SidebarFrame({ className, children }: SidebarFrameProps) {
+export function SidebarFrame({ className, children, label = '이슈 트리' }: SidebarFrameProps) {
   const id = useId()
   const stored = useUiStore((s) => s.sidebarWidth)
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth)
@@ -59,7 +59,7 @@ export function SidebarFrame({ className, children }: SidebarFrameProps) {
   return (
     <aside
       id={id}
-      aria-label="이슈 트리"
+      aria-label={label}
       // inline width 가 아니라 변수로 넘긴다 — 좁은 화면에서는 Workspace 의 max-md:w-full 이 이겨야 한다(EC-03)
       style={{ '--sidebar-w': `${width}px` } as CSSProperties}
       className={cn('relative flex h-full w-(--sidebar-w) shrink-0 flex-col border-r', className)}

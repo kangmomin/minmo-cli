@@ -22,7 +22,8 @@ import { attachLinks } from './links'
 import { attachOsc52 } from './osc52'
 import { ReconnectNotice } from './ReconnectNotice'
 import { TerminalKeyBar, registerTerminalInput, useNarrow, useTouch } from './TerminalKeyBar'
-import { layoutPanes, leafIds } from './panes'
+import { effectivePane, layoutPanes, leafIds } from './panes'
+import { registerTerminalText } from './terminalText'
 import { usePtyLink } from './usePtyLink'
 import { attachWebgl } from './webgl'
 
@@ -48,6 +49,9 @@ const RECONNECT_MUTE_MS = 3000
 function paneExists(issueId: string, paneId: string): boolean {
   return leafIds(useUiStore.getState().panes[issueId]?.tree ?? null).includes(paneId)
 }
+
+// Why: 수정 키만 누르면 키 처리기는 true 를 돌려주지만 xterm 은 아무것도 보내지 않는다 — 입력으로 세지 않는다
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock'])
 
 /** ptySpawn 응답 전에 도착한 pty-data 를 id 별로 보관하는 상한(문자 수) */
 export const MAX_PENDING_PTY_CHARS = 256 * 1024
@@ -83,9 +87,9 @@ export interface TerminalTabProps {
   visible: boolean
   /** Ctrl+Shift+M — 터미널 밖(탭 목록)으로 포커스를 옮긴다 */
   onExit?: () => void
-  /** 답변 모드(#122): 지금 패널 하나만 전체 크기로 — 스텁: Phase 5.2(U4)에서 구현 */
+  /** 답변 모드(#122): 지금 패널 하나만 전체 크기로 */
   singlePane?: boolean
-  /** 답변 모드(#122): 터미널 입력이 함께 읽을 설명 요소 id — 스텁: Phase 5.2(U4)에서 구현 */
+  /** 답변 모드(#122): 터미널 입력이 함께 읽을 설명 요소 id */
   describedBy?: string
 }
 
@@ -97,7 +101,7 @@ type LiveSessions = { mounted: boolean; keys: Set<string> }
 const LiveSessionsContext = createContext<{ current: LiveSessions }>({ current: { mounted: false, keys: new Set() } })
 const sessionKey = (s: Pick<TerminalSessionSpec, 'issueId' | 'cwd'>) => `${s.issueId}|${s.cwd}`
 
-export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTabProps) {
+export function TerminalTab({ sessions, activeId, visible, onExit, singlePane = false, describedBy }: TerminalTabProps) {
   const activeHasSession = sessions.some((s) => s.issueId === activeId)
   const live = useRef<LiveSessions>({ mounted: true, keys: new Set() })
   live.current.keys = new Set(sessions.map(sessionKey))
@@ -132,10 +136,7 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
   const theme = useUiStore((s) => s.theme)
   // 화면 키보드를 쓰는 기기에는 Esc·Tab·방향키 줄을 둔다 — 지금 이슈의 포커스한(없으면 첫) 패널로 보낸다
   const touch = useTouch()
-  const activePane = useUiStore((s) => {
-    const p = activeId ? s.panes[activeId] : undefined
-    return p ? (p.focused ?? leafIds(p.tree)[0] ?? null) : null
-  })
+  const activePane = useUiStore((s) => (activeId ? effectivePane(s.panes[activeId]) : null))
 
   // region 이름은 짧게 두고 탈출 안내는 보이는 한 줄 + aria-describedby 로 연결한다 — 이름·설명 중복 낭독 방지(AX-18)
   return (
@@ -144,6 +145,7 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
         className={visible ? 'absolute inset-0 flex flex-col' : 'hidden'}
         style={{ background: terminalBackground(theme) }}
         data-testid="terminal-tab"
+        data-terminal-root
         role="region"
         aria-label="터미널"
         aria-describedby={activeStarted ? hintId : undefined}
@@ -159,12 +161,20 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
             </p>
           </div>
         )}
-        {touch && activeStarted && <TerminalKeyBar paneId={activePane} />}
+        {touch && activeStarted && <TerminalKeyBar issueId={activeId} paneId={activePane} singlePane={singlePane} />}
         <div className="relative min-h-0 flex-1">
           {sessions
             .filter((s) => s.issueId in started)
             .map((s) => (
-              <IssuePanes key={sessionKey(s)} spec={s} active={visible && s.issueId === activeId} hintId={hintId} onExit={onExit} />
+              <IssuePanes
+                key={sessionKey(s)}
+                spec={s}
+                active={visible && s.issueId === activeId}
+                hintId={hintId}
+                onExit={onExit}
+                singlePane={singlePane}
+                describedBy={describedBy}
+              />
             ))}
           {visible && activeId !== null && activeHasSession && !activeStarted && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-neutral-400">
@@ -186,7 +196,21 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
 }
 
 /** 이슈 하나의 패널들. 트리 대신 평면 목록으로 배치해 분할·닫기 때 다른 패널이 다시 마운트되지 않게 한다 */
-function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpec; active: boolean; hintId: string; onExit?: () => void }) {
+function IssuePanes({
+  spec,
+  active,
+  hintId,
+  onExit,
+  singlePane,
+  describedBy,
+}: {
+  spec: TerminalSessionSpec
+  active: boolean
+  hintId: string
+  onExit?: () => void
+  singlePane: boolean
+  describedBy?: string
+}) {
   const panes = useUiStore((s) => s.panes[spec.issueId])
   const ensurePanes = useUiStore((s) => s.ensurePanes)
   const newPane = useUiStore((s) => s.newPane)
@@ -199,8 +223,9 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
   if (!panes) return null
   const rects = layoutPanes(panes.tree)
   const multiple = rects.length > 1
-  // 좁은 화면(휴대폰)에서는 한 번에 한 패널만 크게 보이고, 위의 번호 버튼으로 바꾼다. 가려진 패널의 터미널도 그대로 살아 있다
-  const shownId = narrow ? (rects.find((r) => r.id === panes.focused) ?? rects[0])?.id : undefined
+  // 좁은 화면(휴대폰)·답변 모드에서는 한 번에 한 패널만 크게 보인다(좁은 화면은 위의 번호 버튼으로 바꾼다). 가려진 패널의 터미널도 그대로 살아 있다
+  const single = narrow || singlePane
+  const shownId = single ? effectivePane(panes) : undefined
   return (
     <div className={active ? 'absolute inset-0' : 'hidden'}>
       {narrow && multiple && (
@@ -222,17 +247,18 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
       {rects.map((r) => (
         <div
           key={r.id}
-          className={`absolute flex flex-col ${narrow && r.id !== shownId ? 'invisible' : ''} ${!narrow && multiple && panes.focused === r.id ? 'outline outline-1 -outline-offset-1 outline-ring' : ''}`}
+          className={`absolute flex flex-col ${single && r.id !== shownId ? 'invisible' : ''} ${!single && multiple && panes.focused === r.id ? 'outline outline-1 -outline-offset-1 outline-ring' : ''}`}
           style={
-            narrow
-              ? { left: 0, right: 0, bottom: 0, top: multiple ? '1.75rem' : 0 }
+            single
+              ? { left: 0, right: 0, bottom: 0, top: narrow && multiple ? '1.75rem' : 0 }
               : { left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }
           }
           data-testid="terminal-pane"
+          data-pane-id={r.id}
         >
           <PaneAgentStrip paneId={r.id} />
           <div className="relative min-h-0 flex-1">
-            <TerminalSession spec={spec} paneId={r.id} active={active} hintId={hintId} onExit={onExit} />
+            <TerminalSession spec={spec} paneId={r.id} active={active} hintId={hintId} onExit={onExit} describedBy={describedBy} />
           </div>
         </div>
       ))}
@@ -276,12 +302,14 @@ function TerminalSession({
   active,
   hintId,
   onExit,
+  describedBy,
 }: {
   spec: TerminalSessionSpec
   paneId: string
   active: boolean
   hintId: string
   onExit?: () => void
+  describedBy?: string
 }) {
   // PTY 입출력은 원격 터미널도 이 PC 의 ssh 프로세스를 거친다 — 화면의 호스트가 바뀌어도 세션을 다시 만들지 않게 고정한다
   const { tauri } = useBaseDeps()
@@ -354,32 +382,38 @@ function TerminalSession({
       if (!replaying) copyText(text)
     })
     const ui = useUiStore.getState
-    t.attachCustomKeyEventHandler(
-      createTerminalKeyHandler(
-        () => onExitRef.current?.(),
-        {
-          splitRight: () => ui().splitPane(spec.issueId, paneId, 'row'),
-          splitDown: () => ui().splitPane(spec.issueId, paneId, 'col'),
-          // 패널이 없어지면 아래 cleanup 이 PTY(와 그 자손 프로세스)를 종료한다
-          close: () => ui().closePane(spec.issueId, paneId),
-        },
-        {
-          hasSelection: () => t.hasSelection(),
-          selection: () => t.getSelection(),
-          copy: copyText,
-          clearSelection: () => t.clearSelection(),
-        },
-        // 사용자가 친 글자처럼 넣는다 — onData 를 거쳐 PTY 로 간다.
-        // 한글 조합이 막 끝났을 때만 한 박자 늦춘다: xterm 은 조합이 끝난 글자를 setTimeout(0) 으로 보내므로,
-        // 바로 보내면 마지막 글자보다 먼저 간다. 평소에는 바로 보낸다(늦추면 바로 뒤에 친 키와 순서가 뒤바뀐다)
-        (data) => {
-          if (!justComposed) return t.input(data)
-          setTimeout(() => {
-            if (!disposed) t.input(data)
-          }, 0)
-        },
-      ),
+    const keyHandler = createTerminalKeyHandler(
+      () => onExitRef.current?.(),
+      {
+        splitRight: () => ui().splitPane(spec.issueId, paneId, 'row'),
+        splitDown: () => ui().splitPane(spec.issueId, paneId, 'col'),
+        // 패널이 없어지면 아래 cleanup 이 PTY(와 그 자손 프로세스)를 종료한다
+        close: () => ui().closePane(spec.issueId, paneId),
+      },
+      {
+        hasSelection: () => t.hasSelection(),
+        selection: () => t.getSelection(),
+        copy: copyText,
+        clearSelection: () => t.clearSelection(),
+      },
+      // 사용자가 친 글자처럼 넣는다 — onData 를 거쳐 PTY 로 간다.
+      // 한글 조합이 막 끝났을 때만 한 박자 늦춘다: xterm 은 조합이 끝난 글자를 setTimeout(0) 으로 보내므로,
+      // 바로 보내면 마지막 글자보다 먼저 간다. 평소에는 바로 보낸다(늦추면 바로 뒤에 친 키와 순서가 뒤바뀐다)
+      (data) => {
+        noteTerminalInput(paneId)
+        if (!justComposed) return t.input(data)
+        setTimeout(() => {
+          if (!disposed) t.input(data)
+        }, 0)
+      },
     )
+    // Why: 입력은 키 처리기가 PTY 로 보내게 둔 키만 센다 — 앱 동작 키(복사 포함)는 xterm 이 capture 로 먼저 처리해
+    // textarea 의 keydown 에서는 가려낼 수 없다(복사 뒤에는 선택이 이미 풀렸다)
+    t.attachCustomKeyEventHandler((e) => {
+      const pass = keyHandler(e)
+      if (pass && e.type === 'keydown' && !MODIFIER_KEYS.has(e.key)) noteTerminalInput(paneId)
+      return pass
+    })
     const fit = new FitAddon()
     t.loadAddon(fit)
     // xterm 입력 textarea 의 aria-label 은 open() 때 정해지므로 그 전에 한국어로 바꾼다(전역 설정, AX-39)
@@ -387,6 +421,7 @@ function TerminalSession({
     t.open(el)
     // 입력 textarea 에도 탈출 안내를 연결한다 — region 에만 있으면 입력에 포커스를 둔 사용자는 듣지 못한다(AX-39)
     t.textarea?.setAttribute('aria-describedby', hintId)
+    const unregisterText = registerTerminalText(paneId, () => t.buffer?.active)
     /** 이 터미널의 크기 변경 요청 표시(`<origin>:<번호>`), 마지막으로 보낸 요청 번호, 알림을 받은 가장 큰 요청 번호 */
     const origin = newOrigin()
     let asked = 0
@@ -438,9 +473,10 @@ function TerminalSession({
     // 사용자가 직접 넣은 입력(키·붙여넣기)의 에코를 에이전트의 출력으로 세지 않게 알린다.
     // xterm 이 프로그램의 질의에 자동으로 답하는 것(포커스·마우스·커서 위치 보고)은 입력으로 치지 않는다
     const onUserInput = () => noteTerminalInput(paneId)
-    t.textarea?.addEventListener('keydown', onUserInput)
     // xterm 의 compositionend 처리(위 open 때 등록) 뒤에 실행되므로, 이 타이머는 xterm 이 조합 글자를 보내는 타이머 다음에 돈다
     const onCompositionEnd = () => {
+      // Why: 조합이 끝난 글자는 keydown 없이 PTY 로 갈 수 있다
+      onUserInput()
       justComposed = true
       setTimeout(() => (justComposed = false), 0)
     }
@@ -652,10 +688,10 @@ function TerminalSession({
     return () => {
       disposed = true
       t.textarea?.removeEventListener('focus', onFocus)
-      t.textarea?.removeEventListener('keydown', onUserInput)
       t.textarea?.removeEventListener('compositionend', onCompositionEnd)
       t.textarea?.removeEventListener('paste', onUserInput)
       unregisterInput()
+      unregisterText()
       for (const c of cleanups) c()
       // 패널이 없어졌거나(닫기), 세션이 목록에서 빠졌거나(작업 폴더 삭제), 끝난 터미널을 다시 시작할 때만 끝낸다. 패널이 그대로면(호스트 전환 등으로
       // 화면만 내려간 경우) 터미널은 남겨 둔다 — 다른 기기가 보고 있을 수 있고, 돌아오면 다시 붙는다.
@@ -730,8 +766,9 @@ function TerminalSession({
   // 연결이 끊긴 동안(①·②)에는 입력이 원격으로 가지 않는다 — 그 이유(①·② 문구)를 입력에도 연결한다(AX-39)
   const disconnected = !ended && linkPhase !== null
   useEffect(() => {
-    term.current?.t.textarea?.setAttribute('aria-describedby', disconnected ? `${hintId} ${noticeId}` : hintId)
-  }, [disconnected, hintId, noticeId, gen])
+    const ids = [hintId, disconnected && noticeId, describedBy].filter(Boolean).join(' ')
+    term.current?.t.textarea?.setAttribute('aria-describedby', ids)
+  }, [disconnected, hintId, noticeId, describedBy, gen])
 
   // 표시·리사이즈 시 크기 맞추고 PTY 에 전달. 포커스는 옮기지 않는다 — 탭·이슈 전환 시 포커스 강탈 금지(AX-02)
   useEffect(() => {
@@ -791,7 +828,16 @@ function TerminalSession({
           <p role="alert" className="flex-1">
             터미널 세션이 종료되었습니다
           </p>
-          <Button ref={restartButton} size="sm" variant="secondary" onClick={restart}>
+          <Button
+            ref={restartButton}
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              // Why: 그 패널을 다시 쓰려는 사용자에게 끝남 이동(#122)이 끼어들지 않게
+              noteTerminalInput(paneId)
+              restart()
+            }}
+          >
             다시 시작
           </Button>
         </div>
@@ -805,6 +851,8 @@ function TerminalSession({
             messageId={noticeId}
             // 결과는 pty-link 로 온다 — 이미 끝난 터미널 등의 거절은 무시한다
             onReconnect={() => {
+              // Why: 그 패널을 다시 쓰려는 사용자에게 끝남 이동(#122)이 끼어들지 않게
+              noteTerminalInput(paneId)
               const id = term.current?.ptyId
               if (id) tauri.ptyReconnect(id).catch(() => undefined)
             }}
