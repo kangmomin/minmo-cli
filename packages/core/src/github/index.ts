@@ -84,6 +84,8 @@ type RawIssue = {
   body?: string | null
   pull_request?: unknown
   assignees?: { login: string }[] | null
+  user?: { login: string } | null
+  author_association?: string | null
 }
 type RawPr = { number: number; html_url: string }
 
@@ -222,13 +224,22 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
 
     getRepo: (owner, repo) => withTransport(async (t) => toRepo((await t.get(`repos/${enc(owner)}/${enc(repo)}`)).data as RawRepo)),
 
-    listRecentIssues: async () => {
-      throw new Error('not implemented')
-    },
+    listRecentIssues: (owner, repo, opts) =>
+      withTransport(async (t) => {
+        const creator = opts?.creator ? `&creator=${enc(opts.creator)}` : ''
+        const res = await t.get(`repos/${enc(owner)}/${enc(repo)}/issues?state=open&sort=created&direction=desc&per_page=50${creator}`)
+        const raw = Array.isArray(res.data) ? (res.data as RawIssue[]) : []
+        return raw
+          .filter((r) => r.pull_request === undefined)
+          .map((r) => ({ ...toIssue(r), author: r.user?.login ?? null, authorAssociation: r.author_association ?? null }))
+      }),
 
-    latestNumber: async () => {
-      throw new Error('not implemented')
-    },
+    latestNumber: (owner, repo) =>
+      withTransport(async (t) => {
+        const res = await t.get(`repos/${enc(owner)}/${enc(repo)}/issues?state=all&sort=created&direction=desc&per_page=1`)
+        const raw = Array.isArray(res.data) ? (res.data as RawIssue[]) : []
+        return raw.reduce((max, r) => Math.max(max, r.number), 0)
+      }),
 
     getIssue: (owner, repo, number) =>
       withTransport(async (t) => {
