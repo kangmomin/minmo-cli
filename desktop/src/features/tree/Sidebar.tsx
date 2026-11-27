@@ -21,6 +21,7 @@ import { useUiStore } from '../../store/ui'
 import { HostsDialog } from '../hosts/HostsDialog'
 import type { PreviewIssue } from '../settings/SettingsDialog'
 import { AddRepoMenu } from './AddRepoMenu'
+import { DefaultRow } from './DefaultRow'
 import { GroupDialog } from './GroupDialog'
 import { GroupNode } from './GroupNode'
 import { PublishDialog } from './LocalRepoDialogs'
@@ -252,6 +253,7 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
               />
             ) : (
               <>
+                <DefaultRow />
                 {groupIds.map((id) => (
                   <GroupNode key={id} id={id} onOpenSettings={onOpenSettings} />
                 ))}
