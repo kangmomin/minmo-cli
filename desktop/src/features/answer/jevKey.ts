@@ -1,13 +1,11 @@
-// Jev API 키 저장 여부(#122) — 서버 설정의 "세션 요약" 절과 요약 카드의 Jev 판정이 같이 쓴다. 키 원문은 화면으로 읽지 않는다
 import { useEffect } from 'react'
 import { create } from 'zustand'
 
 import type { TauriApi } from '../../lib/tauri'
 
 interface JevKeyState {
-  /** 키체인에 키가 있는가(아직 모르면 null) */
+  /** Why: 키체인에 키가 있는가(아직 모르면 null) */
   saved: boolean | null
-  /** 마지막 확인이 실패했는가 */
   error: boolean
   refresh(tauri: TauriApi): Promise<void>
   set(saved: boolean): void
@@ -34,7 +32,6 @@ export const useJevKeyStore = create<JevKeyState>((setState) => ({
   },
 }))
 
-/** 키 저장 여부 — 마운트 때(그리고 tauri 가 바뀌면) 키체인을 다시 확인한다 */
 export function useJevKeyStatus(tauri: TauriApi): { saved: boolean | null; checkFailed: boolean } {
   const saved = useJevKeyStore((s) => s.saved)
   const checkFailed = useJevKeyStore((s) => s.error)
@@ -44,10 +41,10 @@ export function useJevKeyStatus(tauri: TauriApi): { saved: boolean | null; check
   return { saved, checkFailed }
 }
 
-/** 앞뒤 공백을 떼고 보이는 ASCII(0x21~0x7E)만 — Rust(commands/jev.rs valid_key)와 같은 검사 */
+/** Why: 앞뒤 공백을 떼고 보이는 ASCII(0x21~0x7E)만 — Rust(commands/jev.rs valid_key)와 같은 검사 */
 const VALID_KEY = /^[\x21-\x7e]+$/
 
-/** 키 저장 버튼·서버 설정 [저장]이 같이 쓴다 — 실패하면 Error(오류 코드)로 거절한다 */
+/** Why: 키 저장 버튼·서버 설정 [저장]이 같이 쓴다 — 실패하면 Error(오류 코드)로 거절한다 */
 export async function saveJevKey(tauri: TauriApi, raw: string): Promise<void> {
   const key = raw.trim()
   if (!VALID_KEY.test(key)) throw new Error('jev_key_invalid')

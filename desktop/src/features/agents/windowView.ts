@@ -21,7 +21,7 @@ export function readView(): View | null {
   }
 }
 
-/** 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 — paneId: 답변 모드 창이면 그 패널만 본 것(#122) */
+/** Why: 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 — paneId: 답변 모드 창이면 그 패널만 본 것(#122) */
 export function viewedInOtherWindow(issueId: string, paneId: string, v: View | null = readView()): boolean {
   return v !== null && v.by !== ME && v.issueId === issueId && v.terminal && (v.paneId == null || v.paneId === paneId)
 }

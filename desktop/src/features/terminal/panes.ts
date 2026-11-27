@@ -35,7 +35,7 @@ export function closePane(tree: PaneNode, target: string): { tree: PaneNode | nu
   return { tree, focus: null }
 }
 
-/** 지금 보이는 패널(#122): focused 가 잎 목록에 있으면 그것, 아니면 첫 잎, 없으면 null */
+/** Why: 지금 보이는 패널(#122): focused 가 잎 목록에 있으면 그것, 아니면 첫 잎, 없으면 null */
 export function effectivePane(p: { tree: PaneNode | null; focused: string | null } | undefined): string | null {
   const ids = leafIds(p?.tree ?? null)
   return p?.focused != null && ids.includes(p.focused) ? p.focused : (ids[0] ?? null)

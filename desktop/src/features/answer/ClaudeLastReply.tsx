@@ -1,4 +1,3 @@
-// Claude Code 마지막 답변(#122) — 답변 모드 요약 카드에 지금 세션의 세션 기록에서 마지막 답변 앞 3줄을 보인다(Plan §9)
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -11,13 +10,12 @@ import { ago } from '../agents/overview'
 import type { AgentRow } from '../agents/overview'
 import { parseLastReply, replyPreview } from './claudeReply'
 
-/** 기다리는 상태가 된 뒤 읽기까지의 틈 — Claude Code 가 마지막 답을 기록에 쓸 시간 */
+/** Why: 기다리는 상태가 된 뒤 읽기까지의 틈 — Claude Code 가 마지막 답을 기록에 쓸 시간 */
 const READ_DELAY_MS = 1500
 
-/** updatedMs = 기록이 바뀐 시각(기록이 없으면 null) */
+/** Why: updatedMs = 기록이 바뀐 시각(기록이 없으면 null) */
 type Reply = { lines: string[]; updatedMs: number | null }
 
-/** 설정이 켜져 있고, 지금 세션이 이 PC·원격의 Claude Code 이고, 그 호스트에 연결돼 있을 때만 보인다 */
 export function ClaudeReply({ row }: { row: AgentRow | null }) {
   const on = useUiStore((s) => s.summaryClaudeReply)
   const alias = row ? aliasOfIssue(row.issueId) : null
@@ -31,10 +29,10 @@ function ReplyBox({ row, alias }: { row: AgentRow; alias: string | null }) {
   const { paneId, issueId, waitingSince } = row
   const hostDeps = useHostDeps()
   const cwd = useUiStore((s) => s.worktreePathMap[issueId]?.path ?? null)
-  // 같은 작업 폴더에 Claude Code 가 여럿이면 어느 기록이 이 패널 것인지 알 수 없다
+  // Why: 같은 작업 폴더에 Claude Code 가 여럿이면 어느 기록이 이 패널 것인지 알 수 없다
   const crowded = useAgentStore((s) => Object.values(s.panes).filter((p) => p.agent === 'claude' && p.issueId === issueId).length > 1)
 
-  // 기다리기 시작하고 1.5초 뒤에 읽는다 — 타이머가 지금 키에 대해 끝났을 때만 읽기를 켠다
+  // Why: 기다리기 시작하고 1.5초 뒤에 읽는다 — 타이머가 지금 키에 대해 끝났을 때만 읽기를 켠다
   const key = `${paneId}\n${waitingSince}`
   const [due, setDue] = useState<string | null>(null)
   useEffect(() => {
@@ -54,7 +52,7 @@ function ReplyBox({ row, alias }: { row: AgentRow; alias: string | null }) {
     staleTime: Infinity,
     gcTime: 60_000,
     retry: false,
-    // 같은 패널을 다시 읽는 동안은 지난 답을 두고, 다른 세션으로 바뀌면 지난 세션의 답을 보이지 않는다
+    // Why: 같은 패널을 다시 읽는 동안은 지난 답을 두고, 다른 세션으로 바뀌면 지난 세션의 답을 보이지 않는다
     placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === paneId ? prev : undefined),
     // Why: 기록이 기다림보다 먼저 쓰였으면 마지막 답을 아직 쓰는 중일 수 있다 — 이 키에서 한 번만 더 읽는다(실패한 읽기도 센다)
     refetchInterval: (query) => {
@@ -64,7 +62,7 @@ function ReplyBox({ row, alias }: { row: AgentRow; alias: string | null }) {
     },
   })
 
-  // "N분 전 기록" 이 흐르게 한다
+  // Why: "N분 전 기록" 이 흐르게 한다
   const [, tick] = useState(0)
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 30_000)

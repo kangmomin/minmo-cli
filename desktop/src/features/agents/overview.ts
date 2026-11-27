@@ -25,7 +25,7 @@ export type AgentRow = {
   label: string
   status: AgentStatus
   since: number
-  /** 작업 중이 아니게 된 시각(ms, 작업 중이면 null) — 답변 모드의 대기열 순서(#122) */
+  /** Why: 작업 중이 아니게 된 시각(ms, 작업 중이면 null) — 답변 모드의 대기열 순서(#122) */
   waitingSince: number | null
   lastOutputAt: number
   /** Claude Code 가 띄운 하위 에이전트들(실행 중인 것 먼저) */

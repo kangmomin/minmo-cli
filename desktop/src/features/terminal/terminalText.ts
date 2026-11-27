@@ -1,4 +1,4 @@
-// 패널의 터미널 화면 글자 읽기(#122 Jev 판정) — TerminalTab 이 패널마다 그 xterm 의 버퍼를 등록한다.
+// Why: TerminalTab 이 패널마다 그 xterm 의 버퍼를 등록한다(#122 Jev 판정)
 
 export interface TerminalTextBuffer {
   readonly length: number
@@ -7,7 +7,7 @@ export interface TerminalTextBuffer {
 
 const buffers = new Map<string, () => TerminalTextBuffer | undefined>()
 
-/** buffer 는 부를 때의 버퍼를 돌려준다(TerminalTab 이 정한다) */
+/** Why: buffer 는 부를 때의 버퍼를 돌려준다(TerminalTab 이 정한다) */
 export function registerTerminalText(paneId: string, buffer: () => TerminalTextBuffer | undefined): () => void {
   buffers.set(paneId, buffer)
   return () => {
@@ -15,7 +15,7 @@ export function registerTerminalText(paneId: string, buffer: () => TerminalTextB
   }
 }
 
-/** 그 패널 화면의 마지막 maxLines 줄 — 끝의 빈 줄은 버리고, 줄바꿈된(isWrapped) 줄은 잇는다. 패널이 없으면 '' */
+/** Why: 그 패널 화면의 마지막 maxLines 줄 — 끝의 빈 줄은 버리고, 줄바꿈된(isWrapped) 줄은 잇는다. 패널이 없으면 '' */
 export function readTerminalText(paneId: string, maxLines: number): string {
   const b = buffers.get(paneId)?.()
   if (!b) return ''

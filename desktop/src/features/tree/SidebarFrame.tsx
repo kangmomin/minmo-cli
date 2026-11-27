@@ -7,7 +7,7 @@ import { SIDEBAR_WIDTH, clampSidebarWidth, useUiStore } from '../../store/ui'
 interface SidebarFrameProps {
   className?: string
   children: ReactNode
-  /** aside 이름(기본 "이슈 트리") — 답변 모드(#122)는 "답변 모드" */
+  /** Why: aside 이름(기본 "이슈 트리") — 답변 모드(#122)는 "답변 모드" */
   label?: string
 }
 

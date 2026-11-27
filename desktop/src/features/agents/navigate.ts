@@ -13,10 +13,7 @@ import { useUiStore } from '../../store/ui'
 import type { IssueActions } from '../issue/useWorktree'
 import { leafIds } from '../terminal/panes'
 
-/**
- * 그 이슈의 터미널 탭을 열고 패널을 고른다. keyboard 면 그 터미널이 키 입력도 받게 한다
- * (사용자가 그 패널을 직접 가리킨 경우만 — 자동 포커스 금지 AX-02). 그 패널로 갔으면 true(#122)
- */
+/** Why: keyboard 는 사용자가 그 패널을 직접 가리킨 경우만 켠다(자동 포커스 금지). 그 패널로 갔으면 true(#122) */
 export function goToPane(issueId: string, paneId: string, keyboard = false): boolean {
   const ui = useUiStore.getState()
   ui.selectIssue(issueId)
@@ -33,21 +30,18 @@ export type OpenPaneResult = 'ok' | 'failed' | 'stale'
 export interface OpenPaneOptions {
   actionsFor: (host: Host) => IssueActions
   tauri: Pick<TauriApi, 'sshProbe'>
-  /** 그 이슈의 원격 호스트 별칭(이 PC 면 null) */
+  /** Why: 그 이슈의 원격 호스트 별칭(이 PC 면 null) */
   alias: string | null
   target: IssueTarget
-  /** 갈 패널(null 이면 그 이슈의 터미널 탭까지) */
+  /** Why: 갈 패널(null 이면 그 이슈의 터미널 탭까지) */
   paneId: string | null
   keyboard: boolean
-  /** 시간 제한(그 시각, Date.now() 기준 ms) */
+  /** Why: 시간 제한(그 시각, Date.now() 기준 ms) */
   deadline: number
-  /** 사용자가 화면을 바꾸는 등으로 이 이동이 쓸모없어졌는가 */
   isStale(): boolean
 }
 
-/**
- * 이 창에서 열지 않은 이슈의 패널로 간다(#122): 원격이면 연결 → 열기(기다리지 않음) → 준비될 때까지 → 그 패널.
- */
+/** Why: 원격이면 연결 → 열기(기다리지 않음) → 준비될 때까지 → 그 패널로 간다(#122) */
 export async function openPaneTarget(o: OpenPaneOptions): Promise<OpenPaneResult> {
   let timer: ReturnType<typeof setTimeout> | undefined
   let unsubscribe: (() => void) | undefined

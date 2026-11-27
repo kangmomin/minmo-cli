@@ -1,14 +1,12 @@
-// TypeSafe Jev 판정(#122) — 요청 만들기·응답 해석·오류 문구. 보내기와 API 키는 Rust(commands/jev.rs)가 한다
+// Why: 보내기와 API 키는 Rust(commands/jev.rs)가 한다 — 여기서는 요청 만들기·응답 해석·오류 문구만 맡는다(#122)
 
-/** Jev 로 보내는 터미널 글자의 상한(UTF-8 바이트) */
 export const JEV_MAX_BYTES = 30_000
-/** Jev 로 보내는 터미널 글자의 줄 수 상한 */
 export const JEV_MAX_LINES = 200
-/** 요청 본문 상한(UTF-8 바이트) — Rust 는 64KiB 로 한 번 더 본다 */
+/** Why: 요청 본문 상한(UTF-8 바이트) — Rust 는 64KiB 로 한 번 더 본다 */
 const MAX_BODY_BYTES = 60 * 1024
 
 export type JevChoice = { choice: string; probability: number }
-/** 칩 3개 — 모르는 답 형식이면 그 항목은 null("판정 없음") */
+/** Why: 칩 3개 — 모르는 답 형식이면 그 항목은 null("판정 없음") */
 export type JevVerdict = { need: JevChoice | null; outcome: JevChoice | null; urgency: { level: number; probability: number } | null }
 
 const NEED: Record<string, string> = {
@@ -24,14 +22,13 @@ const OUTCOME: Record<string, string> = {
   failed: 'The last task failed',
   unknown: 'Cannot tell from the terminal',
 }
-/** 급함 단계 0~2 */
 const URGENCY = ['low', 'medium', 'high']
 
 const encoder = new TextEncoder()
 const byteLength = (s: string) => encoder.encode(s).length
 const isContinuationByte = (b: number) => (b & 0xc0) === 0x80
 
-/** 끝에서 max 바이트(UTF-8) 이내 — 글자 중간이면 다음 글자부터 */
+/** Why: 끝에서 max 바이트(UTF-8) 이내 — 글자 중간이면 다음 글자부터 */
 export function tailBytes(text: string, max: number): string {
   const bytes = encoder.encode(text)
   if (bytes.length <= max) return text
@@ -52,7 +49,6 @@ function requestBody(state: string): string {
   })
 }
 
-/** POST /v1/systemone 요청 본문(JSON) */
 export function buildJevRequest(text: string): string {
   let state = tailBytes(text, JEV_MAX_BYTES)
   let body = requestBody(state)
@@ -66,7 +62,7 @@ export function buildJevRequest(text: string): string {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const finite = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
-/** 고른 것의 확률 — 없으면 응답의 confidence */
+/** Why: 고른 것의 확률 — 없으면 응답의 confidence */
 const probabilityOf = (v: Record<string, unknown>, key: string) => (isRecord(v.probabilities) ? finite(v.probabilities[key]) : null) ?? finite(v.confidence)
 
 function parseChoice(v: unknown, known: Record<string, string>): JevChoice | null {
@@ -97,12 +93,11 @@ export function parseJevResponse(json: string): JevVerdict | null {
   return { need: parseChoice(a.need, NEED), outcome: parseChoice(a.outcome, OUTCOME), urgency: parseScore(a.urgency) }
 }
 
-/** 거절 값의 오류 코드 — 실제 invoke 는 문자열로, 테스트·mock 은 Error(code) 로 거절한다 */
+/** Why: 거절 값의 오류 코드 — 실제 invoke 는 문자열로, 테스트·mock 은 Error(code) 로 거절한다 */
 export function jevCode(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
-/** 오류 코드(jev_key_missing·jev_keychain·jev_http_{status}·jev_network 등) → 문구 */
 export function jevErrorText(code: string): string {
   switch (code) {
     case 'jev_key_missing':

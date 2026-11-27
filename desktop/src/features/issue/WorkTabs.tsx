@@ -23,11 +23,11 @@ export interface WorkTabsProps {
   /** 이슈 id(호스트 접두어 포함). 없으면 이 영역의 호스트로 만든다 — 호스트에 연결하기 전에도 맞는 id 를 쓰도록 넘긴다 */
   issueId?: string
   state: IssueOpenState | undefined
-  /** 답변 모드(#122): 탭 목록 없이 지금 패널 하나의 터미널만 */
+  /** Why: 답변 모드(#122): 탭 목록 없이 지금 패널 하나의 터미널만 */
   terminalOnly?: boolean
-  /** 답변 모드(#122): Ctrl+Shift+M 이 포커스를 옮길 곳(기본 보기는 [터미널] 탭) */
+  /** Why: 답변 모드(#122): Ctrl+Shift+M 이 포커스를 옮길 곳(기본 보기는 [터미널] 탭) */
   onExit?: () => void
-  /** 답변 모드(#122): 터미널 입력이 함께 읽을 설명 요소 id */
+  /** Why: 답변 모드(#122): 터미널 입력이 함께 읽을 설명 요소 id */
   describedBy?: string
 }
 

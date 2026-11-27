@@ -1,4 +1,3 @@
-// 서버 설정 "세션 요약" 절(#122) — 답변 모드 요약 카드의 Claude 답변·Jev 판정 켜기와 Jev API 키 저장·지우기
 import { useId, useState } from 'react'
 
 import { Button } from '../../components/ui/button'
@@ -11,7 +10,7 @@ import { saveJevKey, useJevKeyStatus, useJevKeyStore } from './jevKey'
 
 export interface SummarySettingsSectionProps {
   tauri: TauriApi
-  /** 입력 중인 키 — 대화상자가 들고 있어 닫으면 사라지고, [저장]도 이 값을 저장한다 */
+  /** Why: 입력 중인 키 — 대화상자가 들고 있어 닫으면 사라지고, [저장]도 이 값을 저장한다 */
   draft: string
   onDraftChange(draft: string): void
 }

@@ -1,4 +1,3 @@
-// Jev 판정(#122) — 답변 모드 요약 카드에서 [Jev 판정]을 누르면 지금 패널의 터미널 글자를 TypeSafe Jev 로 보내 칩 3개를 보인다
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 
@@ -17,12 +16,11 @@ const NEED_LABEL: Record<string, string> = { permission: '권한 허용', questi
 const OUTCOME_LABEL: Record<string, string> = { success: '성공', partial: '일부 끝남', failed: '실패', unknown: '알 수 없음' }
 const URGENCY_LABEL = ['낮음', '보통', '높음']
 
-/** key = 판정을 묶는 세션·기다림, token = 그 누름 */
+/** Why: key = 판정을 묶는 세션·기다림, token = 그 누름 */
 type Result = { key: string; token: number } & ({ kind: 'busy' } | { kind: 'empty' } | { kind: 'done'; verdict: Verdict | null } | { kind: 'error'; message: string })
 
 let nextToken = 0
 
-/** 설정이 켜져 있고 이 PC 화면이고 지금 세션이 있을 때만 보인다 */
 export function JevVerdict({ row }: { row: AgentRow | null }) {
   const on = useUiStore((s) => s.summaryJev)
   const { tauri } = useBaseDeps()
@@ -34,7 +32,7 @@ export function JevVerdict({ row }: { row: AgentRow | null }) {
 function VerdictBox({ row, tauri }: { row: AgentRow; tauri: TauriApi }) {
   const { saved, checkFailed } = useJevKeyStatus(tauri)
 
-  // 판정은 그 세션의 그 기다림에 묶는다 — 세션이 바뀌거나 다시 기다리는 상태가 되면 지운다
+  // Why: 판정은 그 세션의 그 기다림에 묶는다 — 세션이 바뀌거나 다시 기다리는 상태가 되면 지운다
   const key = `${rowKey(row)}\n${row.waitingSince}`
   const [result, setResult] = useState<Result | null>(null)
   // Why: 렌더 중에 지워야 응답 전에 세션이 바뀐 판정이 그 세션으로 돌아왔을 때 다시 보이지 않는다(늦은 응답은 token 이 달라 버린다)
@@ -61,7 +59,7 @@ function VerdictBox({ row, tauri }: { row: AgentRow; tauri: TauriApi }) {
         settle({ key, token, kind: 'error', message: jevErrorText(code) })
         return
       }
-      // 키가 없어졌다 — 버튼 대신 키 안내를 보인다
+      // Why: 키가 없어졌다 — 버튼 대신 키 안내를 보인다
       settle(null)
       useJevKeyStore.getState().set(false)
     }

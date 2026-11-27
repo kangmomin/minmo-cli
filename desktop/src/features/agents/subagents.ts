@@ -47,10 +47,7 @@ export function parseSubagentFiles(files: readonly SubagentFile[], now: number =
 
 export const runningCount = (subs: readonly Subagent[] | undefined) => (subs ?? []).filter((s) => !s.finished).length
 
-/**
- * 원격에서 작업 폴더($1 = slug)의 가장 최근 세션 기록을 $s 에 찾고 바뀐 시각(초)을 읽는 mt() 를 정하는 앞부분.
- * 기록이 없으면 아무것도 출력하지 않고 끝난다 — 하위 에이전트·마지막 답변 스크립트가 같이 쓴다
- */
+/** Why: $1 = 작업 폴더 slug. 기록이 없으면 아무것도 출력하지 않고 끝난다 — 하위 에이전트·마지막 답변 스크립트가 같이 쓴다 */
 export const REMOTE_SESSION_LOOKUP = `d="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 [ -d "$d" ] || exit 0
 p=""

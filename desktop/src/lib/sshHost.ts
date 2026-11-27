@@ -347,7 +347,7 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
       const r = await script(REMOTE_SUBAGENTS_SCRIPT, [claudeProjectSlug(cwd), String(Math.max(0, Math.floor(sinceMs / 1000)))])
       return r.code === 0 ? parseRemoteSubagents(r.stdout) : []
     },
-    // 원격의 세션 기록 끝부분(마지막 답변). 기록이 없으면 null, ssh·스크립트가 실패하면 "읽지 못함"
+    // Why: 원격의 세션 기록 끝부분(마지막 답변). 기록이 없으면 null, ssh·스크립트가 실패하면 "읽지 못함"
     claudeLastReply: async (cwd) => parseRemoteReply(must(await script(REMOTE_REPLY_SCRIPT, [claudeProjectSlug(cwd)]), '답변 기록 읽기').stdout),
     // 원격의 기록에서 읽는다(python3). 읽지 못하면 "없음" — 하단 바가 비어 있을 뿐 다른 동작은 그대로다
     agentUsage: async (sinceMs) => {

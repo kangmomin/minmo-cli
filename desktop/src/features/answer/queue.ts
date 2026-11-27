@@ -1,4 +1,4 @@
-// 답변 모드(#122)의 대기열 규칙 — 순수 함수(상태 기계). 화면·타이머는 useAnswerQueue 가 맡는다.
+// Why: 순수 함수(상태 기계)로 둔다 — 화면·타이머는 useAnswerQueue 가 맡는다(#122).
 import { statusRank } from '../agents/agentStore'
 import type { AgentStatus } from '../agents/agentStore'
 import { byName, rowKey } from '../agents/overview'
@@ -6,51 +6,48 @@ import type { AgentRow } from '../agents/overview'
 import { leafIds } from '../terminal/panes'
 import type { PaneNode } from '../terminal/panes'
 
-/** 답을 보낸 뒤(마지막 입력 뒤) 이만큼 지나야 넘어간다 */
+/** Why: 답을 보낸 뒤(마지막 입력 뒤) 이만큼 지나야 넘어간다 */
 export const ADVANCE_INPUT_GUARD_MS = 2000
-/** 작업 중이 된 뒤 이 시간 안의 입력은 "답을 보낸 입력"으로 본다(이어서 치는 중이 아님) */
+/** Why: 작업 중이 된 뒤 이 시간 안의 입력은 "답을 보낸 입력"으로 본다(이어서 치는 중이 아님) */
 export const ECHO_GRACE_MS = 400
-/** 에이전트가 끝난 뒤(패널을 닫은 뒤) 이만큼 지나야 넘어간다 */
+/** Why: 에이전트가 끝난 뒤(패널을 닫은 뒤) 이만큼 지나야 넘어간다 */
 export const ENDED_CONFIRM_MS = 1000
-/** 진입 때 지금 패널의 줄이 잡히기를 기다리는 시간 */
+/** Why: 진입 때 지금 패널의 줄이 잡히기를 기다리는 시간 */
 export const ENTRY_GRACE_MS = 5000
-/** 자동 이동의 열기 시간 제한 */
+/** Why: 자동 이동의 열기 시간 제한 */
 export const AUTO_OPEN_DEADLINE_MS = 15000
-/** 사용자가 고른 줄·진입의 열기 시간 제한 */
+/** Why: 사용자가 고른 줄·진입의 열기 시간 제한 */
 export const PICK_OPEN_DEADLINE_MS = 30000
 
-/** 지금 보이는 것 — 고른 이슈와 그 이슈에서 보이는 패널 */
 export type Shown = { issueId: string | null; paneId: string | null }
 
-/** 보이는 것(shown)에 붙은 메타데이터 */
 export type Session = {
   issueId: string | null
   paneId: string | null
-  /** 화면에 보인 동안 기다리는 상태였다 */
+  /** Why: 화면에 보인 동안 기다리는 상태였다 */
   shownWaiting: boolean
-  /** 마지막 기다림이 시작된 시각 */
   waitStart: number | null
-  /** 보이기 시작한 기다림 상태(작업 중이면 null) */
+  /** Why: 보이기 시작한 기다림 상태(작업 중이면 null) */
   shownStatus: AgentStatus | null
-  /** 이 세션에서 에이전트 줄을 본 적이 있다 */
+  /** Why: 이 세션에서 에이전트 줄을 본 적이 있다 */
   agentSeen: boolean
-  /** 에이전트가 없어진 것을 처음 본 때 */
+  /** Why: 에이전트가 없어진 것을 처음 본 때 */
   goneAt: number | null
-  /** 에이전트를 본 패널을 닫아 옆 패널로 바뀐 때 */
+  /** Why: 에이전트를 본 패널을 닫아 옆 패널로 바뀐 때 */
   closedAt: number | null
 }
 
-/** 진입 판단 — until null = 지금 이슈를 여는 중 */
+/** Why: 진입 판단 — until null = 지금 이슈를 여는 중 */
 export type Entry = { issueId: string | null; startedAt: number; until: number | null }
 
 export type PendingReason = 'answered' | 'ended' | 'entry' | 'skip' | 'pick'
 
-/** 이동 중 — from 은 이동을 시작한 때 보이던 것(실패하면 그곳으로 되돌린다), at 은 시작 시각 */
+/** Why: 이동 중 — from 은 이동을 시작한 때 보이던 것(실패하면 그곳으로 되돌린다), at 은 시작 시각 */
 export type Pending = { token: number; issueId: string; paneId: string; row: AgentRow; from: Shown; at: number; reason: PendingReason }
 
-/** rowKey → 건너뛴 때의 waitingSince·순번 */
+/** Why: rowKey → 건너뛴 때의 waitingSince·순번 */
 export type Skipped = Record<string, { waitingSince: number; seq: number }>
-/** rowKey → 열 수 없음(자동 이동 대상에서 뺀다) */
+/** Why: rowKey → 열 수 없음(자동 이동 대상에서 뺀다) */
 export type Blocked = Record<string, true>
 
 export type QueueState = { session: Session | null; entry: Entry | null; pending: Pending | null; skipped: Skipped; blocked: Blocked }
@@ -58,19 +55,15 @@ export type QueueState = { session: Session | null; entry: Entry | null; pending
 export type StepInput = {
   now: number
   shown: Shown
-  /** 보이는 이슈가 이 창에서 phase ready */
   shownReady: boolean
-  /** answerRows 중 shown 패널의 줄 */
   row: AgentRow | null
-  /** agentStore 에 shown 패널 항목이 있다('기타' 포함) */
+  /** Why: agentStore 에 shown 패널 항목이 있다('기타' 포함) */
   paneHasAgent: boolean
-  /** session 의 패널이 아직 트리에 있다 */
   sessionPaneExists: boolean
-  /** shown 패널의 마지막 입력 시각(패널이 없으면 0) */
+  /** Why: shown 패널의 마지막 입력 시각(패널이 없으면 0) */
   lastInput: number
-  /** pending 이 있으면 pending.from 패널의 마지막 입력 시각 */
+  /** Why: pending 이 있으면 pending.from 패널의 마지막 입력 시각 */
   fromInput: number
-  /** queueOrder 의 기다리는 줄 */
   waiting: AgentRow[]
   overlay: boolean
   narrowListOpen: boolean
@@ -78,7 +71,7 @@ export type StepInput = {
 
 export type StepResult = { state: QueueState; go?: { row: AgentRow; reason: 'answered' | 'ended' | 'entry' }; cancelled?: true }
 
-/** 대기열에 오르는 줄 — 이 PC·알려진 에이전트·이슈를 아는 줄, 그 이슈의 패널 트리에 있는 패널만 */
+/** Why: 대기열에 오르는 줄 — 이 PC·알려진 에이전트·이슈를 아는 줄, 그 이슈의 패널 트리에 있는 패널만 */
 export function answerRows(rows: AgentRow[], panes: Record<string, { tree: PaneNode | null } | undefined>): AgentRow[] {
   return rows.filter((r) => {
     if (r.peer !== undefined || r.agent === 'other' || r.target === null) return false
@@ -91,7 +84,7 @@ export function isWaiting(status: AgentStatus): boolean {
   return status !== 'working'
 }
 
-/** 지난 시간의 시작 — 작업 중이면 작업을 시작한 때, 기다리면 기다리기 시작한 때 */
+/** Why: 지난 시간의 시작 — 작업 중이면 작업을 시작한 때, 기다리면 기다리기 시작한 때 */
 export const sinceOf = (r: AgentRow) => (r.status === 'working' ? r.since : (r.waitingSince ?? r.since))
 
 /** Why: 건너뛴 기록은 그때의 기다림에만 쓴다 — 다시 기다리는 상태가 되면(waitingSince 가 바뀜) 원래 순서로 돌아온다. */

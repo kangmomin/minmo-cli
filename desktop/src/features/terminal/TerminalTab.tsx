@@ -87,9 +87,9 @@ export interface TerminalTabProps {
   visible: boolean
   /** Ctrl+Shift+M — 터미널 밖(탭 목록)으로 포커스를 옮긴다 */
   onExit?: () => void
-  /** 답변 모드(#122): 지금 패널 하나만 전체 크기로 */
+  /** Why: 답변 모드(#122): 지금 패널 하나만 전체 크기로 */
   singlePane?: boolean
-  /** 답변 모드(#122): 터미널 입력이 함께 읽을 설명 요소 id */
+  /** Why: 답변 모드(#122): 터미널 입력이 함께 읽을 설명 요소 id */
   describedBy?: string
 }
 
@@ -223,7 +223,7 @@ function IssuePanes({
   if (!panes) return null
   const rects = layoutPanes(panes.tree)
   const multiple = rects.length > 1
-  // 좁은 화면(휴대폰)·답변 모드에서는 한 번에 한 패널만 크게 보인다(좁은 화면은 위의 번호 버튼으로 바꾼다). 가려진 패널의 터미널도 그대로 살아 있다
+  // Why: 좁은 화면(휴대폰)·답변 모드에서는 한 번에 한 패널만 크게 보인다(좁은 화면은 위의 번호 버튼으로 바꾼다). 가려진 패널의 터미널도 그대로 살아 있다
   const single = narrow || singlePane
   const shownId = single ? effectivePane(panes) : undefined
   return (

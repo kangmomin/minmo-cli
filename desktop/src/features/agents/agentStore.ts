@@ -29,7 +29,7 @@ export type PaneAgent = {
   lastOutputAt: number
   /** 지금 상태가 된 시각(ms) */
   since: number
-  /** 작업 중이 아니게 된 시각(ms) — 작업 중이면 null, 기다리는 동안(상태가 바뀌어도) 유지(#122) */
+  /** Why: 작업 중이 아니게 된 시각(ms) — 작업 중이면 null, 기다리는 동안(상태가 바뀌어도) 유지(#122) */
   waitingSince: number | null
 }
 

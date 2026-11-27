@@ -13,7 +13,7 @@ export interface NewSessionDialogProps {
   onOpenChange(open: boolean): void
   connection?: SidebarProps['connection']
   onOpenSettings: SidebarProps['onOpenSettings']
-  /** 대화상자가 닫힌 뒤 포커스를 둘 곳(카드 제목, 없으면 [새 세션] 버튼)으로 옮긴다 */
+  /** Why: 대화상자가 닫힌 뒤 포커스를 둘 곳(카드 제목, 없으면 [새 세션] 버튼)으로 옮긴다 */
   onCloseFocus(): void
 }
 

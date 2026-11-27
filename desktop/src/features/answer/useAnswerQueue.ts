@@ -1,4 +1,4 @@
-// 답변 모드(#122)의 대기열 훅 — Workspace 가 한 번 부른다.
+// Why: Workspace 가 한 번만 부른다(#122)
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { useBaseDeps } from '../../app/deps'
@@ -36,25 +36,19 @@ import {
 import type { PendingReason, QueueState, Session, Shown } from './queue'
 
 export interface AnswerQueue {
-  /** 기다리는 세션(대기열 순서) */
   waiting: AgentRow[]
-  /** 작업 중인 세션(이름순) */
   working: AgentRow[]
-  /** 열 수 없는 세션 */
   blockedRows: AgentRow[]
-  /** 지금 보이는 패널의 줄(없으면 null) */
+  /** Why: 지금 보이는 패널의 줄(없으면 null) */
   current: AgentRow | null
   session: Session | null
-  /** 지금 세션보다 급한 세션들 */
   urgent: AgentRow[]
   pick(row: AgentRow): void
   skip(): void
   seeUrgent(): void
   /** Why: [이 세션에 답하기]는 사용자가 지금 세션을 고른 것이라 진행 중인 이동·진입을 끝내야 한다. */
   cancel(): void
-  /** polite 알림 글 */
   announce: string
-  /** 오류 알림 글 */
   alert: string
 }
 
@@ -67,7 +61,7 @@ type Arrival = { focus: boolean; text: string }
 // Why: step 은 부를 때마다 새 session 객체를 돌려준다 — 값이 같으면 다시 그리지 않는다.
 const sameSession = (a: Session | null, b: Session | null) => a === b || (a !== null && b !== null && (Object.keys(a) as (keyof Session)[]).every((k) => a[k] === b[k]))
 
-/** 고른 이슈에서 보이는 패널(store selector) — 대기열과 요약 카드가 같은 패널을 본다 */
+/** Why: 고른 이슈에서 보이는 패널(store selector) — 대기열과 요약 카드가 같은 패널을 본다 */
 export const shownPaneOf = (s: Pick<UiState, 'selectedIssueId' | 'panes'>): string | null =>
   s.selectedIssueId === null ? null : effectivePane(s.panes[s.selectedIssueId])
 

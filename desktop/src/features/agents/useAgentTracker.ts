@@ -61,12 +61,12 @@ type Tracked = PaneSignals & {
 
 const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false, claudeSince: 0, exited: false })
 
-/** 그 패널에 사용자가 마지막으로 입력한 시각(없으면 0, #122) */
+/** Why: 그 패널에 사용자가 마지막으로 입력한 시각(없으면 0, #122) */
 export function lastInputAt(paneId: string): number {
   return inputAt.get(paneId) ?? 0
 }
 
-/** 터미널(PTY)의 지금 크기를 알린다 — 크기 변경으로 다시 그린 출력을 작업 시작으로 세지 않게(#122) */
+/** Why: 터미널(PTY)의 지금 크기를 알린다 — 크기 변경으로 다시 그린 출력을 작업 시작으로 세지 않게(#122) */
 export function notePtySize(ptyId: string, cols: number, rows: number): void {
   ptySizes.set(ptyId, { cols, rows })
 }

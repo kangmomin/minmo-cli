@@ -138,7 +138,7 @@ export type ServerSettingsInput = Partial<Pick<ServerSettings, 'port' | 'closeAc
 
 /** Claude Code 하위 에이전트의 메타 파일(src-tauri/src/commands/agents.rs SubagentFile) — meta 는 meta.json 원문 */
 export type SubagentFile = { id: string; meta: string; updatedMs: number }
-/** Claude Code 최신 세션 기록의 끝부분(src-tauri/src/commands/agents.rs claude_last_reply, #122) — tail 은 기록 원문, updatedMs 는 기록 시각 */
+/** Why: Claude Code 최신 세션 기록의 끝부분(src-tauri/src/commands/agents.rs claude_last_reply, #122) — tail 은 기록 원문, updatedMs 는 기록 시각 */
 export type ClaudeReplyTail = { tail: string; updatedMs: number }
 
 /** 토큰 수(src-tauri/src/commands/usage.rs Tokens). 합계에는 cacheRead 를 넣지 않는다 — 요청마다 대화 전체가 다시 세어진다 */
@@ -292,11 +292,10 @@ export interface TauriApi extends WorktreeHost, GhHost {
    * sinceMs 이전에 마지막으로 바뀐 세션은 보지 않는다 — 이전 실행의 기록을 지금 것으로 보이지 않게
    */
   claudeSubagents(cwd: string, sinceMs: number): Promise<SubagentFile[]>
-  /** cwd(작업 폴더)에서 도는 Claude Code 의 최신 세션 기록 끝부분(없으면 null, #122) */
+  /** Why: cwd(작업 폴더)에서 도는 Claude Code 의 최신 세션 기록 끝부분(없으면 null, #122) */
   claudeLastReply(cwd: string): Promise<ClaudeReplyTail | null>
-  /** TypeSafe Jev 판정(#122) — body 는 요청 JSON, 응답 JSON 원문을 돌려준다. API 키는 Rust 안에서만 읽는다 */
+  /** Why: TypeSafe Jev 판정(#122) — body 는 요청 JSON, 응답 JSON 원문을 돌려준다. API 키는 Rust 안에서만 읽는다 */
   jevDecide(body: string): Promise<string>
-  /** Jev API 키가 키체인에 있는가 */
   jevKeyStatus(): Promise<boolean>
   jevKeySet(key: string): Promise<void>
   jevKeyDelete(): Promise<void>
