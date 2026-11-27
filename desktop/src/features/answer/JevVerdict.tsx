@@ -105,7 +105,12 @@ function Chip({ name, value, probability }: { name: string; value: string | unde
   return (
     <span className="rounded border px-1.5 py-0.5">
       {name}: {value ?? '판정 없음'}
-      {probability !== undefined && <span className="ml-1 text-muted-foreground">{percent(probability)}</span>}
+      {probability !== undefined && (
+        <span className="ml-1 text-muted-foreground">
+          <span className="sr-only">확률 </span>
+          {percent(probability)}
+        </span>
+      )}
     </span>
   )
 }

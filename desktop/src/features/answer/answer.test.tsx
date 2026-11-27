@@ -568,6 +568,20 @@ describe('Jev 판정(AC-10 · EC-11)', () => {
     await waitFor(() => expect(box).not.toHaveTextContent('필요한 것:'))
   })
 
+  it('EC-15 칩의 확률은 "확률" 이름과 함께 읽는다 — 보이는 글은 90% 그대로', async () => {
+    world({ agents: [done(A1, 65_000)] })
+    jevOn()
+    const { user } = renderApp({ jevKeyStatus: async () => true, jevDecide: async () => RESPONSE })
+    await user.click(toggle())
+    const box = screen.getByTestId('jev-verdict')
+    await user.click(await within(box).findByRole('button', { name: 'Jev 판정' }))
+    await waitFor(() => expect(box).toHaveTextContent('필요한 것:'))
+    expect(box).toHaveTextContent('확률 90%')
+    const names = within(box).getAllByText('확률', { exact: false })
+    expect(names.length).toBeGreaterThan(0)
+    for (const name of names) expect(name).toHaveClass('sr-only')
+  })
+
   it('EC-11 키가 없으면 [Jev 판정] 대신 키 안내를 보인다', async () => {
     world({ agents: [done(A1, 65_000)] })
     jevOn()
