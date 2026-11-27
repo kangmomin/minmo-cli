@@ -1,6 +1,6 @@
-import { AppWindowIcon, ListTreeIcon, LogOutIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
+import { AppWindowIcon, ListTreeIcon, LogOutIcon, MessagesSquareIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import type { SettingsScope } from '@minmo/api-client'
 
@@ -8,6 +8,10 @@ import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { AgentsButton, AgentsOverview, useLocalRows } from '../features/agents/AgentsOverview'
+import { AnswerSessionList } from '../features/answer/AnswerSessionList'
+import { AnswerSummary } from '../features/answer/AnswerSummary'
+import { NewSessionDialog } from '../features/answer/NewSessionDialog'
+import { useAnswerQueue } from '../features/answer/useAnswerQueue'
 import { useNotifyClick } from '../features/agents/navigate'
 import { useAgentTracker } from '../features/agents/useAgentTracker'
 import { useWindowViewBroadcast } from '../features/agents/windowView'
@@ -28,10 +32,13 @@ import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
 import { SettingsDialog } from '../features/settings/SettingsDialog'
 import type { PreviewIssue } from '../features/settings/SettingsDialog'
 import { Sidebar } from '../features/tree/Sidebar'
+import { SidebarFrame } from '../features/tree/SidebarFrame'
 import { UsageBar } from '../features/usage/UsageBar'
 import { NEW_WINDOW_KEY, useNewWindowShortcut, useTerminalOpenShortcut } from '../features/terminal/keys'
+import { useNarrow } from '../features/terminal/TerminalKeyBar'
 import { openWindow } from '../features/tree/openWindow'
 import { useFontSizeShortcuts } from '../lib/fontSize'
+import { windowScope } from '../lib/windowScope'
 import { openServerSettings } from '../store/server'
 import { HostStatusNotice } from './HostGate'
 import { HostScope, aliasOfIssue, useHostConnection, useHostStatus } from './host'
@@ -90,7 +97,47 @@ export function Workspace() {
   useNotifyClick()
   const connection = useHostConnection()
 
+  const answer = useUiStore((s) => s.viewMode === 'answer')
+  const setViewMode = useUiStore((s) => s.setViewMode)
+  // Why: 범위 창(#105)은 그 범위의 트리만 다룬다 — 모든 세션을 보는 답변 모드 버튼을 두지 않는다.
+  const [scoped] = useState(() => windowScope() !== null)
+  const narrow = useNarrow()
+  const queue = useAnswerQueue(answer, { narrowListOpen: narrow && showTree })
+  const whereId = useId()
+  const [newSessionOpen, setNewSessionOpen] = useState(false)
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const emptyNewSessionRef = useRef<HTMLButtonElement>(null)
+  const listNewSessionRef = useRef<HTMLButtonElement>(null)
+  // Why: 좁은 화면에서는 카드·빈 안내가 가려질 수 있다 — 실제로 포커스를 받은 첫 자리에서 멈춘다.
+  const focusSummary = useCallback(() => {
+    for (const el of [headingRef.current, emptyNewSessionRef.current, listNewSessionRef.current]) {
+      el?.focus()
+      if (el && document.activeElement === el) return
+    }
+  }, [])
+  useEffect(() => {
+    if (!answer) return
+    const onFocusOut = (e: FocusEvent) => {
+      const gone = e.target
+      if (e.relatedTarget !== null || !(gone instanceof Node)) return
+      // Why: 누른 버튼·대화상자가 사라지면 포커스가 body 로 간다. Radix 는 닫은 뒤 setTimeout 0 으로 포커스를 돌려놓으므로 그 뒤에 본다.
+      setTimeout(() =>
+        setTimeout(() => {
+          const active = document.activeElement
+          if (!gone.isConnected && (active === null || active === document.body)) focusSummary()
+        }),
+      )
+    }
+    document.addEventListener('focusout', onFocusOut)
+    return () => document.removeEventListener('focusout', onFocusOut)
+  }, [answer, focusSummary])
+
   const selectedPreview: PreviewIssue | null = target ?? null
+  const openSettings = (scope: SettingsScope, preview: PreviewIssue | null) => {
+    // 선택된 이슈가 같은 저장소면 미리보기 기준으로 쓴다
+    const sameRepo = target && scope.kind !== 'global' && target.owner === scope.owner && (scope.kind === 'org' || target.repo === scope.repo)
+    setSettings({ scope, preview: sameRepo ? selectedPreview : (preview ?? selectedPreview) })
+  }
   const issueAlias = selectedId ? aliasOfIssue(selectedId) : null
   // 고른 이슈의 호스트에 아직 연결하지 않았으면 연결한다(앱을 다시 켠 뒤, 호스트 정보를 고친 뒤 등)
   const issueHost = useHostStatus(issueAlias)
@@ -101,13 +148,30 @@ export function Workspace() {
     <HostScope alias={connection.ready ? connection.selected : null}>
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2 max-md:px-2">
-        <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label={showTree ? '작업 화면 보기' : '이슈 목록 보기'} aria-pressed={showTree} onClick={() => setShowTree((v) => !v)}>
+        <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label={showTree ? '작업 화면 보기' : answer ? '세션 목록 보기' : '이슈 목록 보기'} aria-pressed={showTree} onClick={() => setShowTree((v) => !v)}>
           <ListTreeIcon />
         </Button>
         <span className="font-semibold">minmo</span>
         <AppVersion />
         <span className="flex-1" />
         {auth.me && <span className="text-sm text-muted-foreground">{auth.me.githubLogin}</span>}
+        {!scoped && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={answer ? 'secondary' : 'ghost'}
+                size="icon-sm"
+                aria-label="답변 모드"
+                aria-pressed={answer}
+                data-testid="answer-toggle"
+                onClick={() => setViewMode(answer ? 'normal' : 'answer')}
+              >
+                <MessagesSquareIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>답변 모드 — 답을 기다리는 세션을 하나씩 보입니다</TooltipContent>
+          </Tooltip>
+        )}
         <AgentsButton onClick={() => setAgentsOpen(true)} />
         {openBlankWindow && (
           <Tooltip>
@@ -181,16 +245,15 @@ export function Workspace() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <Sidebar
-          className={showTree ? 'max-md:w-full' : 'max-md:hidden'}
-          connection={connection}
-          onOpenSettings={(scope, preview) => {
-            // 선택된 이슈가 같은 저장소면 미리보기 기준으로 쓴다
-            const sameRepo =
-              target && scope.kind !== 'global' && target.owner === scope.owner && (scope.kind === 'org' || target.repo === scope.repo)
-            setSettings({ scope, preview: sameRepo ? selectedPreview : (preview ?? selectedPreview) })
-          }}
-        />
+        {/* Why: 답변 모드에도 트리를 내리지 않는다 — 불러온 목록·스크롤을 기본 보기로 돌아왔을 때 그대로 쓴다 */}
+        <div hidden={answer} className="contents">
+          <Sidebar className={showTree ? 'max-md:w-full' : 'max-md:hidden'} connection={connection} onOpenSettings={openSettings} />
+        </div>
+        {answer && (
+          <SidebarFrame label="답변 모드" className={showTree ? 'max-md:w-full' : 'max-md:hidden'}>
+            <AnswerSessionList queue={queue} onNewSession={() => setNewSessionOpen(true)} newSessionRef={listNewSessionRef} />
+          </SidebarFrame>
+        )}
         <main className={`flex min-w-0 flex-1 flex-col ${showTree ? 'max-md:hidden' : ''}`}>
           {target && selectedId ? (
             <HostScope alias={issueAlias}>
@@ -206,8 +269,24 @@ export function Workspace() {
               )}
               {/* 터미널 탭은 모든 이슈의 터미널을 들고 있어 항상 둔다(내리면 다른 호스트의 터미널·에이전트 추적도 끊긴다).
                   연결 전에는 이 이슈의 작업 상태만 감춘다 */}
-              <WorkTabs target={target} issueId={selectedId} state={issueHost.ready ? openState : undefined} />
+              {/* Why: WorkTabs 의 자리를 바꾸지 않는다 — 켜고 꺼도 터미널을 다시 만들지 않게 */}
+              {answer && <AnswerSummary queue={queue} whereId={whereId} headingRef={headingRef} onNewSession={() => setNewSessionOpen(true)} />}
+              <WorkTabs
+                target={target}
+                issueId={selectedId}
+                state={issueHost.ready ? openState : undefined}
+                terminalOnly={answer}
+                onExit={answer ? focusSummary : undefined}
+                describedBy={answer ? whereId : undefined}
+              />
             </HostScope>
+          ) : answer ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
+              <p>보이는 세션이 없습니다. 목록에서 세션을 고르거나 새 세션을 시작하세요.</p>
+              <Button ref={emptyNewSessionRef} size="sm" variant="secondary" onClick={() => setNewSessionOpen(true)}>
+                새 세션
+              </Button>
+            </div>
           ) : (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
               왼쪽 트리에서 이슈(또는 ★기타)를 선택하세요
@@ -221,6 +300,17 @@ export function Workspace() {
       <CliAccessDialog open={cliOpen} onOpenChange={setCliOpen} />
       <RemoteAccessDialog open={remoteOpen} onOpenChange={setRemoteOpen} />
       <AgentsOverview open={agentsOpen} onOpenChange={setAgentsOpen} />
+      {answer && (
+        <>
+          <div role="status" data-testid="answer-announce" className="sr-only">
+            {queue.announce}
+          </div>
+          <div role="alert" className="sr-only">
+            {queue.alert}
+          </div>
+          <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} connection={connection} onOpenSettings={openSettings} onCloseFocus={focusSummary} />
+        </>
+      )}
 
       {settings && (
         <SettingsDialog

@@ -42,7 +42,7 @@ export function NewSessionDialog({ open, onOpenChange, connection, onOpenSetting
           <DialogDescription>이슈를 고르면 작업 폴더를 준비하고 에이전트 실행 창을 엽니다</DialogDescription>
         </DialogHeader>
         <IssuePickContext.Provider value={pick}>
-          <div className="flex h-[60vh] min-h-0 flex-col">
+          <div className="flex h-[60vh] min-h-0 min-w-0 flex-col">
             <SidebarContent
               connection={connection}
               onOpenSettings={(scope, preview) => {

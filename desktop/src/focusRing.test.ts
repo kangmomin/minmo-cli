@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import colors from 'tailwindcss/colors'
+
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
 const css = read('./index.css')
 
@@ -68,5 +70,49 @@ describe('AX-22 포커스 스타일에 반투명(/50) ring·outline 을 쓰지 �
     expect(src).toContain('focus:ring-2')
     expect(src).toContain('focus:ring-ring')
     expect(src).not.toMatch(/focus:ring-ring\/\d+/)
+  })
+})
+
+describe('#122 답변 모드의 새 글자색·포커스 표시', () => {
+  // Why: 채도가 있는 색은 휘도가 L^3 이 아니다 — oklab 을 거쳐 선형 sRGB 로 바꿔 잰다(sRGB 밖은 자른다).
+  function oklchLuminance(value: string): number {
+    const m = /oklch\(([\d.]+)(%?) ([\d.]+) ([\d.]+)\)/.exec(value)
+    if (!m) throw new Error(`oklch 가 아님: ${value}`)
+    const l = Number(m[1]) / (m[2] === '%' ? 100 : 1)
+    const h = (Number(m[4]) * Math.PI) / 180
+    const [a, b] = [Number(m[3]) * Math.cos(h), Number(m[3]) * Math.sin(h)]
+    const lms = [l + 0.3963377774 * a + 0.2158037573 * b, l - 0.1055613458 * a - 0.0638541728 * b, l - 0.0894841775 * a - 1.291485548 * b].map((x) => x ** 3)
+    const rgb = [
+      [4.0767416621, -3.3077115913, 0.2309699292],
+      [-1.2684380046, 2.6097574011, -0.3413193965],
+      [-0.0041960863, -0.7034186147, 1.707614701],
+    ].map((row) => Math.min(1, Math.max(0, row.reduce((sum, k, i) => sum + k * lms[i], 0))))
+    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+  }
+  function surfaceLuminance(block: string, name: string): number {
+    const hex = new RegExp(String.raw`--${name}:\s*#([0-9a-f]{6})`, 'i').exec(block)
+    if (!hex) return luminance(lightness(block, name))
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16) / 255).map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+  }
+  const ratio = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+
+  it('EC-15 요약 카드의 "더 급한 세션" 글자는 text-amber-700 · dark:text-amber-400 이다', () => {
+    expect(read('./features/answer/AnswerSummary.tsx')).toContain('text-amber-700 dark:text-amber-400')
+  })
+
+  it.each([
+    ['라이트', ':root', colors.amber[700]],
+    ['다크', String.raw`\.dark`, colors.amber[400]],
+    ['Ghostty', String.raw`\.dark\.ghostty`, colors.amber[400]],
+  ])('EC-15 %s 테마: amber 글자 vs --background·--card 대비 4.5:1 이상', (_name, selector, text) => {
+    const block = themeBlock(selector)
+    for (const surface of ['background', 'card']) expect(ratio(oklchLuminance(text), surfaceLuminance(block, surface)), surface).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it.each(['./features/answer/AnswerSummary.tsx', './features/answer/AnswerSessionList.tsx'])('EC-15 %s 의 focus-visible ring 은 불투명 ring', (file) => {
+    const src = read(file)
+    expect(src).toContain('focus-visible:ring-ring')
+    expect(src).not.toMatch(/focus-visible:ring-ring\/\d+/)
   })
 })

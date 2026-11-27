@@ -33,6 +33,7 @@ export interface MinmoMockHandle {
   gitCalls: string[][]
   /** 터미널(PTY)로 보낸 입력 */
   ptyWrites: string[]
+  ptyWriteIds: string[]
   ptySpawns: number
   ptyFinds: number
   ptyResizes: number
@@ -211,6 +212,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     pickedFolder: null,
     gitCalls: [],
     ptyWrites: [],
+    ptyWriteIds: [],
     ptySpawns: 0,
     ptyFinds: 0,
     ptyResizes: 0,
@@ -356,6 +358,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     },
     ptyWrite: async (id, data) => {
       handle.ptyWrites.push(data)
+      handle.ptyWriteIds.push(id)
       // 에코만 한다(Enter → 새 프롬프트)
       emitPty(id, data === '\r' ? '\r\n$ ' : data)
     },
