@@ -99,8 +99,8 @@ const main = () => screen.getByRole('main')
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/')
-  localStorage.removeItem(TAKER_STORAGE_KEY)
   useTakerStore.setState({ repos: {}, taken: {}, runs: [], lastCheck: {} })
+  localStorage.removeItem(TAKER_STORAGE_KEY)
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online', me: { id: 'usr_x', githubLogin: 'octocat', avatarUrl: null } })
   useUiStore.setState({
