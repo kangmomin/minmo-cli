@@ -330,7 +330,8 @@ const TabButton = memo(function TabButton({
           className="flex h-7 shrink-0 items-center gap-0.5 rounded-t border-b-2 border-transparent pl-2.5 text-xs whitespace-nowrap text-neutral-400 outline-none hover:text-neutral-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-selected:border-neutral-100 aria-selected:bg-neutral-700 aria-selected:text-neutral-100"
         >
           <span className="sr-only">터미널 </span>
-          {label}
+          {/* Why: 이름 쪽이 × 보다 넓어야 탭 가운데를 누를 때 닫히지 않고 고른다("1" 만으로는 가운데가 × 위다) */}
+          <span className="min-w-8 text-center">{label}</span>
           {/* Why: 포커스 안 되는 표시(키보드는 Delete). mouseDown 을 막아 고르지 않은 탭을 닫아도 포커스·선택이 그대로다 */}
           <span
             aria-hidden
