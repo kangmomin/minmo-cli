@@ -10,6 +10,9 @@ import { getTauri } from '../../lib/tauri'
 import type { CloseAction, ServerSettings, ServerSettingsInput, TauriApi } from '../../lib/tauri'
 import { useServerStore } from '../../store/server'
 import { FONT_SIZE, useUiStore } from '../../store/ui'
+import { SummarySettingsSection } from '../answer/SummarySettingsSection'
+import { jevCode, jevErrorText } from '../answer/jev'
+import { saveJevKey } from '../answer/jevKey'
 import { AppUpdateSection } from '../update/AppUpdateSection'
 import { CLOSE_OPTIONS, parsePort, statusText } from './serverSettings'
 
@@ -55,6 +58,8 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
   useEffect(() => setFontDraft(String(fontSize)), [fontSize])
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // Why: 입력 중인 Jev API 키는 여기 둬야 대화상자를 닫을 때 사라진다 — 취소한 키가 다음에 열 때 남지 않는다
+  const [jevDraft, setJevDraft] = useState('')
 
   useEffect(() => {
     let alive = true
@@ -89,6 +94,18 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
     if (parsedPort === null) {
       setError('포트는 1024~65535 사이의 숫자여야 합니다')
       return
+    }
+    if (jevDraft !== '') {
+      setSaving(true)
+      try {
+        await saveJevKey(tauri, jevDraft)
+      } catch (err) {
+        setError(`Jev API 키를 저장하지 못했습니다: ${jevErrorText(jevCode(err))}`)
+        return
+      } finally {
+        setSaving(false)
+      }
+      setJevDraft('')
     }
     const input: ServerSettingsInput = {}
     if (parsedPort !== loaded.port) input.port = parsedPort
@@ -152,6 +169,8 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
       </section>
 
       <AppUpdateSection tauri={tauri} headingId={fid('app')} />
+
+      <SummarySettingsSection tauri={tauri} draft={jevDraft} onDraftChange={setJevDraft} />
 
       <section className="grid gap-2" aria-labelledby={fid('close')}>
         <h3 id={fid('close')} className="text-sm font-semibold">
