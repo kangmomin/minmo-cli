@@ -27,6 +27,7 @@ function freshPanes(issueId: string, seq: number): IssuePanes & { focused: strin
 }
 
 const THEME_VALUES: readonly Theme[] = ['ghostty', 'black', 'light']
+const WORK_TABS: readonly WorkTab[] = ['terminal', 'changes', 'files', 'notes', 'issue']
 
 /** 터미널·파일 편집기의 글자 크기(px) */
 export const FONT_SIZE = { default: 13, min: 9, max: 28 } as const
@@ -51,6 +52,7 @@ export const clampFontSize = (n: unknown): number =>
 export const clampSidebarWidth = (n: unknown): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, Math.round(n))) : SIDEBAR_WIDTH.default
 const isTheme = (v: unknown): v is Theme => THEME_VALUES.includes(v as Theme)
+const isWorkTab = (v: unknown): v is WorkTab => WORK_TABS.includes(v as WorkTab)
 
 export interface UiState {
   expanded: Record<string, boolean>
@@ -188,10 +190,14 @@ export const useUiStore = create<UiState>()(
       tabBeforeAnswer: 'terminal',
       summaryClaudeReply: true,
       summaryJev: false,
-      // #122 스텁 — Phase 5.2(U1)에서 구현
-      setViewMode: () => {},
-      setSummaryClaudeReply: () => {},
-      setSummaryJev: () => {},
+      setViewMode: (viewMode) => {
+        const s = get()
+        // Why: 다시 고른 answer 가 tabBeforeAnswer 를 'terminal' 로 덮지 않게 — set 도 하지 않는다(persist 는 set 마다 저장)
+        if (viewMode === s.viewMode) return
+        set(viewMode === 'answer' ? { viewMode, tabBeforeAnswer: s.tab, tab: 'terminal' } : { viewMode, tab: s.tabBeforeAnswer })
+      },
+      setSummaryClaudeReply: (summaryClaudeReply) => set({ summaryClaudeReply }),
+      setSummaryJev: (summaryJev) => set({ summaryJev }),
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
       selectIssue: (selectedIssueId) => set((s) => ({ selectedIssueId, selectSeq: s.selectSeq + 1 })),
       setTab: (tab) => set({ tab }),
@@ -365,7 +371,9 @@ export const useUiStore = create<UiState>()(
       name: 'minmo-ui',
       // 창마다 다른 값(지금 보는 이슈·펼친 노드·탭)은 보조 창이 덮지 않는다. 보조 창은 고른 이슈 없이 시작한다(#105)
       // e2eRoles: 지운 E2E 큐(#92)의 역할 설정 — 저장소에서도 지운다(#111)
-      storage: createJSONStorage(() => perWindowStorage(['selectedIssueId', 'expanded', 'tab'], ['selectedIssueId'], undefined, { retired: ['e2eRoles'] })),
+      storage: createJSONStorage(() =>
+        perWindowStorage(['selectedIssueId', 'expanded', 'tab', 'viewMode', 'tabBeforeAnswer'], ['selectedIssueId', 'viewMode'], undefined, { retired: ['e2eRoles'] }),
+      ),
       // Plan 은 terminal ids 도 persist 였으나 PTY 세션 id 는 프로세스 수명과 같아 재시작 후 의미가 없다 → 영속 대상에서 제외
       partialize: (s) => ({
         expanded: s.expanded,
@@ -382,6 +390,10 @@ export const useUiStore = create<UiState>()(
         agentCommands: s.agentCommands,
         lastLaunchKind: s.lastLaunchKind,
         peerSync: s.peerSync,
+        viewMode: s.viewMode,
+        tabBeforeAnswer: s.tabBeforeAnswer,
+        summaryClaudeReply: s.summaryClaudeReply,
+        summaryJev: s.summaryJev,
       }),
       // v1: Ghostty 가 새 기본 테마다. 예전에는 고른 적이 없어도 기본값 'black' 이 저장돼 있었으므로, 저장된 'black' 을
       // 한 번만 Ghostty 로 옮긴다(직접 고른 'light' 는 그대로 둔다). 그 뒤에 고른 블랙은 유지된다
@@ -394,6 +406,8 @@ export const useUiStore = create<UiState>()(
       // 알 수 없는 테마 값(손으로 고친 값·다른 버전이 남긴 값)은 기본 테마로 본다
       merge: (persisted, current) => {
         const state = (persisted ?? {}) as Partial<UiState>
+        // Why: 보조 창이 다시 읽을 때는 own 키가 빠져 온다 — 모르는 값과 같이 지금 값을 지킨다
+        const viewMode = state.viewMode === 'normal' || state.viewMode === 'answer' ? state.viewMode : current.viewMode
         return { ...current, ...state, theme: isTheme(state.theme) ? state.theme : current.theme, fontSize: state.fontSize === undefined ? current.fontSize : clampFontSize(state.fontSize),
           sidebarWidth: state.sidebarWidth === undefined ? current.sidebarWidth : clampSidebarWidth(state.sidebarWidth),
           // 예전 버전의 저장 값에는 없거나 모양이 다를 수 있다 — 기본값 위에 얹는다
@@ -406,6 +420,11 @@ export const useUiStore = create<UiState>()(
             ...Object.fromEntries(Object.entries(typeof state.agentCommands === 'object' && state.agentCommands !== null ? state.agentCommands : {}).filter(([k, v]) => LAUNCH_KINDS.includes(k as LaunchKind) && typeof v === 'string')),
           },
           lastLaunchKind: LAUNCH_KINDS.includes(state.lastLaunchKind as LaunchKind) ? (state.lastLaunchKind as LaunchKind) : current.lastLaunchKind,
+          viewMode,
+          tabBeforeAnswer: isWorkTab(state.tabBeforeAnswer) ? state.tabBeforeAnswer : current.tabBeforeAnswer,
+          ...(viewMode === 'answer' ? { tab: 'terminal' as const } : {}),
+          summaryClaudeReply: typeof state.summaryClaudeReply === 'boolean' ? state.summaryClaudeReply : current.summaryClaudeReply,
+          summaryJev: typeof state.summaryJev === 'boolean' ? state.summaryJev : current.summaryJev,
         }
       },
     },
