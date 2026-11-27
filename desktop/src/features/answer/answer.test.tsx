@@ -424,6 +424,26 @@ describe('Claude 마지막 답변(AC-09 · EC-10)', () => {
     await waitFor(() => expect(claudeLastReply).toHaveBeenCalledTimes(2), { timeout: 3000 })
   })
 
+  it('AC-09 다시 작업 중이 되면 앞 작업 구간에 읽은 답이 아니라 기록을 다시 읽어 보인다', async () => {
+    world({ agents: [busy(A1)] })
+    let text = '첫 작업 중의 답'
+    const claudeLastReply = vi.fn(async () => ({ tail: `${reply(text)}\n`, updatedMs: Date.now() }))
+    const { user } = renderApp({ claudeLastReply })
+    await user.click(toggle())
+    const box = await screen.findByTestId('claude-reply')
+    await waitFor(() => expect(box).toHaveTextContent('첫 작업 중의 답'))
+    // 기다리는 상태가 되었다 — 1.5초 뒤 다시 읽는다
+    text = '기다릴 때의 답'
+    act(() => useAgentStore.getState().set(A1, done(A1, 0)))
+    await waitFor(() => expect(box).toHaveTextContent('기다릴 때의 답'), { timeout: 3000 })
+    // 다시 작업 중이 되었다(새 작업 구간)
+    text = '다시 작업 중의 답'
+    act(() => useAgentStore.getState().set(A1, busy(A1, { since: Date.now() })))
+    await waitFor(() => expect(box).toHaveTextContent('다시 작업 중의 답'))
+    expect(box).not.toHaveTextContent('첫 작업 중의 답')
+    expect(claudeLastReply).toHaveBeenCalledTimes(3)
+  })
+
   it.each([
     ['기록이 없다', async () => null, '최근 기록에 답변이 없습니다'],
     ['기록에 답이 없다', async () => ({ tail: '{"type":"user"}\n', updatedMs: Date.now() }), '최근 기록에 답변이 없습니다'],

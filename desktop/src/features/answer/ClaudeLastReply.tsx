@@ -26,14 +26,16 @@ export function ClaudeReply({ row }: { row: AgentRow | null }) {
 }
 
 function ReplyBox({ row, alias }: { row: AgentRow; alias: string | null }) {
-  const { paneId, issueId, waitingSince } = row
+  const { paneId, issueId, waitingSince, since } = row
   const hostDeps = useHostDeps()
   const cwd = useUiStore((s) => s.worktreePathMap[issueId]?.path ?? null)
   // Why: 같은 작업 폴더에 Claude Code 가 여럿이면 어느 기록이 이 패널 것인지 알 수 없다
   const crowded = useAgentStore((s) => Object.values(s.panes).filter((p) => p.agent === 'claude' && p.issueId === issueId).length > 1)
 
+  // Why: 작업 구간마다 다른 키 — 다시 작업 중이 되면 앞 작업 구간에 읽은 답을 캐시에서 꺼내지 않는다
+  const span = waitingSince ?? `working-${since}`
   // Why: 기다리기 시작하고 1.5초 뒤에 읽는다 — 타이머가 지금 키에 대해 끝났을 때만 읽기를 켠다
-  const key = `${paneId}\n${waitingSince}`
+  const key = `${paneId}\n${span}`
   const [due, setDue] = useState<string | null>(null)
   useEffect(() => {
     if (crowded) return
@@ -42,7 +44,7 @@ function ReplyBox({ row, alias }: { row: AgentRow; alias: string | null }) {
   }, [key, waitingSince, crowded])
 
   const q = useQuery({
-    queryKey: ['claudeReply', paneId, waitingSince],
+    queryKey: ['claudeReply', paneId, span],
     queryFn: async (): Promise<Reply> => {
       const tail = cwd === null ? null : await hostDeps(hostOf(alias)).tauri.claudeLastReply(cwd)
       const text = tail && parseLastReply(tail.tail)
