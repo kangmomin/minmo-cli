@@ -186,7 +186,9 @@ export function step(state: QueueState, input: StepInput): StepResult {
   const cancelled = pending !== null
 
   const session = observe(follow(state.session, input), input)
-  let entry = state.entry !== null && state.entry.issueId === shown.issueId ? state.entry : null
+  // Why: 있던 패널에서 다른 패널로 바뀐 것은 사용자가 고른 것(Ctrl+T·분할)이고, 패널이 없다가 생긴 것은 늦게 열린 것이다.
+  const paneSwitched = state.session !== null && state.session.paneId !== null && state.session.paneId !== shown.paneId
+  let entry = state.entry !== null && state.entry.issueId === shown.issueId && !paneSwitched ? state.entry : null
   let blocked = state.blocked
   if (row && input.shownReady && blocked[rowKey(row)] === true) {
     // Why: 줄은 공유 PTY 목록에서 와서 열 수 있다는 증거가 아니다 — 이 창에서 열려 보일 때만 푼다.

@@ -264,6 +264,17 @@ describe('step — 진입(AC-04 · EC-21 · EC-24)', () => {
     expect(s.state.session).toMatchObject({ paneId: A1, shownWaiting: true })
   })
 
+  it('EC-06 진입: 줄을 기다리는 동안 사용자가 Ctrl+T·분할로 새 셸 패널을 만들면(입력 아님) 진입 판단을 끝내고 그 패널에 머문다', () => {
+    const s = entered(at(A1))
+    expect(s.tick({ now: T + 1000, shown: at(A1), row: null, paneHasAgent: false, waiting: [doneB()] }).go).toBeUndefined()
+    expect(s.state.entry).not.toBeNull()
+    // Ctrl+T — 같은 이슈에 새 셸 패널 A2 가 보인다(A1 은 그대로)
+    expect(s.tick({ now: T + 2000, shown: at(A2), row: null, paneHasAgent: false, waiting: [doneB()] }).go).toBeUndefined()
+    expect(s.state.entry).toBeNull()
+    expect(s.tick({ now: T + 5000, shown: at(A2), row: null, paneHasAgent: false, waiting: [doneB()] }).go).toBeUndefined()
+    expect(s.tick({ now: T + 6000, shown: at(A2), row: null, paneHasAgent: false, waiting: [doneB()] }).go).toBeUndefined()
+  })
+
   it('EC-21 진입: 진입 뒤 지금 패널에 입력하면 진입 판단을 하지 않는다', () => {
     // 견줌: 입력이 없으면 5초 뒤 넘어간다
     const control = entered(at(A1))
