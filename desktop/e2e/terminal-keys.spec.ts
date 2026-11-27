@@ -20,7 +20,7 @@ test.beforeEach(async ({ page }) => {
 const sent = (page: Page) => page.evaluate(() => window.__MINMO_MOCK__!.ptyWrites)
 const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText())
 
-test('이슈를 고르기만 해서는 터미널이 뜨지 않는다 · Ctrl+T 로 열고, 다시 누르면 새 패널(^T 는 보내지 않는다)', async ({ page }) => {
+test('이슈를 고르기만 해서는 터미널이 뜨지 않는다 · Ctrl+T 로 열고, ★기타에서 다시 누르면 새 터미널 탭(^T 는 보내지 않는다)', async ({ page }) => {
   // 다른 이슈(기타)를 고른다 — 작업 폴더는 준비되지만 터미널은 만들지 않는다
   await page.getByTestId('issue-row-etc').click()
   await expect(page.getByTestId('issue-branch')).toBeVisible()
@@ -33,10 +33,12 @@ test('이슈를 고르기만 해서는 터미널이 뜨지 않는다 · Ctrl+T �
   await page.keyboard.press('Control+t')
   await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(1)
   await expect(page.locator('[data-testid="terminal-pane"]:visible')).toContainText('minmo mock terminal')
-  // 터미널 안에서 다시 누르면 오른쪽에 새 패널
+  // 터미널 안에서 다시 누르면 ★기타는 새 터미널 탭이다(D-12) — 탭 2개, 보이는 패널은 새 탭의 1개
   await page.locator('[data-testid="terminal-pane"]:visible').getByLabel('터미널 입력').focus()
   await page.keyboard.press('Control+t')
-  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(2)
+  await expect(page.getByRole('tablist', { name: '터미널 탭', exact: true }).getByRole('tab')).toHaveCount(2)
+  await expect(page.getByRole('tab', { name: '터미널 2', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(1)
   expect(await sent(page)).toEqual([])
 
   // 먼저 연 이슈(#42)의 터미널은 그대로다

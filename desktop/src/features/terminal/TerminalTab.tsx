@@ -4,10 +4,11 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal } from '@xterm/xterm'
-import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import { useBaseDeps } from '../../app/deps'
 import { Button } from '../../components/ui/button'
+import { hasTerminalTabs } from '../../lib/defaultWorkspace'
 import { newOrigin } from '../../lib/sharedState'
 import { remotePty } from '../../lib/sshHost'
 import type { PtyTmux, TauriApi, WindowsPty } from '../../lib/tauri'
@@ -22,7 +23,11 @@ import { attachLinks } from './links'
 import { attachOsc52 } from './osc52'
 import { ReconnectNotice } from './ReconnectNotice'
 import { TerminalKeyBar, registerTerminalInput, useNarrow, useTouch } from './TerminalKeyBar'
-import { layoutPanes, leafIds } from './panes'
+import { killPaneTerminal, paneSeq } from './endPanes'
+import { activeTabOf, isPaneTree, layoutPanes, leafIds, selectedTabId, tabList } from './panes'
+import type { PaneNode } from './panes'
+import { newTerminalButtonId, tabDomIds } from './tabIds'
+import { TerminalTabsBar } from './TerminalTabsBar'
 import { usePtyLink } from './usePtyLink'
 import { attachWebgl } from './webgl'
 
@@ -36,7 +41,7 @@ export type TerminalSessionSpec = { issueId: string; cwd: string; remote?: { hos
  */
 function paneRole(issueId: string, paneId: string) {
   const first = useUiStore.getState().firstPane(issueId)
-  return { primary: first === null || first === paneId, seq: Number(paneId.slice(paneId.lastIndexOf('::') + 2)) || 1 }
+  return { primary: first === null || first === paneId, seq: paneSeq(paneId) }
 }
 
 /** 터미널 크기를 가져온 뒤 입력을 넣기까지 두는 틈 — 크기 변경과 입력이 겹치면 셸이 그 입력을 잃는다 */
@@ -46,7 +51,10 @@ const RECONNECT_MUTE_MS = 3000
 
 /** 패널이 아직 화면 구성에 있는가 — 없어진 패널의 터미널만 끝낸다 */
 function paneExists(issueId: string, paneId: string): boolean {
-  return leafIds(useUiStore.getState().panes[issueId]?.tree ?? null).includes(paneId)
+  const tree = useUiStore.getState().panes[issueId]?.tree ?? null
+  // Why: 깨진 공유 트리를 받아도 이 기기의 터미널을 끄지 않는다(그 트리는 읽을 때만 "패널 없음"이다)
+  if (tree !== null && !isPaneTree(tree)) return true
+  return leafIds(tree).includes(paneId)
 }
 
 /** ptySpawn 응답 전에 도착한 pty-data 를 id 별로 보관하는 상한(문자 수) */
@@ -116,7 +124,15 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
   // 이미 떠 있는 터미널(다른 화면이 열었거나, 이 화면을 다시 불러온 경우)에는 열라고 하지 않아도 붙는다 — 새 프로세스를 만들지 않는다
   const activeAlive = useUiStore((s) => activeId !== null && leafIds(s.panes[activeId]?.tree ?? null).some((p) => p in s.terminalIds))
   useEffect(() => {
-    if (visible && activeId && activeHasSession && !activeStarted && activeAlive) useUiStore.getState().markTerminalStarted(activeId)
+    if (!visible || !activeId || !activeHasSession || activeStarted || !activeAlive) return
+    const ui = useUiStore.getState()
+    const p = ui.panes[activeId]
+    const hasPty = (t: { node: PaneNode }) => leafIds(t.node).some((id) => id in ui.terminalIds)
+    const selected = activeTabOf(p?.tree ?? null, p?.tab)
+    // Why: 떠 있는 터미널이 숨은 탭에만 있으면 그 탭으로 바꿔 붙는다 — 고른 탭에 사용자가 열지 않은 셸을 만들지 않게
+    const alive = selected && !hasPty(selected) ? tabList(p?.tree ?? null).find(hasPty) : undefined
+    if (alive) ui.selectTab(activeId, alive.id)
+    ui.markTerminalStarted(activeId)
   }, [visible, activeId, activeHasSession, activeStarted, activeAlive])
 
   // 세션이 사라지면(worktree 삭제 등) started 에서도 뺀다 — 다시 나타나도 사용자가 열 때까지 PTY 를 만들지 않도록
@@ -130,8 +146,28 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
   const touch = useTouch()
   const activePane = useUiStore((s) => {
     const p = activeId ? s.panes[activeId] : undefined
-    return p ? (p.focused ?? leafIds(p.tree)[0] ?? null) : null
+    if (!p) return null
+    const leaves = leafIds(activeTabOf(p.tree, p.tab)?.node ?? null)
+    return p.focused !== null && leaves.includes(p.focused) ? p.focused : (leaves[0] ?? null)
   })
+
+  const tabsHere = activeId !== null && hasTerminalTabs(activeId)
+  const activeTabCount = useUiStore((s) => (activeId ? tabList(s.panes[activeId]?.tree ?? null).length : 0))
+  const activeSpec = sessions.find((s) => s.issueId === activeId)
+  const showTabs = tabsHere && activeStarted && activeTabCount > 0 && activeSpec !== undefined
+  // Why: 키 핸들러는 터미널마다 1회 연결하므로 최신 onExit 를 ref 로 읽는다
+  const onExitRef = useRef(onExit)
+  useEffect(() => {
+    onExitRef.current = onExit
+  }, [onExit])
+  // Why: 기본은 작업 탭 줄이 숨어 있다 — 탭 줄이 있으면 Ctrl+Shift+M 은 고른 터미널 탭 버튼으로 간다
+  const exitTerminal = useCallback((issueId: string) => {
+    const p = useUiStore.getState().panes[issueId]
+    const tabId = hasTerminalTabs(issueId) ? selectedTabId(p?.tree ?? null, p?.tab) : null
+    const button = tabId === null ? null : document.getElementById(tabDomIds(issueId, tabId).tab)
+    if (button) button.focus()
+    else onExitRef.current?.()
+  }, [])
 
   // region 이름은 짧게 두고 탈출 안내는 보이는 한 줄 + aria-describedby 로 연결한다 — 이름·설명 중복 낭독 방지(AX-18)
   return (
@@ -144,11 +180,19 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
         aria-label="터미널"
         aria-describedby={activeStarted ? hintId : undefined}
       >
+        {/* Why: 이슈가 바뀌면 입력란·닫기 확인 state 를 버린다 — 다른 이슈의 같은 id 탭을 건드리지 않게 */}
+        {showTabs && <TerminalTabsBar key={activeId} spec={activeSpec} />}
         {activeStarted && (
           <div className="flex shrink-0 flex-wrap gap-x-4 px-3 pt-1.5 text-xs text-neutral-400 max-md:hidden">
             <p id={hintId}>{TERMINAL_EXIT_HINT}: 터미널 밖으로 이동</p>
             <p>
-              {openKeyWorks && `${PANE_KEYS.open}: 새 터미널 · `}
+              {tabsHere ? (
+                <>
+                  {openKeyWorks && `${PANE_KEYS.open}: 새 탭 · `}탭에서 F2: 이름 바꾸기 · Delete: 탭 닫기 ·{' '}
+                </>
+              ) : (
+                openKeyWorks && `${PANE_KEYS.open}: 새 터미널 · `
+              )}
               {PANE_KEYS.splitRight}: 오른쪽 분할 · {PANE_KEYS.splitDown}: 아래 분할 · {PANE_KEYS.close}: 패널 닫기 · {CLIPBOARD_KEYS.copy}:
               복사(선택했을 때) · {CLIPBOARD_KEYS.paste}: 붙여넣기 · {EDIT_KEYS.deleteWord}: 단어 지우기 · {EDIT_KEYS.newline}: 줄바꿈 ·{' '}
               {MOUSE_KEYS.openLink}: 링크 열기 · {MOUSE_KEYS.forceSelect}: 프로그램이 마우스를 쓸 때 선택
@@ -160,7 +204,14 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
           {sessions
             .filter((s) => s.issueId in started)
             .map((s) => (
-              <IssuePanes key={sessionKey(s)} spec={s} active={visible && s.issueId === activeId} hintId={hintId} onExit={onExit} />
+              <IssuePanes
+                key={sessionKey(s)}
+                spec={s}
+                active={visible && s.issueId === activeId}
+                hintId={hintId}
+                onExit={exitTerminal}
+                tabsAria={showTabs && s.issueId === activeId}
+              />
             ))}
           {visible && activeId !== null && activeHasSession && !activeStarted && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-neutral-400">
@@ -181,24 +232,99 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
   )
 }
 
-/** 이슈 하나의 패널들. 트리 대신 평면 목록으로 배치해 분할·닫기 때 다른 패널이 다시 마운트되지 않게 한다 */
-function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpec; active: boolean; hintId: string; onExit?: () => void }) {
-  const panes = useUiStore((s) => s.panes[spec.issueId])
+type IssuePanesProps = {
+  spec: TerminalSessionSpec
+  active: boolean
+  hintId: string
+  onExit: (issueId: string) => void
+  tabsAria: boolean
+}
+
+// Why: memo — 탭을 바꿔도 다른 이슈의 패널은 다시 그리지 않는다
+const IssuePanes = memo(function IssuePanes({ spec, active, hintId, onExit, tabsAria }: IssuePanesProps) {
+  const issueId = spec.issueId
+  const panes = useUiStore((s) => s.panes[issueId])
   const ensurePanes = useUiStore((s) => s.ensurePanes)
   const newPane = useUiStore((s) => s.newPane)
-  const focusPane = useUiStore((s) => s.focusPane)
-  const narrow = useNarrow()
+  // Why: 글자로 골라 다른 패널의 터미널이 뜰 때마다 다시 그리지 않는다
+  const ptyTabs = useUiStore((s) =>
+    tabList(s.panes[issueId]?.tree ?? null)
+      .filter((t) => leafIds(t.node).some((p) => p in s.terminalIds))
+      .map((t) => t.id)
+      .join('\n'),
+  )
+  const tree = panes?.tree ?? null
+  const tabs = useMemo(() => tabList(tree), [tree])
+  const selected = selectedTabId(tree, panes?.tab)
+  // Why: 다시 켠 뒤에는 고른 탭만 셸을 시작한다. 한 번 고른 탭·PTY 가 있는 탭은 닫기 전까지 내리지 않는다(숨은 탭 PTY 유지)
+  const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set())
+  const keep = tabs.filter((t) => t.id === selected || visited.has(t.id)).map((t) => t.id)
+  if (keep.length !== visited.size || keep.some((id) => !visited.has(id))) setVisited(new Set(keep))
+  const exit = useCallback(() => onExit(issueId), [onExit, issueId])
+  // Why: 터미널을 쓰던 중 마지막 패널을 닫으면 사라진 터미널 대신 [새 터미널] 로 포커스를 옮긴다
+  const focusNew = useRef(false)
+  const onLastClose = useCallback(() => {
+    focusNew.current = true
+  }, [])
+  const newButton = useRef<HTMLButtonElement>(null)
+  const empty = leafIds(tree).length === 0
+  useEffect(() => {
+    if (!focusNew.current) return
+    focusNew.current = false
+    if (empty && active) newButton.current?.focus()
+  })
   // panes 가 사라지면(worktree 기록 삭제 등) 마운트된 채로도 다시 만든다 — 빈 화면에 갇히지 않게
   useEffect(() => {
-    if (!panes) ensurePanes(spec.issueId)
-  }, [ensurePanes, panes, spec.issueId])
+    if (!panes) ensurePanes(issueId)
+  }, [ensurePanes, panes, issueId])
   if (!panes) return null
-  const rects = layoutPanes(panes.tree)
-  const multiple = rects.length > 1
-  // 좁은 화면(휴대폰)에서는 한 번에 한 패널만 크게 보이고, 위의 번호 버튼으로 바꾼다. 가려진 패널의 터미널도 그대로 살아 있다
-  const shownId = narrow ? (rects.find((r) => r.id === panes.focused) ?? rects[0])?.id : undefined
+  const withPty = ptyTabs.split('\n')
   return (
     <div className={active ? 'absolute inset-0' : 'hidden'}>
+      {tabs.map((t) => {
+        const shown = t.id === selected
+        const ids = tabsAria ? tabDomIds(issueId, t.id) : undefined
+        // Why: 아직 그리지 않는 탭도 자리를 둬 aria-controls 가 늘 맞다. key 가 탭 id 라 t0 로 감싸도 다시 마운트되지 않는다
+        return (
+          <div key={t.id} className={shown ? 'absolute inset-0' : 'hidden'} role={ids && 'tabpanel'} id={ids?.panel} aria-labelledby={ids?.tab}>
+            {(shown || visited.has(t.id) || withPty.includes(t.id)) && (
+              <TabPanes spec={spec} node={t.node} focused={panes.focused} active={active && shown} hintId={hintId} onExit={exit} onLastClose={onLastClose} />
+            )}
+          </div>
+        )
+      })}
+      {empty && active && (
+        <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-neutral-400">
+          <p>터미널 패널을 모두 닫았습니다</p>
+          <Button ref={newButton} id={newTerminalButtonId(issueId)} size="sm" variant="secondary" onClick={() => newPane(issueId)}>
+            새 터미널
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+})
+
+type TabPanesProps = {
+  spec: TerminalSessionSpec
+  node: PaneNode
+  focused: string | null
+  active: boolean
+  hintId: string
+  onExit: () => void
+  onLastClose: () => void
+}
+
+/** Why: 트리 대신 평면 목록으로 배치해 분할·닫기 때 다른 패널이 다시 마운트되지 않게 한다 */
+function TabPanes({ spec, node, focused, active, hintId, onExit, onLastClose }: TabPanesProps) {
+  const focusPane = useUiStore((s) => s.focusPane)
+  const narrow = useNarrow()
+  const rects = layoutPanes(node)
+  const multiple = rects.length > 1
+  // 좁은 화면(휴대폰)에서는 한 번에 한 패널만 크게 보이고, 위의 번호 버튼으로 바꾼다. 가려진 패널의 터미널도 그대로 살아 있다
+  const shownId = narrow ? (rects.find((r) => r.id === focused) ?? rects[0])?.id : undefined
+  return (
+    <>
       {narrow && multiple && (
         <div role="tablist" aria-label="터미널 패널" className="absolute inset-x-0 top-0 z-10 flex h-7 gap-1 px-2">
           {rects.map((r, i) => (
@@ -218,7 +344,7 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
       {rects.map((r) => (
         <div
           key={r.id}
-          className={`absolute flex flex-col ${narrow && r.id !== shownId ? 'invisible' : ''} ${!narrow && multiple && panes.focused === r.id ? 'outline outline-1 -outline-offset-1 outline-ring' : ''}`}
+          className={`absolute flex flex-col ${narrow && r.id !== shownId ? 'invisible' : ''} ${!narrow && multiple && focused === r.id ? 'outline outline-1 -outline-offset-1 outline-ring' : ''}`}
           style={
             narrow
               ? { left: 0, right: 0, bottom: 0, top: multiple ? '1.75rem' : 0 }
@@ -228,19 +354,11 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
         >
           <PaneAgentStrip paneId={r.id} />
           <div className="relative min-h-0 flex-1">
-            <TerminalSession spec={spec} paneId={r.id} active={active} hintId={hintId} onExit={onExit} />
+            <TerminalSession spec={spec} paneId={r.id} active={active} hintId={hintId} onExit={onExit} onLastClose={onLastClose} />
           </div>
         </div>
       ))}
-      {!panes.tree && active && (
-        <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-neutral-400">
-          <p>터미널 패널을 모두 닫았습니다</p>
-          <Button size="sm" variant="secondary" onClick={() => newPane(spec.issueId)}>
-            새 터미널
-          </Button>
-        </div>
-      )}
-    </div>
+    </>
   )
 }
 
@@ -272,12 +390,14 @@ function TerminalSession({
   active,
   hintId,
   onExit,
+  onLastClose,
 }: {
   spec: TerminalSessionSpec
   paneId: string
   active: boolean
   hintId: string
   onExit?: () => void
+  onLastClose?: () => void
 }) {
   // PTY 입출력은 원격 터미널도 이 PC 의 ssh 프로세스를 거친다 — 화면의 호스트가 바뀌어도 세션을 다시 만들지 않게 고정한다
   const { tauri } = useBaseDeps()
@@ -303,9 +423,11 @@ function TerminalSession({
   const focusRestartButton = useRef(false)
   // 키 핸들러는 마운트 때 1회 연결하므로 최신 onExit 를 ref 로 읽는다
   const onExitRef = useRef(onExit)
+  const onLastCloseRef = useRef(onLastClose)
   useEffect(() => {
     onExitRef.current = onExit
-  }, [onExit])
+    onLastCloseRef.current = onLastClose
+  }, [onExit, onLastClose])
   // 원격 터미널의 연결 상태(#89) — ① 다시 접속하는 중 · ② 다시 접속하지 못함 · ③ 다시 접속했음
   const reconnectButton = useRef<HTMLButtonElement>(null)
   const noticeId = useId()
@@ -357,7 +479,11 @@ function TerminalSession({
           splitRight: () => ui().splitPane(spec.issueId, paneId, 'row'),
           splitDown: () => ui().splitPane(spec.issueId, paneId, 'col'),
           // 패널이 없어지면 아래 cleanup 이 PTY(와 그 자손 프로세스)를 종료한다
-          close: () => ui().closePane(spec.issueId, paneId),
+          close: () => {
+            // Why: 닫은 뒤에는 이 터미널이 없어 포커스를 먼저 본다
+            if (el.contains(document.activeElement) && leafIds(ui().panes[spec.issueId]?.tree ?? null).length === 1) onLastCloseRef.current?.()
+            ui().closePane(spec.issueId, paneId)
+          },
         },
         {
           hasSelection: () => t.hasSelection(),
@@ -459,16 +585,10 @@ function TerminalSession({
     const cleanups: (() => void)[] = []
     /** 이 패널이 붙은 tmux 세션(Rust 가 가진 실제 값) — 분할 패널(-pN)이면 패널을 닫을 때 그 세션도 끝낸다(AC-06·EC-05) */
     let tmux: Promise<PtyTmux | null> = Promise.resolve(null)
-    /**
-     * 터미널을 끝낸다. 패널을 닫았으면(closed) 그 패널의 tmux 분할 세션도 원격에서 1번 끝낸다 — 세션 정보는 ptyKill 전에 물어 둔 값
-     * (그 뒤에는 Rust 가 모른다). 실패는 무시한다(남은 세션은 작업 폴더를 지울 때 KILL_TMUX 가 정리한다)
-     */
+    // Why: 패널을 닫았을 때(closed)만 원격 분할 세션(-pN)도 끝낸다 — [다시 시작]·세션 제거 뒤에는 그 세션에 다시 붙는다
     const kill = (id: string, closed: boolean) => {
-      const killed = tauri.ptyKill(id).catch(() => undefined)
-      if (!closed || remoteHost === undefined) return
-      void Promise.all([tmux, killed]).then(([info]) => {
-        if (info?.ephemeral) return tauri.sshExec(remoteHost, ['tmux', '-L', 'minmo', 'kill-session', '-t', `=${info.session}`]).then(() => undefined, () => undefined)
-      })
+      if (closed) void killPaneTerminal(tauri, id, remoteHost, tmux)
+      else tauri.ptyKill(id).catch(() => undefined)
     }
 
     void (async () => {

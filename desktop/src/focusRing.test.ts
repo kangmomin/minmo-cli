@@ -49,6 +49,8 @@ describe('AX-22 포커스 스타일에 반투명(/50) ring·outline 을 쓰지 �
     './components/ui/textarea.tsx',
     // AX-40 사이드바 폭 구분선
     './features/tree/SidebarFrame.tsx',
+    // #120 기본·★기타의 터미널 탭 줄(탭 버튼·[+])
+    './features/terminal/TerminalTabsBar.tsx',
   ])('%s 의 focus-visible ring', (file) => {
     const src = read(file)
     expect(src).toContain('focus-visible:ring-ring')
