@@ -1,7 +1,7 @@
 // F-02 트리 (AC-03·AC-04·EC-01) + F-03 이슈 열기(AC-05, mock git)
 import { expect, test } from '@playwright/test'
 
-import { expandWidgets, login, routeGitHub, routeServer } from './fixtures'
+import { expandWidgets, GITHUB, json, login, routeGitHub, routeServer } from './fixtures'
 
 test.beforeEach(async ({ page }) => {
   await routeServer(page)
@@ -85,4 +85,50 @@ test('새로고침 버튼 → 트리 재조회', async ({ page }) => {
   const before = issueCalls
   await page.getByRole('button', { name: '새로고침' }).click()
   await expect.poll(() => issueCalls).toBeGreaterThan(before)
+})
+
+test('#116 [이슈] 탭 → 본문을 마크다운으로 보이고, 링크는 외부 브라우저로 연다', async ({ page }) => {
+  // 이 테스트에서만 이슈 42 의 GET 을 마크다운 본문으로 덮는다(나중에 등록한 route 가 먼저). PATCH·OPTIONS 는 기본 응답으로
+  await page.route(`${GITHUB}/repos/my-org/widgets/issues/42`, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    return json(route, 200, {
+      number: 42,
+      title: 'Add login',
+      state: 'open',
+      html_url: 'https://github.com/my-org/widgets/issues/42',
+      body: '# 제목\n- 항목\n[링크](https://example.com)',
+    })
+  })
+  await expandWidgets(page)
+  await page.getByTestId('issue-row-42').click()
+  await page.getByRole('tab', { name: '이슈' }).click()
+  const panel = page.getByRole('tabpanel', { name: '이슈' })
+  await expect(panel.getByRole('heading', { name: '제목', exact: true })).toBeVisible()
+  await expect(panel.getByRole('listitem')).toContainText('항목')
+  await panel.getByRole('link', { name: '링크' }).click()
+  // 로그인 때 연 VERIFY_URL 이 이미 있다
+  await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__?.openedUrls ?? [])).toContain('https://example.com')
+})
+
+test('#116 [이슈] 탭 — [새로고침]이면 본문을 다시 받고, [이슈 수정]으로 본문을 저장하면 새 본문을 보인다', async ({ page }) => {
+  await expandWidgets(page)
+  await page.getByTestId('issue-row-42').click()
+  await page.getByRole('tab', { name: '이슈' }).click()
+  const panel = page.getByRole('tabpanel', { name: '이슈' })
+  await expect(panel.getByText('로그인 화면을 만든다')).toBeVisible()
+  // 본문을 보인 뒤부터 이슈 42 GET 을 센다
+  let bodyGets = 0
+  page.on('request', (r) => {
+    if (r.method() === 'GET' && new URL(r.url()).pathname === '/repos/my-org/widgets/issues/42') bodyGets++
+  })
+  await page.getByRole('button', { name: '새로고침' }).click()
+  await expect.poll(() => bodyGets).toBeGreaterThan(0)
+
+  const dialog = page.getByRole('dialog')
+  await page.getByTestId('issue-header').getByRole('button', { name: '이슈 수정' }).click()
+  await expect(dialog.getByLabel('본문')).toHaveValue('로그인 화면을 만든다')
+  await dialog.getByLabel('본문').fill('비밀번호 찾기도 만든다')
+  await dialog.getByRole('button', { name: '저장' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(panel.getByText('비밀번호 찾기도 만든다')).toBeVisible()
 })
