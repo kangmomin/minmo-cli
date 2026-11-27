@@ -94,8 +94,10 @@ export function derive(paneId: string, sig: PaneSignals, prev: PaneAgent | null,
   return { next, event }
 }
 
-export function shellOnly(_sig: Pick<PaneSignals, 'processes' | 'tmuxProgram'>): boolean | null {
-  throw new Error('not implemented')
+export function shellOnly(sig: Pick<PaneSignals, 'processes' | 'tmuxProgram'>): boolean | null {
+  if (sig.tmuxProgram !== undefined) return guessProgram([sig.tmuxProgram]) === null
+  if (sig.processes !== null) return guessProgram(sig.processes) === null
+  return null
 }
 
 export interface AgentState {
@@ -119,12 +121,27 @@ export const useAgentStore = create<AgentState>()((set) => ({
   panes: {},
   subagents: {},
   shellSince: {},
-  setShell: () => {
-    throw new Error('not implemented')
-  },
-  clearPane: () => {
-    throw new Error('not implemented')
-  },
+  setShell: (paneId, at) =>
+    set((s) => {
+      if (at === null) {
+        if (!(paneId in s.shellSince)) return s
+        const shellSince = { ...s.shellSince }
+        delete shellSince[paneId]
+        return { shellSince }
+      }
+      return s.shellSince[paneId] === at ? s : { shellSince: { ...s.shellSince, [paneId]: at } }
+    }),
+  clearPane: (paneId) =>
+    set((s) => {
+      if (!(paneId in s.panes) && !(paneId in s.subagents) && !(paneId in s.shellSince)) return s
+      const panes = { ...s.panes }
+      const subagents = { ...s.subagents }
+      const shellSince = { ...s.shellSince }
+      delete panes[paneId]
+      delete subagents[paneId]
+      delete shellSince[paneId]
+      return { panes, subagents, shellSince }
+    }),
   setSubagents: (paneId, subs) =>
     set((s) => {
       const cur = s.subagents[paneId]
@@ -151,7 +168,7 @@ export const useAgentStore = create<AgentState>()((set) => ({
       // 바뀐 것이 없으면 그대로 둔다 — 1초마다 다시 계산해도 화면을 다시 그리지 않게
       return cur && sameAgent(cur, next) ? s : { panes: { ...s.panes, [paneId]: next } }
     }),
-  clear: () => set({ panes: {}, subagents: {} }),
+  clear: () => set({ panes: {}, subagents: {}, shellSince: {} }),
 }))
 
 /**

@@ -1,50 +1,86 @@
 // 에이전트 실행 대기열 — 새로 만든 터미널 패널이 준비되면(셸의 첫 출력이 나오면) 넣을 명령.
 // 화면 상태가 아니라 한 번 쓰고 버리는 값이라 store 에 두지 않는다.
-const queued = new Map<string, { command: string; at: number }>()
+const queued = new Map<string, { command: string; at: number; track: boolean }>()
+const taken = new Map<string, { cancelled: boolean }>()
+const results = new Map<string, Exclude<LaunchResult, 'pending'>>()
 
 /** 맡긴 뒤 이만큼 지나도록 터미널이 뜨지 않았으면 버린다 — 한참 뒤에 같은 패널 id 가 다시 쓰일 때 옛 명령이 실행되지 않게 */
 export const LAUNCH_TTL_MS = 120_000
 
 /** paneId 의 터미널이 준비되면 command 를 실행하게 맡긴다 */
-export function queueLaunch(paneId: string, command: string, _opts?: { track?: boolean }) {
-  queued.set(paneId, { command, at: Date.now() })
+export function queueLaunch(paneId: string, command: string, opts?: { track?: boolean }) {
+  const track = opts?.track === true
+  const replaced = !track && launchResult(paneId) === 'pending'
+  taken.delete(paneId)
+  if (replaced) results.set(paneId, 'dropped')
+  else results.delete(paneId)
+  queued.set(paneId, { command, at: Date.now(), track })
 }
 
 /** paneId 에 맡겨 둔 명령을 꺼낸다(한 번만 돌려준다) */
 export function takeLaunch(paneId: string): string | undefined {
   const q = queued.get(paneId)
   queued.delete(paneId)
-  return q !== undefined && Date.now() - q.at <= LAUNCH_TTL_MS ? q.command : undefined
+  if (q === undefined) return undefined
+  if (Date.now() - q.at > LAUNCH_TTL_MS) {
+    if (q.track) results.set(paneId, 'expired')
+    return undefined
+  }
+  if (q.track) taken.set(paneId, { cancelled: false })
+  return q.command
 }
 
 export type LaunchResult = 'pending' | 'written' | 'dropped' | 'cancelled' | 'expired'
 
-export function markLaunched(_paneId: string): void {
-  throw new Error('not implemented')
+function finish(paneId: string, result: 'written' | 'dropped') {
+  const t = taken.get(paneId)
+  if (t === undefined) return
+  taken.delete(paneId)
+  // Why: 그 사이 [멈춤]으로 취소됐으면 취소가 결과다 — 언마운트 정리의 dropLaunch 가 덮지 않게
+  if (!t.cancelled) results.set(paneId, result)
 }
 
-export function dropLaunch(_paneId: string): void {
-  throw new Error('not implemented')
+export function markLaunched(paneId: string): void {
+  finish(paneId, 'written')
 }
 
-export function cancelLaunch(_paneId: string): void {
-  throw new Error('not implemented')
+export function dropLaunch(paneId: string): void {
+  finish(paneId, 'dropped')
 }
 
-export function isLaunchCancelled(_paneId: string): boolean {
-  throw new Error('not implemented')
+export function cancelLaunch(paneId: string): void {
+  if (queued.get(paneId)?.track) {
+    queued.delete(paneId)
+    results.set(paneId, 'cancelled')
+    return
+  }
+  const t = taken.get(paneId)
+  if (t === undefined || t.cancelled) return
+  t.cancelled = true
+  results.set(paneId, 'cancelled')
 }
 
-export function launchResult(_paneId: string | null): LaunchResult | null {
-  throw new Error('not implemented')
+export function isLaunchCancelled(paneId: string): boolean {
+  return taken.get(paneId)?.cancelled ?? results.get(paneId) === 'cancelled'
 }
 
-export function clearLaunchResult(_paneId: string): void {
-  throw new Error('not implemented')
+export function launchResult(paneId: string | null): LaunchResult | null {
+  if (paneId === null) return null
+  const q = queued.get(paneId)
+  if (q?.track && Date.now() - q.at <= LAUNCH_TTL_MS) return 'pending'
+  const t = taken.get(paneId)
+  if (t !== undefined && !t.cancelled) return 'pending'
+  return results.get(paneId) ?? null
+}
+
+export function clearLaunchResult(paneId: string): void {
+  results.delete(paneId)
 }
 
 export function resetLaunchQueue(): void {
   queued.clear()
+  taken.clear()
+  results.clear()
 }
 
 /**

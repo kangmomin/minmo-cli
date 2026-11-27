@@ -103,12 +103,14 @@ export function repoAliasOf(s: Pick<HostsState, 'repoHosts'>, owner: string, rep
   return id === undefined ? undefined : aliasOfHostId(id)
 }
 
-export function workHostAliasOf(_s: Pick<HostsState, 'repoHosts' | 'selected'>, _owner: string, _repo: string): string | null {
-  throw new Error('not implemented')
+export function workHostAliasOf(s: Pick<HostsState, 'repoHosts' | 'selected'>, owner: string, repo: string): string | null {
+  const a = repoAliasOf(s, owner, repo)
+  // Why: 트리와 같은 규칙 — 연결 호스트가 없으면 사이드바의 작업 호스트, 이 PC(null)에 묶였으면 이 PC
+  return a === undefined ? s.selected : a
 }
 
-export function usesTmux(_s: Pick<HostsState, 'useTmux' | 'probes'>, _alias: string | null): boolean {
-  throw new Error('not implemented')
+export function usesTmux(s: Pick<HostsState, 'useTmux' | 'probes'>, alias: string | null): boolean {
+  return alias !== null && s.useTmux && (s.probes[alias]?.tmux ?? false)
 }
 
 export const useHostsStore = create<HostsState>()(

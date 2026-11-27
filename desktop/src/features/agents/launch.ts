@@ -21,8 +21,8 @@ export const DEFAULT_AGENT_COMMANDS: Record<LaunchKind, string> = {
 /** 명령을 받는 셸 — 이 PC(Windows)의 터미널은 PowerShell, 원격·macOS·Linux 는 POSIX 셸 */
 export type ShellKind = 'powershell' | 'posix'
 
-export function shellFor(_alias: string | null, _platform: Platform): ShellKind {
-  throw new Error('not implemented')
+export function shellFor(alias: string | null, platform: Platform): ShellKind {
+  return alias === null && platform === 'win32' ? 'powershell' : 'posix'
 }
 
 /**
