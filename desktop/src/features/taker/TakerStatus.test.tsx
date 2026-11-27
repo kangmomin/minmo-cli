@@ -103,6 +103,15 @@ describe('TakerHeaderStatus — 머리줄 진행', () => {
     expect(actions!.restart).toHaveBeenCalledWith('r120')
   })
 
+  it('A-19 다음 단계 대기에서도 [이 단계부터 다시] 를 누르면 restart 를 부른다', async () => {
+    seed([runOf('manualNext')])
+    const { actions, user } = renderWith(<TakerHeaderStatus issueId={ID} />)
+    expect(screen.getByRole('button', { name: '다음 단계' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '이 단계부터 다시' }))
+    expect(actions!.restart).toHaveBeenCalledWith('r120')
+    expect(actions!.nextStep).not.toHaveBeenCalled()
+  })
+
   it('EC-07 다음 단계 대기에서 [다음 단계] 를 누르면 nextStep 을 부르고, 시작했으면(started) 버튼을 잠근다', async () => {
     seed([runOf('manualNext')])
     const { actions, user } = renderWith(<TakerHeaderStatus issueId={ID} />)

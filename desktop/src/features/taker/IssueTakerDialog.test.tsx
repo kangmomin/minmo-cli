@@ -284,6 +284,29 @@ describe('IssueTakerDialog — 안내', () => {
     expect(within(dialog()).queryByText(/tmux/)).toBeNull()
   })
 
+  it('EC-07 tmux 사용을 끈 원격은 연결 전에도 안내한다', () => {
+    useHostsStore.setState({ aliases: ['srv'], useTmux: false, repoHosts: { [KEY]: 'ssh:srv' }, probes: {} })
+    setup()
+    const note = within(dialog()).getByText(/tmux/)
+    expect(note).toHaveTextContent(/다음 단계/)
+  })
+
+  it('EC-07 tmux 사용을 켠 원격은 연결을 확인하기 전에는 안내하지 않는다', () => {
+    useHostsStore.setState({ aliases: ['srv'], useTmux: true, repoHosts: { [KEY]: 'ssh:srv' }, probes: {} })
+    setup()
+    expect(enable()).toBeInTheDocument()
+    expect(within(dialog()).queryByText(/tmux/)).toBeNull()
+  })
+
+  it('A-25 셸에 남은 프로그램이 있으면 [자동 실행 멈춤] 으로 푼다고 안내한다', () => {
+    setup()
+    const note = within(dialog()).getByText(/자동 실행 멈춤/)
+    expect(note).toHaveTextContent(/백그라운드/)
+    expect(note).toHaveTextContent(/개발 서버/)
+    expect(note).toHaveTextContent(/명령이 들어가지 않/)
+    expect(note).toHaveTextContent(/다음 단계로 넘어가지 않/)
+  })
+
   it('EC-17 같은 계정의 다른 PC 에서도 켜면 두 PC 가 모두 실행할 수 있다고 안내한다', () => {
     setup()
     expect(within(dialog()).getByText(/(다른|두|여러) PC/)).toBeInTheDocument()
@@ -328,6 +351,17 @@ describe('IssueTakerDialog — 실행 목록과 마지막 확인', () => {
     setup({ repos: { [KEY]: cfg() } })
     expect(within(dialog()).getByText('아직 자동 실행한 이슈가 없습니다')).toBeInTheDocument()
     expect(within(dialog()).getByText('마지막 확인: 아직 없음')).toBeInTheDocument()
+  })
+
+  it('A-19 실행 목록의 다음 단계 대기 실행에 "#{n} 이 단계부터 다시" 가 있다', async () => {
+    const { actions, user } = setup({ repos: { [KEY]: cfg() }, runs: [runOf(120, 'manualNext')] })
+    const item = within(dialog())
+      .getAllByRole('listitem')
+      .find((li) => li.textContent?.includes('#120'))!
+    expect(within(item).getByRole('button', { name: '#120 다음 단계' })).toBeInTheDocument()
+    await user.click(within(item).getByRole('button', { name: '#120 이 단계부터 다시' }))
+    expect(actions.restart).toHaveBeenCalledWith('r120')
+    expect(actions.nextStep).not.toHaveBeenCalled()
   })
 
   it('AC-10 마지막 확인이 2분 전이면 "마지막 확인: 2분 전"', () => {

@@ -522,6 +522,23 @@ describe('T2 시작', () => {
     expect(h.github.assignIssue).not.toHaveBeenCalled()
     expect(h.open).not.toHaveBeenCalled()
   })
+
+  it('EC-26 이미 열린 터미널 때문에 멈춘 실행을 이 단계부터 다시 하면 다시 멈추지 않는다', async () => {
+    useUiStore.setState({ startedTerminals: { [ID]: true } })
+    seed([runOf(11)])
+    const h = harness()
+    await h.start()
+    await h.until(() => run().status !== 'queued')
+    expect(run().status).toBe('stopped')
+    h.engine.restart('r11')
+    expect(run().status).toBe('queued')
+    await h.until(() => run().status !== 'queued')
+    expect(run().status).toBe('preparing')
+    expect(reason(run())).not.toContain('이미 터미널이 열려 있는 이슈')
+    await h.until(() => h.open.mock.calls.length > 0)
+    expect(h.github.assignIssue).toHaveBeenCalled()
+    expect(run().status).not.toBe('stopped')
+  })
 })
 
 describe('T3 assign', () => {
@@ -1027,6 +1044,25 @@ describe('T11 worktree · 패널', () => {
     await h.tick()
     expect(launchPane).not.toHaveBeenCalled()
     expect(run().paneId).toBeNull()
+  })
+
+  it('EC-15 열기가 opening 인 채 바로 끝나도 ready 가 되기 전에는 worktree 삭제로 멈추지 않는다', async () => {
+    seed([runOf(11)])
+    const h = harness({
+      open: async (alias, t) => {
+        useSetupStore.getState().setOpen(hostOf(alias).issueId(t.owner, t.repo, t.key), { phase: 'opening' })
+      },
+    })
+    await h.start()
+    await h.until(() => h.open.mock.calls.length > 0)
+    for (let i = 0; i < 5; i++) await h.tick()
+    expect(run().status).toBe('preparing')
+    expect(reason(run())).not.toContain('worktree 삭제')
+    expect(run().paneId).toBeNull()
+    const [alias, target] = h.open.mock.calls[0]!
+    markReady(alias, target)
+    await toPane(h)
+    expect(run().status).toBe('preparing')
   })
 
   it('EC-28 자동 실행 패널을 닫으면 멈추고 다음 단계를 넣지 않는다', async () => {
