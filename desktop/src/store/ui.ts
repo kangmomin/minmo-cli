@@ -9,6 +9,8 @@ import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
 import { followOtherWindows, perWindowStorage } from '../lib/windowScope'
 
 export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes' | 'issue'
+/** 기본 보기 · 답변 모드(#122) */
+export type ViewMode = 'normal' | 'answer'
 /** ghostty = Ghostty 터미널의 기본 색(기본값) */
 export type Theme = 'ghostty' | 'black' | 'light'
 
@@ -94,8 +96,19 @@ export interface UiState {
    * 터미널은 처리하지 않은 새 요청(객체)만 처리한다(자동 포커스 금지 AX-02)
    */
   focusRequest: { paneId: string; token: number } | null
+  /** 화면 보기 — 답변 모드(#122) */
+  viewMode: ViewMode
+  /** 답변 모드에 들어가기 전의 탭 — 기본 보기로 돌아가면 되돌린다(#122) */
+  tabBeforeAnswer: WorkTab
+  /** 요약 카드에 Claude Code 마지막 답변 앞부분을 보인다(#122) */
+  summaryClaudeReply: boolean
+  /** 요약 카드에 [Jev 판정] 버튼을 보인다(#122) */
+  summaryJev: boolean
 
   setExpanded(id: string, v: boolean): void
+  setViewMode(m: ViewMode): void
+  setSummaryClaudeReply(v: boolean): void
+  setSummaryJev(v: boolean): void
   selectIssue(id: string | null): void
   setTab(t: WorkTab): void
   setWorktree(id: string, e: WorktreeEntry): void
@@ -171,6 +184,14 @@ export const useUiStore = create<UiState>()(
       panes: {},
       startedTerminals: {},
       focusRequest: null,
+      viewMode: 'normal',
+      tabBeforeAnswer: 'terminal',
+      summaryClaudeReply: true,
+      summaryJev: false,
+      // #122 스텁 — Phase 5.2(U1)에서 구현
+      setViewMode: () => {},
+      setSummaryClaudeReply: () => {},
+      setSummaryJev: () => {},
       setExpanded: (id, v) => set((s) => ({ expanded: { ...s.expanded, [id]: v } })),
       selectIssue: (selectedIssueId) => set((s) => ({ selectedIssueId, selectSeq: s.selectSeq + 1 })),
       setTab: (tab) => set({ tab }),

@@ -424,6 +424,14 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     },
     ptyProcesses: async (id) => ptyProcs.get(id) ?? [],
     claudeSubagents: async (cwd) => subagents.get(cwd) ?? [],
+    // #122 자리 표시 — E2E 도우미(setClaudeReply·setJevResponse 등)와 함께 Phase 5.2 에서 채운다
+    claudeLastReply: async () => null,
+    jevDecide: async () => {
+      throw new Error('jev_unavailable')
+    },
+    jevKeyStatus: async () => false,
+    jevKeySet: async () => {},
+    jevKeyDelete: async () => {},
     // 이 PC 의 사용량(고정 값) — 원격 호스트의 값은 아래 sshExec 가 돌려준다
     agentUsage: async () => ({
       claude: { input: 200_000, output: 40_000, cacheWrite: 960_000, cacheRead: 30_000_000 },

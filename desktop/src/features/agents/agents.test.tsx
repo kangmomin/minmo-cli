@@ -3,7 +3,7 @@ import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { PtyDataEvent } from '../../lib/tauri'
+import type { PtyDataEvent, PtyResizedEvent } from '../../lib/tauri'
 import { useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
 import { DEFAULT_AGENTS_VIEW, useUiStore } from '../../store/ui'
@@ -20,7 +20,8 @@ import type { AgentRow } from './overview'
 import { PtyStreamParser } from './ptyStream'
 import { REMOTE_SUBAGENTS_SCRIPT, SUBAGENT_STALE_MS, claudeProjectSlug, parseRemoteSubagents, parseSubagentFiles, runningCount } from './subagents'
 import type { Subagent } from './subagents'
-import { DONE_BELL_MS, ECHO_MS, muteTerminalActivity, noteTerminalInput, useAgentTracker } from './useAgentTracker'
+import { DONE_BELL_MS, ECHO_MS, muteTerminalActivity, notePtySize, noteTerminalInput, useAgentTracker } from './useAgentTracker'
+import { parsePeerRows } from '../remote/peerAgents'
 
 const osc = (title: string, end = '\x07') => `\x1b]0;${title}${end}`
 
@@ -192,7 +193,7 @@ describe('derive: 신호 → 현황', () => {
   })
 
   it('issueStatus: 이슈의 패널 중 가장 급한 상태(입력 대기 > 끝남 > 작업 중 > 대기 중), 기타 프로그램은 세지 않는다', () => {
-    const pane = (id: string, o: Partial<PaneAgent>): PaneAgent => ({ paneId: id, issueId: 'a/b#1', agent: 'claude', program: 'claude', label: '', activity: 'idle', unseen: false, lastOutputAt: 0, since: 0, ...o })
+    const pane = (id: string, o: Partial<PaneAgent>): PaneAgent => ({ paneId: id, issueId: 'a/b#1', agent: 'claude', program: 'claude', label: '', activity: 'idle', unseen: false, lastOutputAt: 0, since: 0, waitingSince: null, ...o })
     const panes = { p1: pane('p1', { activity: 'working' }), p2: pane('p2', { unseen: true }), p3: pane('p3', { issueId: 'a/b#2', activity: 'attention' }) }
     expect(issueStatus(panes, 'a/b#1')).toBe('done')
     expect(issueStatus(panes, 'a/b#2')).toBe('attention')
@@ -202,7 +203,7 @@ describe('derive: 신호 → 현황', () => {
 })
 
 describe('전체 현황: 줄·필터·정렬·그루핑', () => {
-  const row = (o: Partial<AgentRow>): AgentRow => ({ target: null, paneId: 'p', issueId: 'i', host: null, hostLabel: '이 PC', repo: 'acme/app', issue: '#1 A', agent: 'claude', agentLabel: 'Claude Code', label: '', status: 'idle', since: 0, lastOutputAt: 0, subagents: [], running: 0, ...o })
+  const row = (o: Partial<AgentRow>): AgentRow => ({ target: null, paneId: 'p', issueId: 'i', host: null, hostLabel: '이 PC', repo: 'acme/app', issue: '#1 A', agent: 'claude', agentLabel: 'Claude Code', label: '', status: 'idle', since: 0, waitingSince: null, lastOutputAt: 0, subagents: [], running: 0, ...o })
   const rows = [
     row({ paneId: 'p1', repo: 'acme/app', issue: '#10 Login', status: 'working', since: 300, lastOutputAt: 900 }),
     row({ paneId: 'p2', repo: 'acme/app', issue: '#2 Docs', agent: 'codex', agentLabel: 'Codex', status: 'done', since: 500 }),
@@ -213,7 +214,7 @@ describe('전체 현황: 줄·필터·정렬·그루핑', () => {
   const ids = (rs: AgentRow[]) => rs.map((r) => r.paneId)
 
   it('toRows: 이슈 정보·호스트·저장소 표시 이름을 붙인다(로컬 저장소는 폴더명)', () => {
-    const pane: PaneAgent = { paneId: 'ssh:srv|_local/app-1a2b#3::2', issueId: 'ssh:srv|_local/app-1a2b#3', agent: 'other', program: 'npm', label: 'x', activity: 'working', unseen: false, lastOutputAt: 5, since: 4 }
+    const pane: PaneAgent = { paneId: 'ssh:srv|_local/app-1a2b#3::2', issueId: 'ssh:srv|_local/app-1a2b#3', agent: 'other', program: 'npm', label: 'x', activity: 'working', unseen: false, lastOutputAt: 5, since: 4, waitingSince: null }
     const [r] = toRows(
       { [pane.paneId]: pane },
       { targets: { [pane.issueId]: { owner: '_local', repo: 'app-1a2b', key: '3', number: 3, title: '로그인' } }, hostOf: () => 'srv', repoLabel: () => 'my-app' },
@@ -616,7 +617,7 @@ describe('추적기(useAgentTracker)', () => {
 })
 
 describe('표시', () => {
-  const pane = (id: string, issueId: string, o: Partial<PaneAgent> = {}): PaneAgent => ({ paneId: id, issueId, agent: 'claude', program: 'claude', label: '', activity: 'idle', unseen: false, lastOutputAt: 0, since: Date.now() - 65_000, ...o })
+  const pane = (id: string, issueId: string, o: Partial<PaneAgent> = {}): PaneAgent => ({ paneId: id, issueId, agent: 'claude', program: 'claude', label: '', activity: 'idle', unseen: false, lastOutputAt: 0, since: Date.now() - 65_000, waitingSince: null, ...o })
 
   beforeEach(() => {
     localStorage.clear()
@@ -752,5 +753,200 @@ describe('표시', () => {
     useAgentStore.getState().clear()
     renderWithDeps(<AgentsOverview open onOpenChange={() => {}} />, makeDeps())
     expect(screen.getByRole('status')).toHaveTextContent('터미널에서 도는 에이전트가 없습니다')
+  })
+})
+
+// #122 답변 모드가 쓰는 현황 — 기다린 시각·패널 단위 보기·끝난 PTY·크기 변경 출력(Plan §4, U2)
+describe('#122 답변 모드 — 기다린 시각·패널 단위 보기·끝난 PTY·크기 변경', () => {
+  const ISSUE = 'acme/app#1'
+  const P1 = `${ISSUE}::1`
+  const P2 = `${ISSUE}::2`
+  const SPLIT = { kind: 'split' as const, dir: 'row' as const, a: { kind: 'leaf' as const, id: P1 }, b: { kind: 'leaf' as const, id: P2 } }
+  const sig = (o: Partial<PaneSignals> = {}): PaneSignals => ({ title: null, processes: null, lastOutputAt: 0, bell: false, ...o })
+
+  it('EC-02 waitingSince: 작업 중이면 null, 작업 중이 아니게 된 시각을 기다리는 동안(끝남 → 대기 중, 입력 대기 → 대기 중) 지키고, 처음부터 기다리면 그때', () => {
+    const first = derive(P1, sig({ title: titleSignal('✳ x') }), null, 1000, false)
+    expect(first.next?.waitingSince).toBe(1000)
+    const working = derive(P1, sig({ title: titleSignal('◐ x') }), first.next, 2000, false)
+    expect(working.next?.waitingSince).toBeNull()
+    const done = derive(P1, sig({ title: titleSignal('✳ x') }), working.next, 5000, false)
+    expect([statusOf(done.next!), done.next?.waitingSince]).toEqual(['done', 5000])
+    const seen = derive(P1, sig({ title: titleSignal('✳ x') }), done.next, 6000, true)
+    expect([statusOf(seen.next!), seen.next?.waitingSince]).toEqual(['idle', 5000])
+    const bell = derive(P1, sig({ title: titleSignal('✳ x'), bell: true }), seen.next, 7000, false)
+    expect([statusOf(bell.next!), bell.next?.waitingSince]).toEqual(['attention', 5000])
+    const calm = derive(P1, sig({ title: titleSignal('✳ x') }), bell.next, 8000, true)
+    expect([statusOf(calm.next!), calm.next?.waitingSince]).toEqual(['idle', 5000])
+  })
+
+  it('EC-02 waitingSince 만 바뀌어도 현황을 새 값으로 바꾸고, 줄(toRows)과 다른 PC 의 줄에 싣는다(없거나 모양이 틀리면 null)', () => {
+    const p = (o: Partial<PaneAgent>): PaneAgent => ({ paneId: P1, issueId: ISSUE, agent: 'claude', program: 'claude', label: '', activity: 'idle', unseen: false, lastOutputAt: 0, since: 100, waitingSince: 100, ...o })
+    useAgentStore.getState().clear()
+    useAgentStore.getState().set(P1, p({}))
+    useAgentStore.getState().set(P1, p({ waitingSince: 300 }))
+    expect(useAgentStore.getState().panes[P1].waitingSince).toBe(300)
+    const [r] = toRows({ [P1]: p({ waitingSince: 300 }) }, { targets: {}, hostOf: () => null, repoLabel: (o, rr) => `${o}/${rr}` })
+    expect(r.waitingSince).toBe(300)
+    const peer = { id: 'p1', name: '집 PC' }
+    const raw = { paneId: P1, issueId: ISSUE, status: 'idle', repo: 'acme/app', issue: '#1 A', agent: 'claude', agentLabel: 'Claude Code', label: '', since: 1, lastOutputAt: 1, running: 0, subagents: [] }
+    expect(parsePeerRows([{ ...raw, waitingSince: 42 }], peer)[0].waitingSince).toBe(42)
+    expect(parsePeerRows([{ ...raw, waitingSince: 'x' }], peer)[0].waitingSince).toBeNull()
+    useAgentStore.getState().clear()
+  })
+
+  describe('추적기', () => {
+    function setup(o: { processes?: () => Promise<string[]> } = {}) {
+      let emit: (e: PtyDataEvent) => void = () => {}
+      let exit: (id: string) => void = () => {}
+      let resized: (e: PtyResizedEvent) => void = () => {}
+      const fake = createFakeTauri({
+        onPtyData: async (cb) => {
+          emit = cb
+          return () => {}
+        },
+        onPtyExit: async (cb) => {
+          exit = cb
+          return () => {}
+        },
+        onPtyResized: async (cb) => {
+          resized = cb
+          return () => {}
+        },
+        ptyProcesses: o.processes ?? (async () => ['claude.exe']),
+      })
+      useUiStore.setState({ terminalIds: { [P1]: 'pty-1', [P2]: 'pty-2' }, selectedIssueId: null, tab: 'terminal', agentNotify: true, worktreePathMap: {}, viewMode: 'normal', panes: {} })
+      useHostsStore.setState({ probes: {} })
+      useSetupStore.setState({ targets: { [ISSUE]: { owner: 'acme', repo: 'app', key: '1', number: 1, title: '로그인' } } })
+      const r = renderHookWithDeps(() => useAgentTracker(), makeDeps({ tauri: fake.tauri }))
+      return {
+        ...r,
+        tauri: fake.tauri,
+        out: (data: string, id = 'pty-1') => act(() => emit({ id, data })),
+        exit: (id: string) => act(() => exit(id)),
+        resized: (e: PtyResizedEvent) => act(() => resized(e)),
+        tick: (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms)),
+        pane: (id = P1) => useAgentStore.getState().panes[id],
+      }
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-11-27T00:00:00Z'))
+      useAgentStore.getState().clear()
+      localStorage.clear()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      useUiStore.setState({ viewMode: 'normal', panes: {} })
+    })
+
+    it('EC-03 답변 모드: 같은 이슈의 가려진 패널이 끝나면 "끝남"으로 남고 알림이 뜬다 — 보이는 패널만 본 것이다', async () => {
+      const t = setup()
+      useUiStore.setState({ viewMode: 'answer', selectedIssueId: ISSUE, tab: 'terminal', panes: { [ISSUE]: { tree: SPLIT, focused: P1, seq: 2 } } })
+      vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+      await t.tick(1000)
+      t.out(osc('◐ 가려진 일'), 'pty-2')
+      t.out(osc('✳ 가려진 일'), 'pty-2')
+      expect(statusOf(t.pane(P2))).toBe('done')
+      expect(t.tauri.notify).toHaveBeenCalledWith('Claude Code — 끝남', 'app #1 로그인', { kind: 'local', issueId: ISSUE, paneId: P2 })
+      t.out(osc('◐ 보이는 일'))
+      t.out(osc('✳ 보이는 일'))
+      expect(statusOf(t.pane(P1))).toBe('idle')
+    })
+
+    it('EC-03 기본 보기는 이슈 단위 그대로 — 그 이슈의 어느 패널이 끝나도 본 것이다', async () => {
+      const t = setup()
+      useUiStore.setState({ viewMode: 'normal', selectedIssueId: ISSUE, tab: 'terminal', panes: { [ISSUE]: { tree: SPLIT, focused: P1, seq: 2 } } })
+      vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+      await t.tick(1000)
+      t.out(osc('◐ x'), 'pty-2')
+      t.out(osc('✳ x'), 'pty-2')
+      expect(statusOf(t.pane(P2))).toBe('idle')
+      expect(t.tauri.notify).not.toHaveBeenCalled()
+    })
+
+    it('EC-03 보조 창이 답변 모드면 그 창이 보는 패널만 본 것이다', async () => {
+      const t = setup()
+      localStorage.setItem('minmo-window-view', JSON.stringify({ by: 'other-window', issueId: ISSUE, terminal: true, paneId: P1 }))
+      await t.tick(1000)
+      t.out(osc('◐ x'), 'pty-2')
+      t.out(osc('✳ x'), 'pty-2')
+      expect(statusOf(t.pane(P2))).toBe('done')
+      t.out(osc('◐ y'))
+      t.out(osc('✳ y'))
+      expect(statusOf(t.pane(P1))).toBe('idle')
+    })
+
+    it('EC-07 이 PC 의 프로세스 조회가 실패하면(reject) 끝난 것으로 보지 않는다 — 줄·제목 그대로', async () => {
+      let failing = false
+      const t = setup({
+        processes: async () => {
+          if (failing) throw new Error('INVALID_HANDLE_VALUE')
+          return ['claude.exe']
+        },
+      })
+      await t.tick(1000)
+      t.out(osc('◐ 작업'))
+      expect(t.pane()).toMatchObject({ agent: 'claude', activity: 'working', label: '작업' })
+      failing = true
+      await t.tick(6000)
+      expect(t.pane()).toMatchObject({ agent: 'claude', activity: 'working', label: '작업' })
+    })
+
+    it('EC-17 끝난 PTY 의 에이전트는 현황에서 빠지고, 그 뒤 늦게 온 조회·제목 결과로 되살아나지 않는다', async () => {
+      const t = setup()
+      await t.tick(1000)
+      t.out(osc('◐ x'))
+      expect(t.pane()).toMatchObject({ agent: 'claude' })
+      t.exit('pty-1')
+      expect(t.pane()).toBeUndefined()
+      t.out(osc('◐ 남은 제목'))
+      await t.tick(4000)
+      expect(t.pane()).toBeUndefined()
+      // 다른 패널은 그대로
+      t.out(osc('◐ y'), 'pty-2')
+      expect(t.pane(P2)).toMatchObject({ agent: 'claude', activity: 'working' })
+    })
+
+    it('EC-18 PTY 크기가 실제로 바뀐 뒤 1.5초 동안 다시 그린 출력은 작업 시작으로 세지 않는다 — 그 뒤의 출력과 이미 작업 중이던 출력은 센다', async () => {
+      const t = setup({ processes: async () => ['node.exe', 'codex.exe'] })
+      await t.tick(1000)
+      expect(t.pane()).toMatchObject({ agent: 'codex', activity: 'idle' })
+      notePtySize('pty-1', 80, 24)
+      t.resized({ id: 'pty-1', cols: 120, rows: 30 })
+      t.out('다시 그린 화면')
+      await t.tick(1000)
+      expect(t.pane().activity).toBe('idle')
+      await t.tick(1000)
+      t.out('Thinking…')
+      await t.tick(1000)
+      expect(t.pane().activity).toBe('working')
+      // 이미 작업 중이면 크기가 바뀐 뒤의 출력도 계속 센다
+      t.resized({ id: 'pty-1', cols: 80, rows: 24 })
+      t.out('계속 출력')
+      await t.tick(3500)
+      expect(t.pane().activity).toBe('working')
+    })
+
+    it('EC-18 크기를 모르던 PTY 는 출력이 있었을 때만 무시하고, 같은 크기 알림은 무시하지 않는다 — 새 터미널의 첫 출력은 그대로 센다', async () => {
+      const t = setup({ processes: async () => ['node.exe', 'codex.exe'] })
+      await t.tick(1000)
+      // 새 터미널: 출력이 나오기 전의 크기 알림 — 첫 출력은 작업 시작이다
+      t.resized({ id: 'pty-1', cols: 120, rows: 30 })
+      t.out('첫 출력')
+      await t.tick(1000)
+      expect(t.pane().activity).toBe('working')
+      await t.tick(QUIET_MS + 1000)
+      expect(t.pane().activity).not.toBe('working')
+      t.resized({ id: 'pty-1', cols: 100, rows: 30 })
+      t.out('다시 그린 화면')
+      await t.tick(1000)
+      expect(t.pane().activity).not.toBe('working')
+      await t.tick(2000)
+      t.resized({ id: 'pty-1', cols: 100, rows: 30 })
+      t.out('Thinking…')
+      await t.tick(1000)
+      expect(t.pane().activity).toBe('working')
+    })
   })
 })

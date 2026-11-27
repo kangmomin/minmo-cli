@@ -83,6 +83,10 @@ export interface TerminalTabProps {
   visible: boolean
   /** Ctrl+Shift+M — 터미널 밖(탭 목록)으로 포커스를 옮긴다 */
   onExit?: () => void
+  /** 답변 모드(#122): 지금 패널 하나만 전체 크기로 — 스텁: Phase 5.2(U4)에서 구현 */
+  singlePane?: boolean
+  /** 답변 모드(#122): 터미널 입력이 함께 읽을 설명 요소 id — 스텁: Phase 5.2(U4)에서 구현 */
+  describedBy?: string
 }
 
 /**

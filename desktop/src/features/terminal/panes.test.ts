@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { closePane, layoutPanes, leaf, leafIds, splitPane } from './panes'
+import { closePane, effectivePane, layoutPanes, leaf, leafIds, splitPane } from './panes'
 
 describe('패널 분할 트리', () => {
   it('split: 기존 패널은 왼쪽/위, 새 패널은 오른쪽/아래 · 없는 대상은 그대로', () => {
@@ -32,5 +32,16 @@ describe('패널 분할 트리', () => {
       { id: 'p3', x: 0.5, y: 0.5, w: 0.5, h: 0.5 },
     ])
     expect(layoutPanes(null)).toEqual([])
+  })
+})
+
+describe('#122 지금 보이는 패널(effectivePane)', () => {
+  it('AC-02 고른 패널(focused)이 트리에 있으면 그것, 없거나 닫혔으면 첫 패널, 패널이 없으면 null', () => {
+    const tree = splitPane(leaf('p1'), 'p1', 'row', 'p2')
+    expect(effectivePane({ tree, focused: 'p2' })).toBe('p2')
+    expect(effectivePane({ tree, focused: 'p9' })).toBe('p1')
+    expect(effectivePane({ tree, focused: null })).toBe('p1')
+    expect(effectivePane({ tree: null, focused: 'p1' })).toBeNull()
+    expect(effectivePane(undefined)).toBeNull()
   })
 })

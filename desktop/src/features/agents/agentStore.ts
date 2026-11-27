@@ -29,6 +29,8 @@ export type PaneAgent = {
   lastOutputAt: number
   /** 지금 상태가 된 시각(ms) */
   since: number
+  /** 작업 중이 아니게 된 시각(ms) — 작업 중이면 null, 기다리는 동안(상태가 바뀌어도) 유지(#122) */
+  waitingSince: number | null
 }
 
 export const statusOf = (p: Pick<PaneAgent, 'activity' | 'unseen'>): AgentStatus =>
@@ -85,6 +87,8 @@ export function derive(paneId: string, sig: PaneSignals, prev: PaneAgent | null,
     unseen,
     lastOutputAt: sig.lastOutputAt,
     since: was && was.activity === activity ? was.since : now,
+    // #122 스텁 — Phase 5.2(U2)에서 구현
+    waitingSince: null,
   }
   const before = was ? statusOf(was) : null
   const after = statusOf(next)

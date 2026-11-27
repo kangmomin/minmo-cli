@@ -35,6 +35,14 @@ export function closePane(tree: PaneNode, target: string): { tree: PaneNode | nu
   return { tree, focus: null }
 }
 
+/**
+ * 지금 보이는 패널(#122): focused 가 잎 목록에 있으면 그것, 아니면 첫 잎, 없으면 null.
+ * 스텁 — Phase 5.2(U2)에서 구현
+ */
+export function effectivePane(_p: { tree: PaneNode | null; focused: string | null } | undefined): string | null {
+  return null
+}
+
 /** 패널 위치(부모 대비 비율 0~1) */
 export type PaneRect = { id: string; x: number; y: number; w: number; h: number }
 

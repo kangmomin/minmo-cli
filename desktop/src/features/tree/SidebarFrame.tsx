@@ -7,6 +7,8 @@ import { SIDEBAR_WIDTH, clampSidebarWidth, useUiStore } from '../../store/ui'
 interface SidebarFrameProps {
   className?: string
   children: ReactNode
+  /** aside 이름(기본 "이슈 트리") — 스텁: Phase 5.2(U4)에서 구현(#122) */
+  label?: string
 }
 
 /** 누른 위치에서 이만큼(px) 가로로 움직여야 끌기로 본다 — 더 작은 떨림은 클릭(더블클릭 포함)이다 */

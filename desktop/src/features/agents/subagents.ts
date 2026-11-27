@@ -51,6 +51,9 @@ export const runningCount = (subs: readonly Subagent[] | undefined) => (subs ?? 
  * 원격 호스트에서 같은 것을 읽는 스크립트. $1 = 작업 폴더의 slug, $2 = 이 시각(초) 이전에 마지막으로 바뀐 세션은 보지 않는다(0 이면 전부).
  * 한 줄에 하나씩 "<id>\t<meta 가 바뀐 시각(초)>\t<기록이 바뀐 시각(초)>\t<meta.json 한 줄>"
  */
+/** 원격에서 작업 폴더($1 = slug)의 최신 세션 기록($s)을 찾는 앞부분(#122) — 스텁: Phase 5.2(U6)에서 REMOTE_SUBAGENTS_SCRIPT 에서 뺀다 */
+export const REMOTE_SESSION_LOOKUP = ''
+
 export const REMOTE_SUBAGENTS_SCRIPT = `d="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 [ -d "$d" ] || exit 0
 p=""

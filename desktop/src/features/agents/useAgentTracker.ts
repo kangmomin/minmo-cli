@@ -55,11 +55,19 @@ type Tracked = PaneSignals & {
 
 const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false, claudeSince: 0 })
 
+/** 그 패널에 사용자가 마지막으로 입력한 시각(없으면 0, #122) — 스텁: Phase 5.2(U2)에서 구현 */
+export function lastInputAt(_paneId: string): number {
+  return 0
+}
+
+/** 터미널(PTY)의 지금 크기를 알린다 — 크기 변경으로 다시 그린 출력을 작업 시작으로 세지 않게(#122). 스텁: Phase 5.2(U2)에서 구현 */
+export function notePtySize(_ptyId: string, _cols: number, _rows: number): void {}
+
 /** 사용자가 지금 그 이슈의 터미널을 보고 있는가 — 대화상자가 덮고 있으면 보는 것이 아니다 */
-function isViewed(issueId: string): boolean {
+function isViewed(issueId: string, paneId: string): boolean {
   if (typeof document === 'undefined') return false
   // 보조 창에서 보고 있어도 본 것이다 — 알림은 주 창이 띄운다(#105)
-  if (viewedInOtherWindow(issueId)) return true
+  if (viewedInOtherWindow(issueId, paneId)) return true
   const ui = useUiStore.getState()
   if (ui.selectedIssueId !== issueId || ui.tab !== 'terminal') return false
   return document.visibilityState === 'visible' && document.hasFocus() && document.querySelector('[role="dialog"]') === null
@@ -84,7 +92,7 @@ export function useAgentTracker() {
     function update(paneId: string, t: Tracked, now: number) {
       const store = useAgentStore.getState()
       const issueId = issueOfPane(paneId)
-      const viewed = isViewed(issueId)
+      const viewed = isViewed(issueId, paneId)
       if (viewed) t.bell = false
       const { next, event } = derive(paneId, t, store.panes[paneId] ?? null, now, viewed)
       // 새로 작업을 시작하면 그 전의 벨은 지난 일이다

@@ -20,8 +20,8 @@ function readView(): View | null {
   }
 }
 
-/** 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 */
-export function viewedInOtherWindow(issueId: string): boolean {
+/** 다른 창이 포커스를 가진 채 그 이슈의 터미널을 보고 있는가 — paneId: 답변 모드 창이면 그 패널만 본 것(#122, Phase 5.2 에서 구현) */
+export function viewedInOtherWindow(issueId: string, _paneId: string): boolean {
   const v = readView()
   return v !== null && v.by !== ME && v.issueId === issueId && v.terminal
 }

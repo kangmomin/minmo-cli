@@ -20,6 +20,7 @@ export type HostOps = Pick<
   | 'openDir'
   | 'listDir'
   | 'claudeSubagents'
+  | 'claudeLastReply'
   | 'agentUsage'
   | 'readTextFile'
   | 'writeTextFile'
@@ -345,6 +346,8 @@ export function createSshOps(base: TauriApi, alias: string, probe: SshProbe, get
       const r = await script(REMOTE_SUBAGENTS_SCRIPT, [claudeProjectSlug(cwd), String(Math.max(0, Math.floor(sinceMs / 1000)))])
       return r.code === 0 ? parseRemoteSubagents(r.stdout) : []
     },
+    // #122 자리 표시 — 원격 기록 읽기(REMOTE_REPLY_SCRIPT)는 Phase 5.2(U6)에서
+    claudeLastReply: async () => null,
     // 원격의 기록에서 읽는다(python3). 읽지 못하면 "없음" — 하단 바가 비어 있을 뿐 다른 동작은 그대로다
     agentUsage: async (sinceMs) => {
       const r = await script(REMOTE_USAGE_SCRIPT, [String(Math.max(0, Math.floor(sinceMs)))])

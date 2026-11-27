@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PtyDataEvent, PtyFound, PtyLink, PtyLinkEvent, PtyResizedEvent, RemotePty, TauriApi } from '../../lib/tauri'
 import { createFakeTauri, deferred, flush } from '../../test/fakes'
 import { LAUNCH_DELAY_MS, queueLaunch, takeLaunch } from '../agents/launchQueue'
+import { lastInputAt } from '../agents/useAgentTracker'
+import { readTerminalText } from './terminalText'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { makeDeps, renderWithDeps } from '../../test/render'
@@ -37,6 +39,24 @@ const xterm = vi.hoisted(() => ({
   // 패널 크기에 맞춘 칸 수 — 정하면 FitAddon.fit() 이 xterm 을 이 크기로 바꾼다(없으면 그대로 둔다)
   fitTo: null as { cols: number; rows: number } | null,
 }))
+
+// 손가락으로 쓰는 기기(화면 키 줄)를 테스트에서 켤 수 있게 한다(#122) — 기본은 꺼짐(jsdom 에 matchMedia 가 없을 때와 같다)
+const media = vi.hoisted(() => {
+  const flags = { touch: false }
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (q: string) => ({
+      media: q,
+      get matches() {
+        return q.includes('pointer: coarse') ? flags.touch : false
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    }),
+  })
+  return flags
+})
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -69,11 +89,12 @@ vi.mock('@xterm/xterm', () => ({
       addon.activate?.(this)
       this.addons.push(addon)
     }
-    // 실제 xterm 처럼 host 안에 입력 textarea 를 만든다
+    // 실제 xterm 처럼 host 안에 입력 textarea 를 만든다. 키는 실제 xterm 처럼 키 처리기가 capture 단계에서 먼저 받는다(#122)
     open(el: HTMLElement) {
       this.host = el
       this.textarea = document.createElement('textarea')
       this.textarea.setAttribute('aria-label', xterm.strings.promptLabel)
+      this.textarea.addEventListener('keydown', (e) => void this.keyHandler?.(e), { capture: true })
       el.appendChild(this.textarea)
     }
     write(d: string, done?: () => void) {
@@ -1646,5 +1667,170 @@ describe('원격 터미널 재접속 (#89)', () => {
     const remote = t.tauri.ptySpawn.mock.calls[0][0].remote
     expect(remote).toMatchObject({ host: 'my-server', ephemeral: true })
     expect(remote?.session).toMatch(/^minmo-[0-9a-f]{10}-p2$/)
+  })
+})
+
+describe('#122 답변 모드 — 입력 세기·패널 하나·설명 연결·글자 읽기·키 줄', () => {
+  const P1 = `${A.issueId}::1`
+  const P2 = `${A.issueId}::2`
+  const textarea = (i = 0) => xterm.instances[i].textarea as HTMLTextAreaElement
+  const opened = () => vi.waitFor(() => expect(useUiStore.getState().terminalIds[P1]).toBe('pty-1'))
+
+  afterEach(() => {
+    media.touch = false
+  })
+
+  it('EC-09 키 처리기가 터미널로 보낸 키는 입력으로 센다 — 편집 키(Shift+Enter·Ctrl+Backspace)·IME 조합 키(Process) 포함', async () => {
+    setup()
+    await opened()
+    const now = vi.spyOn(Date, 'now')
+    const keys: KeyboardEventInit[] = [{ key: 'Enter', shiftKey: true }, { key: 'Backspace', ctrlKey: true }, { key: 'Process', isComposing: true }, { key: 'a' }]
+    for (const [i, init] of keys.entries()) {
+      now.mockReturnValue(10_000 + i)
+      fireEvent.keyDown(textarea(), init)
+      expect(lastInputAt(P1), init.key).toBe(10_000 + i)
+    }
+  })
+
+  it('EC-09 수정 키만 누른 것·선택 복사·앱 동작 키(Ctrl+Shift+M·글자 크기·Ctrl+T)는 입력이 아니다', async () => {
+    setup()
+    await opened()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(20_000)
+    fireEvent.keyDown(textarea(), { key: 'q' })
+    expect(lastInputAt(P1)).toBe(20_000)
+    now.mockReturnValue(21_000)
+    for (const init of [
+      { key: 'Shift', shiftKey: true },
+      { key: 'Control', ctrlKey: true },
+      { key: 'Alt', altKey: true },
+      { key: 'CapsLock' },
+      { key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true },
+      { key: '=', code: 'Equal', ctrlKey: true },
+      { key: 't', code: 'KeyT', ctrlKey: true },
+    ]) {
+      fireEvent.keyDown(textarea(), init)
+    }
+    xterm.instances[0].selection = '복사할 글'
+    fireEvent.keyDown(textarea(), { key: 'c', code: 'KeyC', ctrlKey: true })
+    expect(lastInputAt(P1)).toBe(20_000)
+  })
+
+  it('EC-09 붙여넣기는 입력으로 센다', async () => {
+    setup()
+    await opened()
+    vi.spyOn(Date, 'now').mockReturnValue(30_000)
+    fireEvent.paste(textarea())
+    expect(lastInputAt(P1)).toBe(30_000)
+  })
+
+  it('EC-09 [다시 시작] 누름은 입력으로 센다 — 그 패널을 다시 쓰려는 사용자에게 끝남 이동이 끼어들지 않게', async () => {
+    let n = 0
+    setup({
+      ptySpawn: async () => `pty-${++n}`,
+      ptyWrite: async () => {
+        throw new Error('pty gone')
+      },
+    })
+    await vi.waitFor(() => expect(xterm.instances[0]?.dataHandler).not.toBeNull())
+    await act(async () => {
+      xterm.instances[0].dataHandler?.('ls')
+      await flush()
+    })
+    vi.spyOn(Date, 'now').mockReturnValue(40_000)
+    fireEvent.click(screen.getByRole('button', { name: '다시 시작' }))
+    expect(lastInputAt(P1)).toBe(40_000)
+  })
+
+  it('EC-09 원격 터미널의 [지금 재접속] 누름은 입력으로 센다', async () => {
+    const fake = createFakeTauri()
+    renderWithDeps(<TerminalTab sessions={[R]} activeId={R.issueId} visible />, makeDeps({ tauri: fake.tauri }))
+    const RP1 = `${R.issueId}::1`
+    await vi.waitFor(() => expect(useUiStore.getState().terminalIds[RP1]).toBe('pty-1'))
+    act(() => fake.emitPtyLink({ id: 'pty-1', phase: 'waiting', attempt: 1, max: 5, seq: 1, reason: null, at: null }))
+    vi.spyOn(Date, 'now').mockReturnValue(50_000)
+    fireEvent.click(screen.getByRole('button', { name: '지금 재접속' }))
+    expect(lastInputAt(RP1)).toBe(50_000)
+  })
+
+  it('AC-02 터미널 탭 루트는 data-terminal-root, 패널은 data-pane-id 를 가진다(포커스 위치 판단용)', async () => {
+    const t = setup()
+    await opened()
+    const root = t.container.querySelector('[data-terminal-root]')
+    expect(root).not.toBeNull()
+    expect(root?.querySelector(`[data-pane-id="${P1}"]`)?.contains(textarea())).toBe(true)
+  })
+
+  it('AC-02 singlePane: 지금 패널 하나만 전체 크기로 보이고 나머지는 가려진다 — 번호 탭 줄이 없고, 켜고 꺼도 터미널을 다시 만들지 않는다', async () => {
+    let n = 0
+    const fake = createFakeTauri({ ptySpawn: async () => `pty-${++n}` })
+    useUiStore.setState({ panes: { [A.issueId]: { tree: { kind: 'split', dir: 'row', a: { kind: 'leaf', id: P1 }, b: { kind: 'leaf', id: P2 } }, focused: P2, seq: 2 } } })
+    const r = renderWithDeps(<TerminalTab sessions={[A]} activeId={A.issueId} visible singlePane />, makeDeps({ tauri: fake.tauri }))
+    await vi.waitFor(() => expect(Object.keys(useUiStore.getState().terminalIds).sort()).toEqual([P1, P2]))
+    const pane = (id: string) => r.container.querySelector(`[data-pane-id="${id}"]`)?.closest('[data-testid="terminal-pane"]')
+    expect(pane(P2)).toBeTruthy()
+    expect(pane(P2)).not.toHaveClass('invisible')
+    expect(pane(P1)).toHaveClass('invisible')
+    expect(screen.queryByRole('tablist', { name: '터미널 패널' })).toBeNull()
+    r.rerender(<TerminalTab sessions={[A]} activeId={A.issueId} visible />)
+    expect(pane(P1)).not.toHaveClass('invisible')
+    expect(xterm.instances).toHaveLength(2)
+    expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(2)
+  })
+
+  it('EC-15 describedBy: 터미널 입력이 탈출 안내와 함께 그 설명(어디 줄)을 읽고, 바꿔도 터미널을 다시 만들지 않는다', async () => {
+    const fake = createFakeTauri()
+    const r = renderWithDeps(<TerminalTab sessions={[A]} activeId={A.issueId} visible describedBy="answer-where" />, makeDeps({ tauri: fake.tauri }))
+    await opened()
+    const ids = () => (textarea().getAttribute('aria-describedby') ?? '').split(' ')
+    expect(ids()).toContain('answer-where')
+    expect(ids()).toHaveLength(2)
+    r.rerender(<TerminalTab sessions={[A]} activeId={A.issueId} visible />)
+    expect(ids()).not.toContain('answer-where')
+    expect(xterm.instances).toHaveLength(1)
+  })
+
+  it('EC-12 글자 읽기: 그 패널 화면의 마지막 줄들 — 끝의 빈 줄은 버리고 줄바꿈된(isWrapped) 긴 줄은 잇는다', async () => {
+    setup()
+    await opened()
+    type Line = { text: string; wrapped: boolean }
+    const buffer = (ls: Line[]) => ({
+      active: { length: ls.length, baseY: 0, cursorY: 0, getLine: (i: number) => (ls[i] ? { isWrapped: ls[i].wrapped, translateToString: () => ls[i].text } : undefined) },
+    })
+    const setBuffer = (ls: Line[]) => {
+      ;(xterm.instances[0] as unknown as { buffer: unknown }).buffer = buffer(ls)
+    }
+    setBuffer([
+      { text: '$ claude', wrapped: false },
+      { text: '권한을 허용할까요? 긴 줄의 ', wrapped: false },
+      { text: '이어진 부분 (y/n)', wrapped: true },
+      { text: '', wrapped: false },
+      { text: '', wrapped: false },
+    ])
+    expect(readTerminalText(P1, 200)).toBe('$ claude\n권한을 허용할까요? 긴 줄의 이어진 부분 (y/n)')
+    // 줄 수 상한 — 마지막 줄들만
+    setBuffer(Array.from({ length: 300 }, (_, i) => ({ text: `L${i}`, wrapped: false })))
+    const text = readTerminalText(P1, 200)
+    expect(text.split('\n')).toHaveLength(200)
+    expect(text.startsWith('L100\n')).toBe(true)
+    expect(readTerminalText('none::1', 200)).toBe('')
+  })
+
+  it('EC-25 답변 모드 키 줄: 포커스가 그 패널 밖이면 첫 누름은 그 터미널로 포커스만 옮기고 키를 보내지 않는다 — 패널 안이면 보낸다', async () => {
+    media.touch = true
+    const fake = createFakeTauri()
+    renderWithDeps(<TerminalTab sessions={[A]} activeId={A.issueId} visible singlePane />, makeDeps({ tauri: fake.tauri }))
+    await opened()
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+    outside.focus()
+    fireEvent.click(screen.getByRole('button', { name: 'Esc' }))
+    await act(() => flush())
+    expect(fake.tauri.ptyWrite).not.toHaveBeenCalled()
+    expect(useUiStore.getState().focusRequest?.paneId === P1 || xterm.instances[0].focus.mock.calls.length > 0).toBe(true)
+    textarea().focus()
+    fireEvent.click(screen.getByRole('button', { name: 'Esc' }))
+    await act(() => flush())
+    expect(fake.tauri.ptyWrite).toHaveBeenCalledWith('pty-1', '\x1b')
+    outside.remove()
   })
 })

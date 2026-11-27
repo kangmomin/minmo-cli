@@ -138,6 +138,8 @@ export type ServerSettingsInput = Partial<Pick<ServerSettings, 'port' | 'closeAc
 
 /** Claude Code 하위 에이전트의 메타 파일(src-tauri/src/commands/agents.rs SubagentFile) — meta 는 meta.json 원문 */
 export type SubagentFile = { id: string; meta: string; updatedMs: number }
+/** Claude Code 최신 세션 기록의 끝부분(src-tauri/src/commands/agents.rs claude_last_reply, #122) — tail 은 기록 원문, updatedMs 는 기록 시각 */
+export type ClaudeReplyTail = { tail: string; updatedMs: number }
 
 /** 토큰 수(src-tauri/src/commands/usage.rs Tokens). 합계에는 cacheRead 를 넣지 않는다 — 요청마다 대화 전체가 다시 세어진다 */
 export type UsageTokens = { input: number; output: number; cacheWrite: number; cacheRead: number }
@@ -290,6 +292,14 @@ export interface TauriApi extends WorktreeHost, GhHost {
    * sinceMs 이전에 마지막으로 바뀐 세션은 보지 않는다 — 이전 실행의 기록을 지금 것으로 보이지 않게
    */
   claudeSubagents(cwd: string, sinceMs: number): Promise<SubagentFile[]>
+  /** cwd(작업 폴더)에서 도는 Claude Code 의 최신 세션 기록 끝부분(없으면 null, #122) */
+  claudeLastReply(cwd: string): Promise<ClaudeReplyTail | null>
+  /** TypeSafe Jev 판정(#122) — body 는 요청 JSON, 응답 JSON 원문을 돌려준다. API 키는 Rust 안에서만 읽는다 */
+  jevDecide(body: string): Promise<string>
+  /** Jev API 키가 키체인에 있는가 */
+  jevKeyStatus(): Promise<boolean>
+  jevKeySet(key: string): Promise<void>
+  jevKeyDelete(): Promise<void>
   /** 이 컴퓨터의 AI 별 사용량 — sinceMs(화면의 오늘 자정) 이후의 토큰 수와 Codex 의 한도 사용률 */
   agentUsage(sinceMs: number): Promise<AgentUsage>
   /** OS 알림을 띄운다(권한이 없으면 조용히 넘어간다) */
@@ -507,6 +517,16 @@ export function createTauriApi(): TauriApi {
 
     ptyProcesses: (id) => call(C.ptyProcesses, { id }),
     claudeSubagents: (cwd, sinceMs) => call(C.claudeSubagents, { cwd, sinceMs: Math.max(0, Math.floor(sinceMs)) }),
+    // #122 자리 표시 — 네이티브 명령은 Phase 5.2(U6·U7)에서 연결한다
+    claudeLastReply: async () => null,
+    jevDecide: async () => {
+      throw new Error('jev_unavailable')
+    },
+    jevKeyStatus: async () => false,
+    jevKeySet: async () => {
+      throw new Error('jev_unavailable')
+    },
+    jevKeyDelete: async () => {},
     agentUsage: (sinceMs) => call(C.agentUsage, { sinceMs: Math.max(0, Math.floor(sinceMs)) }),
     notify: async (title, body, target) => {
       // 모든 창이 에이전트 상태를 추적한다 — OS 알림은 주 창만 띄워 한 번만 뜨게 한다(#105)
