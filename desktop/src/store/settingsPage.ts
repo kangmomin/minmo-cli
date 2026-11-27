@@ -27,18 +27,29 @@ export interface SettingsPageState {
   setScope(s: SettingsScope): void
 }
 
-// TODO(#115 Red 스텁): U1 에서 채운다
-export const useSettingsPageStore = create<SettingsPageState>()(() => ({
+export const useSettingsPageStore = create<SettingsPageState>()((set) => ({
   open: false,
   section: 'appearance',
   target: null,
   scope: { kind: 'global' },
   focusSection: false,
   opener: null,
-  openSettings: () => {},
-  close: () => {},
-  setSection: () => {},
-  setScope: () => {},
+  openSettings: (o) => {
+    const active = document.activeElement
+    set((s) => ({
+      open: true,
+      // Why: 분류를 정하지 않고 열면 지난번에 보던 분류로 돌아간다(앱 실행 중에만 기억)
+      section: o?.section ?? s.section,
+      target: o?.target ?? null,
+      scope: o?.scope ?? { kind: 'global' },
+      focusSection: !!o?.section,
+      opener: active instanceof HTMLElement && active !== document.body ? active : null,
+    }))
+  },
+  // Why: opener·section 은 남긴다 — 닫은 뒤 포커스를 되돌리고, 다시 열 때 그 분류를 보인다
+  close: () => set({ open: false }),
+  setSection: (section) => set({ section }),
+  setScope: (scope) => set({ scope }),
 }))
 
 export const openSettings = (o?: OpenSettingsOptions) => useSettingsPageStore.getState().openSettings(o)
