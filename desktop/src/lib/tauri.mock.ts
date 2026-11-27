@@ -164,10 +164,13 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   const notifyClickListeners = new Set<(target: NotifyTarget) => void>()
   const serverListeners = new Set<(s: ServerStatus) => void>()
   let serverStatus: ServerStatus = { state: 'running', port: mockServerPort(), message: null }
-  const server = { port: serverStatus.port, closeAction: 'ask' as CloseAction }
+  const server = { port: serverStatus.port, closeAction: 'ask' as CloseAction, sharePaths: false }
   const serverView = (): ServerSettings => ({
     port: server.port,
     closeAction: server.closeAction,
+    sharePaths: server.sharePaths,
+    // mock 은 native 가 아니라 앱이 이 값을 쓰지 않는다
+    pcId: null,
     warning: null,
   })
   let availableUpdate: UpdateInfo | null = null
@@ -606,6 +609,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     serverSettingsSave: async (input) => {
       if (input.port !== undefined) server.port = input.port
       if (input.closeAction !== undefined) server.closeAction = input.closeAction
+      if (input.sharePaths !== undefined) server.sharePaths = input.sharePaths
       return serverView()
     },
     serverRestart: async () => emitServer({ state: 'running', port: server.port, message: null }),

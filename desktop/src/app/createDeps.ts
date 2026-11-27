@@ -5,6 +5,7 @@ import { expireSession, handleApiError, shouldRetry } from '../lib/apiErrors'
 import { createGitHubClient } from '@minmo/core'
 import { cachedGithubToken, rememberGithubToken } from '../lib/githubToken'
 import { KEYCHAIN_KEYS, getTauri } from '../lib/tauri'
+import { useServerStore } from '../store/server'
 import type { AppDeps } from './deps'
 
 /**
@@ -33,6 +34,14 @@ export async function createAppDeps(queryClient: QueryClient, baseUrl?: string):
   const tauri = getTauri()
   const api = createAppApi(baseUrl)
   const [home, platform] = await Promise.all([tauri.homeDir(), tauri.platform()])
+  // 첫 설정 요청 전에 이 PC 의 식별자를 알아 둔다 — 읽지 못하면 함께 쓰는 값으로 동작한다
+  if (tauri.runtime === 'native') {
+    const pcId = await tauri.serverSettingsGet().then(
+      (s) => s.pcId ?? null,
+      () => null,
+    )
+    useServerStore.getState().setPcId(pcId)
+  }
 
   async function githubToken(): Promise<string> {
     const cached = cachedGithubToken()

@@ -12,9 +12,10 @@ import { ChangesTab } from '../changes/ChangesTab'
 import { FilesTab } from '../files/FilesTab'
 import { NotesTab } from '../notes/NotesTab'
 import { TerminalTab } from '../terminal/TerminalTab'
+import { IssueTab } from './IssueTab'
 
 /**
- * 작업 탭: 터미널 · 변경 · 메모. 각 패널은 role=tabpanel + aria-labelledby 로 탭과 연결된다(Radix TabsContent).
+ * 작업 탭: 터미널 · 변경 · 파일 · 메모 · 이슈. 각 패널은 role=tabpanel + aria-labelledby 로 탭과 연결된다(Radix TabsContent).
  * 터미널은 이슈 전환에도 세션을 유지하도록 항상 마운트하고 hidden 만 토글한다.
  */
 export interface WorkTabsProps {
@@ -55,6 +56,7 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
         <TabsTrigger value="changes">변경</TabsTrigger>
         <TabsTrigger value="files">파일</TabsTrigger>
         <TabsTrigger value="notes">메모</TabsTrigger>
+        <TabsTrigger value="issue">이슈</TabsTrigger>
       </TabsList>
       <div className="relative min-h-0 flex-1">
         {/* forceMount 는 Radix 가 hidden 을 풀어 버리므로 직접 토글한다 */}
@@ -102,6 +104,10 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
         {/* 메모는 로딩·비활성 시 NotesTab 이 자체 Tab 정지점을 두므로 패널은 -1 (CR-20) */}
         <TabsContent value="notes" tabIndex={-1} className="absolute inset-0">
           <NotesTab key={id} owner={target.owner} repo={target.repo} issueKey={target.key} />
+        </TabsContent>
+        {/* Why: IssueTab 의 내용 영역이 Tab 정지점이므로 패널은 -1 (AX-19) */}
+        <TabsContent value="issue" tabIndex={-1} className="absolute inset-0">
+          <IssueTab key={id} target={target} />
         </TabsContent>
       </div>
     </Tabs>

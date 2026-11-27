@@ -3,25 +3,32 @@ import type { Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { DEFAULT_SERVER_URL } from '@minmo/core'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { serverErrorMessage } from './errors'
 import { createServerApi, resolveServer, socketFetch } from './server'
 
 describe('서버 경로 선택', () => {
-  it('MINMO_SERVER 를 명시했을 때만 TCP, 아니면 소켓만 — 소켓이 없어도 127.0.0.1:8787 로 넘어가 토큰을 보내지 않는다', () => {
-    expect(resolveServer('/s.sock', { MINMO_SERVER: 'http://x:1' }, 'linux')).toEqual({ kind: 'tcp', url: 'http://x:1' })
-    expect(resolveServer('/s.sock', {}, 'linux')).toEqual({ kind: 'socket', path: '/s.sock' })
+  it('MINMO_SERVER → 명시한 MINMO_SOCKET → 배포된 서버 — 로컬 포트(127.0.0.1:8787)로는 넘어가지 않는다', () => {
+    expect(resolveServer({ MINMO_SERVER: 'http://x:1', MINMO_SOCKET: '/s.sock' }, 'linux')).toEqual({ kind: 'tcp', url: 'http://x:1' })
+    expect(resolveServer({ MINMO_SOCKET: '/s.sock' }, 'linux')).toEqual({ kind: 'socket', path: '/s.sock' })
+    expect(resolveServer({}, 'linux')).toEqual({ kind: 'tcp', url: DEFAULT_SERVER_URL })
+    expect(DEFAULT_SERVER_URL.startsWith('https://')).toBe(true)
   })
 
-  it('Windows 는 MINMO_SERVER 가 없으면 아무 데도 보내지 않고 설정 방법을 안내한다', async () => {
-    expect(resolveServer('/s.sock', { MINMO_SERVER: 'http://x:1' }, 'win32')).toEqual({ kind: 'tcp', url: 'http://x:1' })
-    const target = resolveServer('/s.sock', {}, 'win32')
-    expect(target).toEqual({ kind: 'unset' })
-    const err = await createServerApi(target, () => 'tok')
+  it('Windows 는 Unix 소켓을 쓸 수 없어 MINMO_SOCKET 을 무시하고, 주소를 정하지 않아도 배포된 서버에 붙는다', () => {
+    expect(resolveServer({ MINMO_SERVER: 'http://x:1' }, 'win32')).toEqual({ kind: 'tcp', url: 'http://x:1' })
+    expect(resolveServer({ MINMO_SOCKET: '/s.sock' }, 'win32')).toEqual({ kind: 'tcp', url: DEFAULT_SERVER_URL })
+    expect(resolveServer({}, 'win32')).toEqual({ kind: 'tcp', url: DEFAULT_SERVER_URL })
+  })
+
+  it('연결 실패 안내는 서버 경로에 맞춘다 — 배포된 서버는 네트워크, 소켓은 SSH 역터널', async () => {
+    const err = await createServerApi({ kind: 'socket', path: socketPath() }, () => 'tok')
       .me()
       .catch((e: unknown) => e)
-    expect(serverErrorMessage(err, target)).toContain('MINMO_SERVER=http://127.0.0.1:8787')
+    expect(serverErrorMessage(err, { kind: 'tcp', url: DEFAULT_SERVER_URL })).toContain('네트워크 연결')
+    expect(serverErrorMessage(err, { kind: 'socket', path: '/s.sock' })).toContain('SSH 역터널')
   })
 })
 

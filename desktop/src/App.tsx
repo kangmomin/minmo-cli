@@ -75,7 +75,7 @@ export function App() {
   useSyncApplied(tauri, queryClient)
 
   // 서버가 준비되면 그 주소로 붙는다. 같은 포트로 재시작하면 그대로 쓰고, 다른 포트로 실행되면 새 주소로 다시 붙는다
-  const readyUrl = status && isServerReady(status) ? serverBaseUrl(status.port) : null
+  const readyUrl = status && isServerReady(status) ? serverBaseUrl(status.port, status.url) : null
   useEffect(() => {
     if (readyUrl && readyUrl !== baseUrl) setBaseUrl(readyUrl)
   }, [readyUrl, baseUrl, setBaseUrl])

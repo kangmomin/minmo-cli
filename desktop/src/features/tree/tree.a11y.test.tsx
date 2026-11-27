@@ -199,12 +199,31 @@ describe('AX-05 worktree 표시 · 경로 변경 배지 설명', () => {
 })
 
 describe('AX-04 비활성 "worktree 삭제" 의 사유를 항목에서 읽을 수 있다 (EC-16)', () => {
-  it('★기타: 비활성 항목 + 사유 "고정 이슈는 삭제할 수 없음"', async () => {
+  it('#119 ★기타도 worktree 가 있으면 삭제할 수 있다', async () => {
     renderRow(ETC, { hasWorktree: true })
     fireEvent.contextMenu(screen.getByTestId('issue-row-etc'))
     const item = await screen.findByRole('menuitem', { name: 'worktree 삭제' })
+    expect(item).not.toHaveAttribute('aria-disabled')
+    expect(item).not.toHaveAccessibleDescription()
+  })
+
+  it('#119 ★기타도 worktree 가 없으면 비활성 + 사유', async () => {
+    renderRow(ETC, { hasWorktree: false })
+    fireEvent.contextMenu(screen.getByTestId('issue-row-etc'))
+    const item = await screen.findByRole('menuitem', { name: 'worktree 삭제' })
     expect(item).toHaveAttribute('aria-disabled', 'true')
-    expect(item).toHaveAccessibleDescription('고정 이슈는 삭제할 수 없음')
+    expect(item).toHaveAccessibleDescription('worktree 가 없습니다')
+  })
+
+  it('#119 ★기타 삭제 확인 대화상자는 "기타" 로 보인다(번호 없음)', async () => {
+    const id = worktreeId('my-org', 'widgets', 'etc')
+    useUiStore.setState({ worktreePathMap: { [id]: { path: '/w/etc', branch: 'etc' } } })
+    renderRow(ETC, { hasWorktree: true, gitRun: async (args) => (args.includes('status') ? ok(' M a.ts\n') : args.includes('rev-list') ? ok('0\n') : ok()) })
+    fireEvent.contextMenu(screen.getByTestId('issue-row-etc'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'worktree 삭제' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAccessibleDescription(/^my-org\/widgets 기타\s*미커밋 변경 1\s*개/)
+    expect(dialog).not.toHaveAccessibleDescription(/#/)
   })
 
   it('worktree 없는 이슈: 비활성 항목 + 사유', async () => {

@@ -1,9 +1,10 @@
 // 이슈 머리줄의 수정·닫기(#64). GitHub 이슈는 gh/REST 로 바꾸고, 로컬 저장소의 작업은 앱 저장소(repos)에서 바꾼다.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
-import type { IssueCloseReason, IssueTarget, UpdateIssueInput } from '@minmo/core'
+import type { GitHubIssueDetail, IssueCloseReason, IssueTarget, UpdateIssueInput } from '@minmo/core'
 
 import { useDeps } from '../../app/deps'
+import { queryKeys } from '../../lib/queryKeys'
 import { isLocalOwner, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { issuesQueryOptions, upsertIssueCache, useMyLogin } from '../tree/useTree'
@@ -65,9 +66,18 @@ export function useIssueMutations(target: ManagedTarget) {
 
   return {
     async updateGitHub(input: UpdateIssueInput) {
+      const { body } = input
       const issue = await github.updateIssue(owner, repo, number, input)
       upsertIssueCache(queryClient, owner, repo, issue)
       useSetupStore.getState().renameIssue(owner, repo, number, issue.title)
+      if (body !== undefined) {
+        // Why: updateIssue 응답에는 본문이 없어 보낸 본문으로 이슈 탭 캐시를 고친다(upsertIssueCache 와 같은 방식).
+        // 먼저 취소해야 진행 중인 옛 조회가 덮거나, 끝나지 않는 첫 조회를 다시 쓰지 않는다
+        const key = queryKeys.githubIssueBody(owner, repo, number)
+        await queryClient.cancelQueries({ queryKey: key })
+        if (queryClient.getQueryData(key) !== undefined) queryClient.setQueryData<GitHubIssueDetail>(key, (d) => d && { ...d, ...issue, body })
+        else void queryClient.invalidateQueries({ queryKey: key })
+      }
     },
     async closeGitHub(reason: IssueCloseReason) {
       upsertIssueCache(queryClient, owner, repo, await github.closeIssue(owner, repo, number, reason))

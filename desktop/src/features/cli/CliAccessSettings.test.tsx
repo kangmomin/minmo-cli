@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Sessions } from '@minmo/api-client'
 
+import { useServerStore } from '../../store/server'
 import { useSessionStore } from '../../store/session'
 import { createFakeApi } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
@@ -18,6 +19,7 @@ const SESSIONS: Sessions = {
 }
 
 beforeEach(() => {
+  useServerStore.setState(useServerStore.getInitialState(), true)
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online' })
 })
@@ -40,6 +42,20 @@ function setup() {
 }
 
 describe('원격 CLI 접속', () => {
+  it('내장 서버를 쓰면 SSH 역터널 설정을 안내한다', () => {
+    setup()
+    expect(screen.getByTestId('ssh-config')).toHaveTextContent('RemoteForward')
+    expect(screen.queryByTestId('cli-hosted-note')).toBeNull()
+  })
+
+  it('배포된 서버를 쓰면 SSH 설정 대신 서버 주소를 안내한다', () => {
+    useServerStore.setState({ status: { state: 'external', port: 8787, message: null, url: 'https://minmo.example' } })
+    setup()
+    expect(screen.getByTestId('cli-hosted-note')).toHaveTextContent('https://minmo.example')
+    expect(screen.queryByTestId('ssh-config')).toBeNull()
+    expect(screen.getByText(/같은 서버에 직접 붙습니다/)).toBeInTheDocument()
+  })
+
   it('코드를 발급하면 코드·남은 시간을 보여 주고 `minmo login <코드>` 를 복사한다', async () => {
     const { api, user } = setup()
     await user.click(screen.getByRole('button', { name: '코드 발급' }))

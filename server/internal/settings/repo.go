@@ -76,6 +76,15 @@ func EnsureGlobalDefaults(ctx context.Context, db *sql.DB, userID string, now ti
 
 // GetEffective 는 전역·조직·프로젝트 행을 한 번에 읽어 병합한다. owner/repo 는 소문자 정규화된 값.
 func GetEffective(ctx context.Context, db *sql.DB, userID, owner, repo string) (Effective, error) {
+	recs, err := loadScopes(ctx, db, userID, owner, repo)
+	if err != nil {
+		return Effective{}, err
+	}
+	return mergeScopes(recs)
+}
+
+// loadScopes 는 effective 에 쓰이는 전역·조직·프로젝트 행을 읽는다(없는 단계는 키가 없다).
+func loadScopes(ctx context.Context, db *sql.DB, userID, owner, repo string) (map[Scope]*Record, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT scope, `+selectColumns+` FROM settings
 		WHERE user_id = ? AND (
@@ -84,38 +93,36 @@ func GetEffective(ctx context.Context, db *sql.DB, userID, owner, repo string) (
 			OR (scope = 'project' AND owner = ? AND repo = ?))`,
 		userID, owner, owner, repo)
 	if err != nil {
-		return Effective{}, fmt.Errorf("effective 조회 실패: %w", err)
+		return nil, fmt.Errorf("effective 조회 실패: %w", err)
 	}
 	defer rows.Close()
 
-	var global, org, project *Record
+	recs := map[Scope]*Record{}
 	for rows.Next() {
 		var scope string
 		var rec Record
 		if err := rows.Scan(&scope, &rec.BranchTemplate, &rec.EtcBranchName, &rec.WorktreePath,
 			&rec.MainClonePath, &rec.PostCreateScript, &rec.SparsePaths, &rec.PostCreateScriptPosix, &rec.IgnoredCopyExclude, &rec.UpdatedAt); err != nil {
-			return Effective{}, fmt.Errorf("effective 조회 실패: %w", err)
+			return nil, fmt.Errorf("effective 조회 실패: %w", err)
 		}
-		switch Scope(scope) {
-		case ScopeGlobal:
-			global = &rec
-		case ScopeOrg:
-			org = &rec
-		case ScopeProject:
-			project = &rec
-		}
+		recs[Scope(scope)] = &rec
 	}
 	if err := rows.Err(); err != nil {
-		return Effective{}, fmt.Errorf("effective 조회 실패: %w", err)
+		return nil, fmt.Errorf("effective 조회 실패: %w", err)
 	}
+	return recs, nil
+}
+
+func mergeScopes(recs map[Scope]*Record) (Effective, error) {
+	global := recs[ScopeGlobal]
 	if global == nil {
 		return Effective{}, ErrGlobalMissing
 	}
 	var orgIn, projectIn Input
-	if org != nil {
+	if org := recs[ScopeOrg]; org != nil {
 		orgIn = org.Input
 	}
-	if project != nil {
+	if project := recs[ScopeProject]; project != nil {
 		projectIn = project.Input
 	}
 	return Merge(global.Values(), orgIn, projectIn), nil

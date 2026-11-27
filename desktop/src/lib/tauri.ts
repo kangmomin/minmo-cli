@@ -116,20 +116,25 @@ export type TailscaleLogEvent = { line: string; transient: boolean }
 /** native = Tauri 창, remote = 다른 기기의 브라우저(호스트에 붙음), mock = 개발·테스트 */
 export type RuntimeKind = 'native' | 'remote' | 'mock'
 
-/** 내장 서버 상태(src-tauri/src/server.rs Status) — external 은 debug 실행에서 외부 서버를 쓸 때 */
+/** 서버 상태(src-tauri/src/server.rs Status) — external 은 내장 서버를 띄우지 않을 때(배포 빌드, debug 의 외부 서버) */
 export type ServerState = 'starting' | 'running' | 'failed' | 'stopped' | 'external'
-export type ServerStatus = { state: ServerState; port: number; message: string | null }
+/** url: 내장 서버 대신 쓰는 서버 주소(배포 빌드). 없으면 127.0.0.1:port */
+export type ServerStatus = { state: ServerState; port: number; message: string | null; url?: string | null }
 /** 창을 닫을 때: 매번 묻기 · 트레이로 숨기기(서버 유지) · 종료 */
 export type CloseAction = 'ask' | 'tray' | 'quit'
 /** 서버 설정(포트·창 닫기 동작) */
 export type ServerSettings = {
   port: number
   closeAction: CloseAction
+  /** 작업 폴더 경로·생성 후 스크립트를 같은 계정의 다른 PC 와 함께 쓴다(기본 꺼짐 — 이 PC 에만 저장) */
+  sharePaths?: boolean
+  /** 서버 설정 요청에 붙일 이 PC 의 식별자. 경로를 함께 쓰면 null */
+  pcId?: string | null
   /** 설정 파일이 깨져 기본값으로 시작한 경우 등 */
   warning: string | null
 }
 /** 바꿀 값만 */
-export type ServerSettingsInput = Partial<Pick<ServerSettings, 'port' | 'closeAction'>>
+export type ServerSettingsInput = Partial<Pick<ServerSettings, 'port' | 'closeAction' | 'sharePaths'>>
 
 /** Claude Code 하위 에이전트의 메타 파일(src-tauri/src/commands/agents.rs SubagentFile) — meta 는 meta.json 원문 */
 export type SubagentFile = { id: string; meta: string; updatedMs: number }

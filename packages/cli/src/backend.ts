@@ -1,4 +1,4 @@
-// 데스크탑과 공유하는 데이터(보일 저장소·설정) — PC 의 minmo 서버(SSH 역터널) 값을 읽고 쓴다.
+// 데스크탑과 공유하는 데이터(보일 저장소·설정) — minmo 서버의 값을 읽고 쓴다.
 import { ApiError } from '@minmo/api-client'
 import type { ApiClient, Effective, Me, SettingsField, SettingsInput, SettingsRecord, SettingsScope, SettingsSource } from '@minmo/api-client'
 import { SETTING_FIELDS } from '@minmo/core'

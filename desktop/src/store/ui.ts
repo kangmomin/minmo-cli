@@ -8,7 +8,7 @@ import type { PaneNode, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
 import { followOtherWindows, perWindowStorage } from '../lib/windowScope'
 
-export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes'
+export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes' | 'issue'
 /** ghostty = Ghostty 터미널의 기본 색(기본값) */
 export type Theme = 'ghostty' | 'black' | 'light'
 

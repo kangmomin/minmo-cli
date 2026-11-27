@@ -21,7 +21,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'workspace',
     title: '작업 공간',
-    keywords: ['브랜치', '템플릿', 'worktree', '경로', 'clone', '스크립트', '체크아웃', '무시된 파일', '.env', '별칭', '연결 호스트', '원본 위치', '조직', '프로젝트', '전역'],
+    keywords: ['브랜치', '템플릿', 'worktree', '경로', 'clone', '스크립트', '체크아웃', '무시된 파일', '.env', '별칭', '연결 호스트', '원본 위치', '조직', '프로젝트', '전역', '공유', '다른 PC'],
     visible: always,
   },
   // Why: 페어링 동기화는 이 PC 의 앱 창에서만 동작한다(pairSync/PairSyncSection.tsx 와 같은 조건)

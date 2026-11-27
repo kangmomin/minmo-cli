@@ -18,6 +18,7 @@ import { LOCAL_HOST_ID, aliasOfHostId, baseDirOf, baseRepoOf, hostIdOf, repoAlia
 import { clampNickname, isLocalOwner, normalizeNickname, repoKey, repoLabelOf, repoNicknameOf, repoShortNameOf, shortNameTaken, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { BaseRepoDialog } from '../tree/BaseRepoDialog'
+import { SharePathsSection } from './SharePathsSection'
 import { useSettings } from './useSettings'
 
 export type PreviewIssue = { owner: string; repo: string; key: string; number: number | null; title: string }
@@ -74,6 +75,7 @@ export function ScopeSettings({ scope, previewIssue }: ScopeSettingsProps) {
           {scope.kind === 'global' ? '모든 저장소의 기본값입니다.' : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'}
         </p>
       </div>
+      {scope.kind === 'global' && <SharePathsSection />}
       {scope.kind === 'project' && <RepoNicknameSection key={repoKey(scope.owner, scope.repo)} owner={scope.owner} repo={scope.repo} />}
       {project && <RepoHostSection owner={project.owner} repo={project.repo} />}
       {project &&
@@ -215,13 +217,16 @@ function SettingsBody({ scope, previewIssue }: { scope: SettingsScope; previewIs
   const [saved, setSaved] = useState(false)
   const [focusSave, setFocusSave] = useState(false)
   const onFocused = useCallback(() => setFocusSave(false), [])
+  // 값 전체로 폼을 구분한다 — 수정 시각만 보면 값이 바뀐 것을 놓친다(아래 주석)
+  const recordKey = useMemo(() => JSON.stringify(s.record ?? null), [s.record])
   const ready = s.record !== undefined && (scope.kind === 'global' || s.inherited !== null)
   return (
     <>
       {ready ? (
-        // Why: 레코드가 바뀌면(저장 후 재조회) 폼을 새로 초기화한다
+        // Why: 레코드가 바뀌면(저장 후 재조회) 폼을 새로 초기화한다. 경로·스크립트 공유를 바꾼 뒤에도 그렇다 —
+        // 함께 쓰는 값과 이 PC 의 값은 수정 시각이 같을 수 있어, 남은 입력을 저장하면 한쪽 값이 다른 쪽에 들어간다
         <SettingsForm
-          key={s.record!.updatedAt ?? 'empty'}
+          key={recordKey}
           scope={scope}
           record={s.record!}
           inherited={s.inherited}

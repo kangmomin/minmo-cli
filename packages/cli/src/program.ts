@@ -16,7 +16,7 @@ export type ProgramDeps = {
 
 export function buildProgram(deps: ProgramDeps): Command {
   const program = new Command('minmo')
-    .description('minmo 원격 CLI — SSH 역터널로 데스크탑의 minmo 서버에 로그인해 메모·설정·보일 저장소를 다룹니다')
+    .description('minmo 원격 CLI — minmo 서버에 로그인해 데스크탑과 함께 쓰는 메모·설정·보일 저장소를 다룹니다')
     .version(deps.version)
     .showHelpAfterError()
   const withCtx =
@@ -32,7 +32,7 @@ export function buildProgram(deps: ProgramDeps): Command {
     .description('데스크탑에서 발급한 코드로 로그인')
     .action(withCtx((ctx, code: string) => login(ctx, code)))
   program.command('logout').description('이 기기의 세션을 끊고 로그인 정보를 지웁니다').action(withCtx((ctx) => logout(ctx)))
-  program.command('doctor').description('서버(역터널)·로그인 점검').action(withCtx((ctx) => doctor(ctx)))
+  program.command('doctor').description('서버 연결·로그인 점검').action(withCtx((ctx) => doctor(ctx)))
   // 서버·로그인이 필요 없어 컨텍스트를 만들지 않는다
   const update =
     deps.update ??
