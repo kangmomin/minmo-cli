@@ -3,10 +3,12 @@ import { useEffect } from 'react'
 
 import { useBaseDeps } from '../../app/deps'
 import { aliasOfIssue, hostOf, useHostDeps } from '../../app/host'
+import { isDefaultIssueId, workTabOf } from '../../lib/defaultWorkspace'
 import { useHostsStore } from '../../store/hosts'
 import { repoShortNameOf, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
+import { selectedTabId, tabOfPane } from '../terminal/panes'
 import { viewedInOtherWindow } from './windowView'
 import { STATUS_LABEL, derive, issueOfPane, useAgentStore } from './agentStore'
 import type { PaneSignals } from './agentStore'
@@ -55,13 +57,17 @@ type Tracked = PaneSignals & {
 
 const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false, claudeSince: 0 })
 
-/** 사용자가 지금 그 이슈의 터미널을 보고 있는가 — 대화상자가 덮고 있으면 보는 것이 아니다 */
-function isViewed(issueId: string): boolean {
+/** 사용자가 지금 그 패널(그 이슈의 고른 터미널 탭)을 보고 있는가 — 대화상자가 덮고 있으면 보는 것이 아니다 */
+function isViewed(issueId: string, paneId: string): boolean {
   if (typeof document === 'undefined') return false
-  // 보조 창에서 보고 있어도 본 것이다 — 알림은 주 창이 띄운다(#105)
-  if (viewedInOtherWindow(issueId)) return true
   const ui = useUiStore.getState()
-  if (ui.selectedIssueId !== issueId || ui.tab !== 'terminal') return false
+  const tree = ui.panes[issueId]?.tree ?? null
+  // Why: 트리에 없는 패널은 탭을 모른다(null) — 지금처럼 이슈만 본다
+  const paneTab = tabOfPane(tree, paneId)
+  // 보조 창에서 보고 있어도 본 것이다 — 알림은 주 창이 띄운다(#105)
+  if (viewedInOtherWindow(issueId, paneTab)) return true
+  if (ui.selectedIssueId !== issueId || workTabOf(issueId, ui.tab) !== 'terminal') return false
+  if (paneTab !== null && paneTab !== selectedTabId(tree, ui.panes[issueId]?.tab)) return false
   return document.visibilityState === 'visible' && document.hasFocus() && document.querySelector('[role="dialog"]') === null
 }
 
@@ -84,7 +90,7 @@ export function useAgentTracker() {
     function update(paneId: string, t: Tracked, now: number) {
       const store = useAgentStore.getState()
       const issueId = issueOfPane(paneId)
-      const viewed = isViewed(issueId)
+      const viewed = isViewed(issueId, paneId)
       if (viewed) t.bell = false
       const { next, event } = derive(paneId, t, store.panes[paneId] ?? null, now, viewed)
       // 새로 작업을 시작하면 그 전의 벨은 지난 일이다
@@ -94,7 +100,7 @@ export function useAgentTracker() {
       if (event && next && next.agent !== 'other' && useUiStore.getState().agentNotify) {
         const target = useSetupStore.getState().targets[issueId]
         const repo = target && repoShortNameOf(useReposStore.getState(), target.owner, target.repo)
-        const where = target ? `${repo} ${target.number === null ? '기타' : `#${target.number} ${target.title}`}` : issueId
+        const where = isDefaultIssueId(issueId) ? '기본' : target ? `${repo} ${target.number === null ? '기타' : `#${target.number} ${target.title}`}` : issueId
         void tauri.notify(`${AGENT_LABEL[next.agent]} — ${STATUS_LABEL[event]}`, where, { kind: 'local', issueId, paneId }).catch(() => undefined)
       }
     }
@@ -172,7 +178,9 @@ export function useAgentTracker() {
         } else if (alias !== null && !useHostsStore.getState().probes[alias]) {
           // 원격인데 연결 정보가 없다 — 이 PC 의 파일을 대신 읽지 않는다
         } else if (!t.subPolling && now - t.subPolledAt >= SUBAGENT_POLL_MS) {
-          const cwd = useUiStore.getState().worktreePathMap[agent.issueId]?.path
+          // Why: 기본은 worktree 가 없다 — 작업 폴더(홈)는 열기 상태에만 있다
+          const open = useSetupStore.getState().open[agent.issueId]
+          const cwd = useUiStore.getState().worktreePathMap[agent.issueId]?.path ?? (open?.phase === 'ready' ? open.path : undefined)
           if (cwd) {
             t.subPolledAt = now
             t.subPolling = true
