@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 
 import { ApiError } from '@minmo/api-client'
@@ -17,7 +17,6 @@ import { DEFAULT_IGNORED_COPY_EXCLUDE, IGNORED_COPY_OFF, ignoredCopyNames, issue
 import { LOCAL_HOST_ID, aliasOfHostId, baseDirOf, baseRepoOf, hostIdOf, repoAliasOf, repoHostOf, useHostsStore, useOriginFolder } from '../../store/hosts'
 import { clampNickname, isLocalOwner, normalizeNickname, repoKey, repoLabelOf, repoNicknameOf, repoShortNameOf, shortNameTaken, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
-import { PairSyncSection } from '../pairSync/PairSyncSection'
 import { BaseRepoDialog } from '../tree/BaseRepoDialog'
 import { useSettings } from './useSettings'
 
@@ -59,6 +58,10 @@ function scopeTitle(scope: SettingsScope, repoLabel: string): string {
   return `프로젝트 설정 — ${repoLabel}`
 }
 
+function scopeDescription(scope: SettingsScope): string {
+  return scope.kind === 'global' ? '모든 저장소의 기본값입니다.' : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'
+}
+
 export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: SettingsDialogProps) {
   // 별칭을 바꾸면 제목도 바로 바뀌게 구독한다
   const repoLabel = useReposStore((s) => (scope.kind === 'project' ? repoLabelOf(s, scope.owner, scope.repo) : ''))
@@ -67,11 +70,7 @@ export function SettingsDialog({ scope, open, onOpenChange, previewIssue }: Sett
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{scopeTitle(scope, repoLabel)}</DialogTitle>
-          <DialogDescription>
-            {scope.kind === 'global'
-              ? '모든 저장소의 기본값입니다.'
-              : '비워 두면 상위 설정을 상속합니다. 상속 값은 입력란에 회색으로 표시됩니다.'}
-          </DialogDescription>
+          <DialogDescription>{scopeDescription(scope)}</DialogDescription>
         </DialogHeader>
         {open && <ScopeSettings scope={scope} previewIssue={previewIssue} onSaved={() => onOpenChange(false)} />}
       </DialogContent>
@@ -95,9 +94,14 @@ export function ScopeSettings({ scope, previewIssue, onSaved }: ScopeSettingsPro
   const outer = useHost().alias
   const alias = bound === undefined ? outer : bound
   const status = useHostStatus(bound ?? null)
+  // Why: 별칭을 바꾸면 제목도 바로 바뀌게 구독한다
+  const repoLabel = useReposStore((s) => (scope.kind === 'project' ? repoLabelOf(s, scope.owner, scope.repo) : ''))
   return (
     <>
-      {scope.kind === 'global' && <PairSyncSection />}
+      <div className="grid gap-1">
+        <h3 className="text-sm font-semibold">{scopeTitle(scope, repoLabel)}</h3>
+        <p className="text-sm text-muted-foreground">{scopeDescription(scope)}</p>
+      </div>
       {scope.kind === 'project' && <RepoNicknameSection key={repoKey(scope.owner, scope.repo)} owner={scope.owner} repo={scope.repo} />}
       {project && <RepoHostSection owner={project.owner} repo={project.repo} />}
       {project &&
@@ -111,7 +115,7 @@ export function ScopeSettings({ scope, previewIssue, onSaved }: ScopeSettingsPro
         ))}
       {/* 연결 호스트를 바꿔도 폼이 다시 마운트되지 않게(입력이 남게) 항상 같은 HostScope 아래에 둔다. 연결 전에는 미리보기를 감춘다 */}
       <HostScope alias={alias}>
-        <SettingsBody scope={scope} previewIssue={status.ready ? (previewIssue ?? null) : null} onSaved={() => onSaved?.()} />
+        <SettingsBody scope={scope} previewIssue={status.ready ? (previewIssue ?? null) : null} onSaved={onSaved} />
       </HostScope>
     </>
   )
@@ -233,24 +237,42 @@ function BaseRepoSection({ owner, repo }: { owner: string; repo: string }) {
   )
 }
 
-function SettingsBody({ scope, previewIssue, onSaved }: { scope: SettingsScope; previewIssue: PreviewIssue | null; onSaved(): void }) {
+function SettingsBody({ scope, previewIssue, onSaved }: { scope: SettingsScope; previewIssue: PreviewIssue | null; onSaved?: () => void }) {
   const s = useSettings(scope)
+  // Why: 저장하면 폼이 새 레코드로 다시 마운트된다 — 결과 문구·포커스 요청은 폼 바깥에 두어야 새 폼까지 남는다
+  const [saved, setSaved] = useState(false)
+  const [focusSave, setFocusSave] = useState(false)
+  const onFocused = useCallback(() => setFocusSave(false), [])
   const ready = s.record !== undefined && (scope.kind === 'global' || s.inherited !== null)
-  if (!ready) {
-    return <p className="text-sm text-muted-foreground">{s.isLoading ? '불러오는 중…' : '설정을 불러올 수 없습니다 — 서버 연결 필요'}</p>
-  }
-  // 레코드가 바뀌면(저장 후 재조회) 폼을 새로 초기화한다
   return (
-    <SettingsForm
-      key={s.record!.updatedAt ?? 'empty'}
-      scope={scope}
-      record={s.record!}
-      inherited={s.inherited}
-      save={s.save}
-      isSaving={s.isSaving}
-      previewIssue={previewIssue}
-      onSaved={onSaved}
-    />
+    <>
+      {ready ? (
+        // 레코드가 바뀌면(저장 후 재조회) 폼을 새로 초기화한다
+        <SettingsForm
+          key={s.record!.updatedAt ?? 'empty'}
+          scope={scope}
+          record={s.record!}
+          inherited={s.inherited}
+          save={s.save}
+          isSaving={s.isSaving}
+          previewIssue={previewIssue}
+          onSaveStart={() => setSaved(false)}
+          onSaved={() => {
+            setSaved(true)
+            setFocusSave(true)
+            onSaved?.()
+          }}
+          focusSave={focusSave}
+          onFocused={onFocused}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">{s.isLoading ? '불러오는 중…' : '설정을 불러올 수 없습니다 — 서버 연결 필요'}</p>
+      )}
+      {/* Why: live region 은 미리 렌더해 두어야 변화가 읽힌다 */}
+      <p role="status" className="text-sm text-muted-foreground">
+        {saved ? '저장했습니다' : ''}
+      </p>
+    </>
   )
 }
 
@@ -359,9 +381,12 @@ function SettingsForm(props: {
   save(input: SettingsInput): Promise<SettingsRecord>
   isSaving: boolean
   previewIssue: PreviewIssue | null
+  onSaveStart(): void
   onSaved(): void
+  focusSave: boolean
+  onFocused(): void
 }) {
-  const { scope, record, inherited, previewIssue } = props
+  const { scope, record, inherited, previewIssue, focusSave, isSaving, onFocused } = props
   const { home, platform } = useDeps()
   const host = useHost()
   const hostLabel = host.label
@@ -369,6 +394,13 @@ function SettingsForm(props: {
   const offline = useSessionStore((st) => st.status === 'offline')
   const uid = useId()
   const isGlobal = scope.kind === 'global'
+  const saveButton = useRef<HTMLButtonElement>(null)
+  // Why: 저장 중에는 [저장] 이 disabled 라 포커스를 받지 못한다 — 저장이 끝난 뒤 둔다
+  useEffect(() => {
+    if (!focusSave || isSaving) return
+    saveButton.current?.focus()
+    onFocused()
+  }, [focusSave, isSaving, onFocused])
 
   const [text, setText] = useState<Record<TextField, string>>(() => ({
     branchTemplate: record.branchTemplate ?? '',
@@ -425,7 +457,8 @@ function SettingsForm(props: {
     e.preventDefault()
     setErrors({})
     setFormError(null)
-    const value = (f: TextField): string | null => (isGlobal ? text[f] : text[f] === '' ? null : text[f])
+    props.onSaveStart()
+    const value =(f: TextField): string | null => (isGlobal ? text[f] : text[f] === '' ? null : text[f])
     const input: SettingsInput = {
       branchTemplate: value('branchTemplate'),
       etcBranchName: value('etcBranchName'),
@@ -639,7 +672,7 @@ function SettingsForm(props: {
       {offline && <p className="text-sm text-muted-foreground">서버 미연결 — 설정을 편집할 수 없습니다</p>}
 
       <DialogFooter>
-        <Button type="submit" disabled={offline || props.isSaving}>
+        <Button ref={saveButton} type="submit" disabled={offline || isSaving}>
           저장
         </Button>
       </DialogFooter>
