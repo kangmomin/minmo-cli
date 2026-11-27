@@ -18,7 +18,7 @@ import { describeOpenError } from '../issue/useWorktree'
 import type { IssueActions } from '../issue/useWorktree'
 import { leafIds } from '../terminal/panes'
 import { TAKER_START_TIMEOUT_MS, canWrite, isActive, nextToStart, renderPrompt, stepProgress } from './taker'
-import { useTakerStore } from './takerStore'
+import { splitKey, useTakerStore } from './takerStore'
 import type { TakerRun, TakerStatus } from './takerStore'
 
 export type TakerEngineDeps = {
@@ -55,7 +55,6 @@ type RunMem = {
   openCalled: boolean
   openDone: boolean
   paneAt: number | null
-  tmux: boolean
   remoteNoTmux: boolean
   ptyId: string | null
   ptyAt: number
@@ -73,7 +72,6 @@ const freshMem = (attempt: number): RunMem => ({
   openCalled: false,
   openDone: false,
   paneAt: null,
-  tmux: false,
   remoteNoTmux: false,
   ptyId: null,
   ptyAt: 0,
@@ -93,11 +91,6 @@ function dropNote(prev: string | null, drop: string): string | null {
   if (prev === null) return null
   const rest = prev.split(NOTE_SEP).filter((p) => p !== drop)
   return rest.length === 0 ? null : rest.join(NOTE_SEP)
-}
-
-function splitKey(key: string): [string, string] {
-  const i = key.indexOf('/')
-  return [key.slice(0, i), key.slice(i + 1)]
 }
 
 const aliasOfRun = (run: TakerRun): string | null => (run.issueId === null ? null : aliasOfIssue(run.issueId))
@@ -320,8 +313,7 @@ export function createTakerEngine(deps: TakerEngineDeps): TakerEngine {
     const hasPane = leafIds(ui.panes[issueId]?.tree ?? null).length > 0
     const paneId = ui.launchPane(issueId, hasPane || alias !== null, false)
     m.paneAt = now
-    m.tmux = usesTmux(useHostsStore.getState(), alias)
-    m.remoteNoTmux = alias !== null && !m.tmux
+    m.remoteNoTmux = alias !== null && !usesTmux(useHostsStore.getState(), alias)
     const note = useSetupStore.getState().script[issueId]?.status === 'failed' ? joinNote(run.note, '생성 후 스크립트 실패') : run.note
     if (m.remoteNoTmux) {
       const cmd = commandOf(run, run.step)

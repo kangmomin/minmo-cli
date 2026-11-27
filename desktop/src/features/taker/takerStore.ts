@@ -144,7 +144,7 @@ function pruneFinished(runs: TakerRun[]): TakerRun[] {
   return drop.size === 0 ? runs : runs.filter((r) => !drop.has(r))
 }
 
-function splitKey(key: string): [string, string] {
+export function splitKey(key: string): [string, string] {
   const i = key.indexOf('/')
   return [key.slice(0, i), key.slice(i + 1)]
 }
