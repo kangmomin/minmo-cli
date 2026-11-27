@@ -539,6 +539,27 @@ describe('T2 시작', () => {
     expect(h.github.assignIssue).toHaveBeenCalled()
     expect(run().status).not.toBe('stopped')
   })
+
+  it('EC-26 assign 한 뒤 대기로 돌아간 실행은 그 사이 터미널이 열려도 다시 시작할 때 멈추지 않는다', async () => {
+    remote(true)
+    seed([runOf(11)])
+    const assign = deferred<{ number: number; title: string; state: 'open'; htmlUrl: string; assignees: string[] }>()
+    const h = harness({ github: { assignIssue: () => assign.promise }, tauri: { sshProbe: never } })
+    await h.start()
+    await h.until(() => h.github.assignIssue.mock.calls.length > 0)
+    useHostsStore.setState({ probes: {} })
+    assign.resolve({ number: 11, title: 'Issue 11', state: 'open', htmlUrl: '', assignees: ['me'] })
+    await flush()
+    await h.tick()
+    expect(run()).toMatchObject({ status: 'queued', assigned: true })
+    useUiStore.setState({ startedTerminals: { [RID]: true } })
+    remote(true)
+    await h.until(() => run().status !== 'queued')
+    expect(run().status).toBe('preparing')
+    expect(reason(run())).not.toContain('이미 터미널이 열려 있는 이슈')
+    await h.until(() => h.open.mock.calls.length > 0)
+    expect(h.github.assignIssue).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('T3 assign', () => {
@@ -1181,6 +1202,21 @@ describe('start — 앱을 다시 켬', () => {
 })
 
 describe('버튼 — 멈춤 · 다음 단계', () => {
+  it('A-19 다음 단계 대기에서 [이 단계부터 다시] 를 누르면 지금 단계를 대기열에서 다시 시작한다', async () => {
+    remote(false)
+    seed([runOf(11)])
+    const h = harness()
+    await h.start()
+    const p = await toPane(h)
+    takeLaunch(p)
+    markLaunched(p)
+    await h.until(() => run().status === 'manualNext')
+    h.engine.restart('r11')
+    expect(run()).toMatchObject({ status: 'queued', step: 0, paneId: null })
+    const again = await toPane(h)
+    expect(takeLaunch(again)).toBe(CMD1)
+  })
+
   it('AC-08 [멈춤] 을 누르면 멈춤이 되고 프로그램이 끝나도 다음 단계를 넣지 않으며 에이전트를 끄지 않는다', async () => {
     seed([runOf(11)])
     const h = harness()
