@@ -2,7 +2,7 @@
 // 실제 호스트 서버·다른 기기의 접속은 Rust 테스트(src-tauri/src/remote.rs)와 실제 앱 검증으로 본다.
 import { devices, expect, test } from '@playwright/test'
 
-import { expandWidgets, login, openTerminal, routeGitHub, routeServer } from './fixtures'
+import { expandWidgets, login, openSettings, openTerminal, routeGitHub, routeServer } from './fixtures'
 
 test.beforeEach(async ({ page }) => {
   await routeServer(page)
@@ -11,8 +11,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('원격 접속 설정: 켜면 접속 주소가 보이고, [기기 등록] 이 1회용 코드를 띄우며, 등록된 기기를 끊는다', async ({ page }) => {
-  await page.getByRole('button', { name: '원격 접속', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '원격 접속' })
+  const dialog = await openSettings(page, '원격 접속')
   const toggle = dialog.getByRole('checkbox', { name: '원격 접속 켜기' })
   await expect(toggle).not.toBeChecked()
   await expect(dialog.getByRole('button', { name: '기기 등록' })).toHaveCount(0)
@@ -29,8 +28,7 @@ test('원격 접속 설정: 켜면 접속 주소가 보이고, [기기 등록] �
 })
 
 test('Tailscale 도우미: 설치 → 로그인 → 연결됨 → HTTPS 켜기/끄기 (접속 주소·QR 이 HTTPS 주소를 쓴다)', async ({ page }) => {
-  await page.getByRole('button', { name: '원격 접속', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '원격 접속' })
+  const dialog = await openSettings(page, '원격 접속')
   await dialog.getByRole('checkbox', { name: '원격 접속 켜기' }).check()
   const section = dialog.getByTestId('tailscale')
   // 설치 전: 실행될 명령을 먼저 보여 준다
@@ -126,8 +124,7 @@ test.describe('휴대폰 크기', () => {
 })
 
 test('다른 PC 등록: 주소와 코드로 등록하면 호스트 고르는 곳에 나오고, 고르면 그 PC 의 화면을 새 창으로 연다', async ({ page }) => {
-  await page.getByRole('button', { name: '원격 접속', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '원격 접속' })
+  const dialog = await openSettings(page, '원격 접속')
   await dialog.getByLabel('그 PC 의 주소').fill('http://100.64.0.5:8790')
   await dialog.getByLabel('등록 코드').fill('000000')
   await dialog.getByLabel('이름(선택)').fill('회사 PC')
@@ -136,7 +133,9 @@ test('다른 PC 등록: 주소와 코드로 등록하면 호스트 고르는 곳
   await dialog.getByLabel('등록 코드').fill('123456')
   await dialog.getByRole('button', { name: 'PC 등록' }).click()
   await expect(dialog.getByTestId('peer')).toContainText('회사 PC')
+  // Esc 는 설정 화면 전체를 닫는다
   await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
 
   // 호스트 고르는 곳: 다른 PC 를 고르면 새 창으로 열고, 이 창의 호스트는 그대로 "이 PC" 다
   const select = page.getByTestId('host-select')

@@ -79,3 +79,35 @@ describe('parseNotifyTarget', () => {
     }
   })
 })
+
+// #120 기본·★기타의 터미널 탭 — 알림·현황을 누르면 그 이슈 → 터미널 → 그 패널이 있는 탭 → 그 패널로 간다(AC-18)
+describe('알림 클릭 — 숨은 터미널 탭 (#120)', () => {
+  const ETC = 'acme/app#etc'
+  const E = (n: number) => `${ETC}::${n}`
+  const TWO = { kind: 'tabs' as const, tabs: [{ id: 't0', no: 1, node: leaf(E(1)) }, { id: 't2', no: 2, node: splitPane(leaf(E(2)), E(2), 'row', E(3)) }] }
+
+  beforeEach(() => {
+    useUiStore.setState({ panes: { [ETC]: { tree: TWO, focused: E(1), seq: 3, tabSeq: 2 } } })
+  })
+
+  it('AC-18 숨은 탭의 패널 알림을 누르면 그 탭으로 바꾸고 그 패널에 포커스한다', async () => {
+    const t = await setup()
+    t.click({ kind: 'local', issueId: ETC, paneId: E(3) })
+    const ui = useUiStore.getState()
+    expect(ui.selectedIssueId).toBe(ETC)
+    expect(ui.tab).toBe('terminal')
+    expect(ui.panes[ETC]).toMatchObject({ tab: 't2', focused: E(3) })
+    expect(ui.focusRequest).toEqual({ paneId: E(3), token: 1 })
+  })
+
+  it('EC-07 누르기 전에 그 패널(탭)이 닫혔으면 그 이슈의 터미널 작업 탭까지만 간다 — 고른 탭·포커스는 그대로', async () => {
+    const t = await setup()
+    t.click({ kind: 'local', issueId: ETC, paneId: E(9) })
+    const ui = useUiStore.getState()
+    expect(ui.selectedIssueId).toBe(ETC)
+    expect(ui.tab).toBe('terminal')
+    expect(ui.panes[ETC].focused).toBe(E(1))
+    expect(ui.panes[ETC]).not.toHaveProperty('tab')
+    expect(ui.focusRequest).toBeNull()
+  })
+})

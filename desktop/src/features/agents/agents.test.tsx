@@ -10,6 +10,8 @@ import { DEFAULT_AGENTS_VIEW, useUiStore } from '../../store/ui'
 import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderHookWithDeps, renderWithDeps } from '../../test/render'
 import { TooltipProvider } from '../../components/ui/tooltip'
+import { DEFAULT_CORE_ID, DEFAULT_TARGET } from '../../lib/defaultWorkspace'
+import { leaf } from '../terminal/panes'
 import { IssueAgentDot, PaneAgentStrip } from './AgentBadge'
 import { AgentsButton, AgentsOverview } from './AgentsOverview'
 import { PROCESS_POLL_MS, QUIET_MS, derive, issueStatus, shellOnly, statusOf, useAgentStore } from './agentStore'
@@ -934,5 +936,85 @@ describe('[에이전트 실행] 대기열 결과 (이슈 테이커)', () => {
     markLaunched(P)
     clearLaunchResult(P)
     expect(launchResult(P)).toBeNull()
+  })
+})
+
+// #120 기본·★기타의 터미널 탭 — 고른 탭의 패널만 "보는 중"이다(D-20). 기본은 이름 "기본" 으로 보인다(AC-19)
+describe('터미널 탭·기본의 알림과 현황 (#120)', () => {
+  const ETC = 'acme/app#etc'
+  const E = (n: number) => `${ETC}::${n}`
+  const DEF = DEFAULT_CORE_ID
+  const D1 = `${DEF}::1`
+  const TWO = { kind: 'tabs' as const, tabs: [{ id: 't0', no: 1, node: leaf(E(1)) }, { id: 't2', no: 2, node: leaf(E(2)) }] }
+
+  function setup(paneId: string) {
+    let emit!: (e: PtyDataEvent) => void
+    const fake = createFakeTauri({
+      onPtyData: async (cb) => {
+        emit = cb
+        return () => {}
+      },
+      ptyProcesses: async () => ['claude.exe'],
+    })
+    useUiStore.setState({ terminalIds: { [paneId]: 'pty-1' }, agentNotify: true, worktreePathMap: {} })
+    useHostsStore.setState({ probes: {} })
+    useSetupStore.setState({
+      targets: { [ETC]: { owner: 'acme', repo: 'app', key: 'etc', number: null, title: '' }, [DEF]: DEFAULT_TARGET },
+    })
+    renderHookWithDeps(() => useAgentTracker(), makeDeps({ tauri: fake.tauri }))
+    const out = (data: string) => act(() => emit({ id: 'pty-1', data }))
+    return { tauri: fake.tauri, out, tick: (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms)) }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-12T00:00:00Z'))
+    useAgentStore.getState().clear()
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    localStorage.clear()
+  })
+
+  it('AC-18 숨은 탭(고른 탭 값이 없어 첫 탭을 보는 중)의 에이전트가 끝나면 그 기타를 보고 있어도 알린다', async () => {
+    const t = setup(E(2))
+    useUiStore.setState({ selectedIssueId: ETC, tab: 'terminal', panes: { [ETC]: { tree: TWO, focused: null, seq: 2, tabSeq: 2 } } })
+    await t.tick(0)
+    t.out(osc('◐ 빌드'))
+    t.out(osc('✳ 빌드'))
+    expect(t.tauri.notify).toHaveBeenCalledWith('Claude Code — 끝남', expect.any(String), { kind: 'local', issueId: ETC, paneId: E(2) })
+  })
+
+  it('AC-19 기본에서 에이전트가 끝나면 알림에 이름 "기본" 으로 보인다', async () => {
+    const t = setup(D1)
+    useUiStore.setState({ selectedIssueId: null, panes: {} })
+    await t.tick(0)
+    t.out(osc('◐ x'))
+    t.out(osc('✳ x'))
+    expect(t.tauri.notify).toHaveBeenCalledWith('Claude Code — 끝남', '기본', { kind: 'local', issueId: DEF, paneId: D1 })
+  })
+
+  it('AC-19 기본은 저장된 작업 탭이 "파일" 이어도 터미널을 보는 중이다 — 끝나도 알리지 않고 바로 "대기 중"', async () => {
+    const t = setup(D1)
+    useUiStore.setState({ selectedIssueId: DEF, tab: 'files', panes: { [DEF]: { tree: leaf(D1), focused: D1, seq: 1 } } })
+    await t.tick(0)
+    t.out(osc('◐ x'))
+    t.out(osc('✳ x'))
+    expect(statusOf(useAgentStore.getState().panes[D1])).toBe('idle')
+    expect(t.tauri.notify).not.toHaveBeenCalled()
+  })
+
+  it('AC-19 전체 현황: 기본의 줄은 저장소 칸 "기본", 이슈 칸 "" — 원격 호스트의 기본도 같다', () => {
+    const remoteDef = `ssh:srv|${DEF}`
+    const pane = (issueId: string): PaneAgent => ({ paneId: `${issueId}::1`, issueId, agent: 'claude', program: 'claude', label: '', activity: 'idle', unseen: false, lastOutputAt: 0, since: 0 })
+    const rows = toRows(
+      { a: pane(DEF), b: pane(remoteDef) },
+      { targets: { [DEF]: DEFAULT_TARGET, [remoteDef]: DEFAULT_TARGET }, hostOf: (id) => (id === remoteDef ? 'srv' : null), repoLabel: (o, r) => `${o}/${r}` },
+    )
+    expect(rows.map((r) => [r.repo, r.issue])).toEqual([
+      ['기본', ''],
+      ['기본', ''],
+    ])
   })
 })

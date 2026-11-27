@@ -15,6 +15,7 @@ import { useUiStore } from '../../store/ui'
 import { createFakeGitHub } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { IssueHeader } from './IssueHeader'
+import { IssueTab } from './IssueTab'
 import { WorktreeProvider } from './useWorktree'
 
 const GH: IssueTarget = { owner: 'my-org', repo: 'widgets', key: '42', number: 42, title: 'Add login' }
@@ -374,5 +375,79 @@ describe('담당자(#86) — 머리줄', () => {
     renderHeader(TASK_ID, { listOwners: async () => [ME] })
     expect(within(header()).getByRole('button', { name: '작업 수정' })).toBeInTheDocument()
     expect(within(header()).queryByRole('button', { name: /assign/ })).toBeNull()
+  })
+})
+
+describe('#116 이슈 탭과 [이슈 수정]', () => {
+  /** 머리줄 + 이슈 탭을 함께 렌더한다(이슈 탭과 대화상자가 같은 getIssue 를 쓴다) */
+  function renderHeaderWithTab(overrides: Partial<GitHubClient>) {
+    const github = createFakeGitHub({
+      listIssues: async () => [ISSUE_42],
+      updateIssue: async (_o, _r, number, input) => ({ ...ISSUE_42, number, title: input.title ?? ISSUE_42.title }),
+      ...overrides,
+    })
+    const r = renderWithDeps(
+      <TooltipProvider>
+        <WorktreeProvider>
+          <Header id={GH_ID} />
+          <div data-testid="issue-tab">
+            <IssueTab target={GH} />
+          </div>
+        </WorktreeProvider>
+      </TooltipProvider>,
+      makeDeps({ github }),
+    )
+    return { github, ...r }
+  }
+
+  const tab = () => screen.getByTestId('issue-tab')
+
+  async function saveBody(body: string) {
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '이슈 수정' }))
+    const dialog = await screen.findByRole('dialog')
+    const field = await within(dialog).findByLabelText('본문')
+    await user.clear(field)
+    await user.type(field, body)
+    await user.click(within(dialog).getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  }
+
+  it('AC-04 탭에서 옛 본문을 보는 중에 본문을 저장하면 다시 조회하지 않고 같은 탭이 새 본문을 보인다', async () => {
+    // GitHub 은 계속 옛 본문을 돌려준다 — 다시 조회로는 새 본문을 볼 수 없다
+    const { github } = renderHeaderWithTab({ getIssue: async () => ({ ...ISSUE_42, body: '옛 본문' }) })
+    expect(await within(tab()).findByText('옛 본문')).toBeInTheDocument()
+    await saveBody('새 본문')
+    expect(github.updateIssue).toHaveBeenCalledWith('my-org', 'widgets', 42, { body: '새 본문' })
+    expect(await within(tab()).findByText('새 본문')).toBeInTheDocument()
+    expect(within(tab()).queryByText('옛 본문')).toBeNull()
+  })
+
+  it('AC-04 탭이 첫 조회 중일 때 본문을 저장하면 저장 뒤 다시 받아 새 본문을 보인다("불러오는 중…"에 멈추지 않음)', async () => {
+    let calls = 0
+    let current = '옛 본문'
+    renderHeaderWithTab({
+      // 1번째(탭의 첫 조회)는 끝나지 않는다. 그 뒤(대화상자·다시 조회)는 GitHub 의 지금 본문
+      getIssue: () => (++calls === 1 ? new Promise<never>(() => {}) : Promise.resolve({ ...ISSUE_42, body: current })),
+      updateIssue: async (_o, _r, number, input) => {
+        if (input.body !== undefined) current = input.body
+        return { ...ISSUE_42, number, title: input.title ?? ISSUE_42.title }
+      },
+    })
+    expect(await within(tab()).findByText('불러오는 중…')).toBeInTheDocument()
+    await saveBody('새 본문')
+    expect(await within(tab()).findByText('새 본문')).toBeInTheDocument()
+    expect(within(tab()).queryByText('불러오는 중…')).toBeNull()
+  })
+
+  it('EC-09 탭에서 본문을 본 뒤 다른 곳에서 본문이 바뀌면, [이슈 수정] 의 본문 칸은 새 본문이다(탭 캐시를 쓰지 않음)', async () => {
+    const user = userEvent.setup()
+    let current = '옛 본문'
+    renderHeaderWithTab({ getIssue: async () => ({ ...ISSUE_42, body: current }) })
+    expect(await within(tab()).findByText('옛 본문')).toBeInTheDocument()
+    current = '다른 곳에서 바꾼 본문'
+    await user.click(screen.getByRole('button', { name: '이슈 수정' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByLabelText('본문')).toHaveValue('다른 곳에서 바꾼 본문')
   })
 })

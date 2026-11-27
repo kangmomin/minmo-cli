@@ -8,7 +8,7 @@ import { useServerStore } from '../../store/server'
 import { useSessionStore } from '../../store/session'
 import { createFakeApi } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { SettingsDialog } from './SettingsDialog'
+import { ScopeSettings } from './ScopeSettings'
 
 const PC = '11111111-1111-4111-8111-111111111111'
 // 서버는 두 행에 같은 수정 시각을 쓴다 — 시각만으로는 값이 바뀐 것을 알 수 없다
@@ -38,7 +38,7 @@ describe('경로·스크립트 공유를 바꾼 뒤의 설정 폼', () => {
       getSettings: async () => (useServerStore.getState().pcId ? { ...RECORD, worktreePath: 'D:/work/{branch}' } : RECORD),
     })
     const { queryClient } = renderWithDeps(
-      <SettingsDialog scope={{ kind: 'global' }} open onOpenChange={() => {}} previewIssue={null} />,
+      <ScopeSettings scope={{ kind: 'global' }} previewIssue={null} />,
       makeDeps({ api, home: '/home/u', platform: 'linux' }),
     )
     expect(await screen.findByLabelText('worktree 경로')).toHaveValue('D:/work/{branch}')

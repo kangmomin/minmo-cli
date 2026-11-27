@@ -11,12 +11,15 @@ test.beforeEach(async ({ page }) => {
 
 test('호스트를 추가해 전환하고 원격에서 이슈를 연다 — worktree 표시는 호스트마다 따로', async ({ page }) => {
   await page.getByRole('button', { name: '원격 호스트 관리' }).click()
-  const row = page.getByTestId('ssh-host-mock-server')
+  const dialog = page.getByRole('dialog', { name: '설정', exact: true })
+  await expect(dialog.getByRole('tab', { name: '원격 호스트', exact: true })).toHaveAttribute('aria-selected', 'true')
+  const row = dialog.getByTestId('ssh-host-mock-server')
   await expect(row).toContainText('dev@10.0.0.5')
   await row.getByRole('button', { name: '연결 확인' }).click()
   await expect(row.getByRole('status')).toHaveText('연결됨 — Linux · git 2.43.0 · tmux 있음')
   await row.getByRole('button', { name: '추가' }).click()
   await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
 
   await page.getByRole('combobox', { name: '작업 호스트' }).selectOption('mock-server')
   await expandWidgets(page)
@@ -38,9 +41,11 @@ test('호스트를 추가해 전환하고 원격에서 이슈를 연다 — work
 
 test('"원격 터미널에 tmux 사용"을 켜면 그 호스트의 worktree 전용 tmux 세션으로 연다', async ({ page }) => {
   await page.getByRole('button', { name: '원격 호스트 관리' }).click()
-  await page.getByTestId('ssh-host-mock-server').getByRole('button', { name: '추가' }).click()
-  await page.getByRole('checkbox', { name: '원격 터미널에 tmux 사용' }).check()
+  const dialog = page.getByRole('dialog', { name: '설정', exact: true })
+  await dialog.getByTestId('ssh-host-mock-server').getByRole('button', { name: '추가' }).click()
+  await dialog.getByRole('checkbox', { name: '원격 터미널에 tmux 사용' }).check()
   await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
 
   await page.getByRole('combobox', { name: '작업 호스트' }).selectOption('mock-server')
   await expandWidgets(page)
@@ -51,8 +56,9 @@ test('"원격 터미널에 tmux 사용"을 켜면 그 호스트의 worktree 전�
 
 test('호스트의 기본 폴더를 정하면 그 호스트의 worktree 를 그 아래에 만든다 — 이 PC 는 그대로', async ({ page }) => {
   await page.getByRole('button', { name: '원격 호스트 관리' }).click()
-  await page.getByTestId('ssh-host-mock-server').getByRole('button', { name: '추가' }).click()
-  const row = page.getByTestId('base-dir-ssh:mock-server')
+  const dialog = page.getByRole('dialog', { name: '설정', exact: true })
+  await dialog.getByTestId('ssh-host-mock-server').getByRole('button', { name: '추가' }).click()
+  const row = dialog.getByTestId('base-dir-ssh:mock-server')
   await row.getByLabel('mock-server').fill('workspace')
   await row.getByRole('button', { name: '저장' }).click()
   await expect(row.getByRole('alert')).toContainText('절대 경로')
@@ -60,6 +66,7 @@ test('호스트의 기본 폴더를 정하면 그 호스트의 worktree 를 그 
   await row.getByRole('button', { name: '저장' }).click()
   await expect(row.getByRole('status')).toContainText('저장했습니다')
   await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
 
   const worktreePath = (id: string) =>
     page.evaluate((key) => (JSON.parse(localStorage.getItem('minmo-ui') ?? '{}').state?.worktreePathMap?.[key]?.path as string | undefined) ?? null, id)

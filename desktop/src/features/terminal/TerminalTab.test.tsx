@@ -4,15 +4,22 @@ import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 
-import type { PtyDataEvent, PtyFound, PtyLink, PtyLinkEvent, PtyResizedEvent, RemotePty, TauriApi } from '../../lib/tauri'
+import type { PtyDataEvent, PtyFound, PtyLink, PtyLinkEvent, PtyResizedEvent, RemotePty, SshProbe, TauriApi } from '../../lib/tauri'
 import { createFakeTauri, deferred, flush } from '../../test/fakes'
 import { LAUNCH_DELAY_MS, cancelLaunch, launchResult, queueLaunch, resetLaunchQueue } from '../agents/launchQueue'
+import { goToPane } from '../agents/navigate'
+import { DEFAULT_CORE_ID } from '../../lib/defaultWorkspace'
+import { tmuxSessionName } from '../../lib/sshHost'
+import { useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { TERMINAL_EXIT_HINT, createTerminalKeyHandler, useTerminalOpenShortcut } from './keys'
 import { MAX_PENDING_PTY_CHARS, TerminalTab } from './TerminalTab'
 import type { TerminalSessionSpec } from './TerminalTab'
+import { endPanes } from './endPanes'
+import { leaf, splitPane } from './panes'
+import type { PaneTree } from './panes'
 
 const xterm = vi.hoisted(() => ({
   instances: [] as {
@@ -156,6 +163,13 @@ vi.mock('@xterm/addon-webgl', () => ({
       this.disposed = true
     }
   },
+}))
+
+// #120 EC-11 — 좁은 화면(휴대폰)을 흉내 낸다. jsdom 에는 matchMedia 가 없어 실제 값은 늘 false 다(기존 테스트는 그대로)
+const narrowMode = vi.hoisted(() => ({ on: false }))
+vi.mock('./TerminalKeyBar', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./TerminalKeyBar')>()),
+  useNarrow: () => narrowMode.on,
 }))
 
 const A: TerminalSessionSpec = { issueId: 'o/r#1', cwd: '/w/1' }
@@ -1718,5 +1732,538 @@ describe('이슈 테이커가 맡긴 명령의 결과', () => {
     t.shellOutput()
     await vi.waitFor(() => expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-1', 'claude\r'))
     await vi.waitFor(() => expect(launchResult(PA)).toBe('dropped'))
+  })
+})
+
+// #120 기본·★기타의 터미널 탭 — 터미널 영역 맨 위의 탭 줄 [이름 ×] … [+], 탭마다 따로 패널 분할.
+// 탭 버튼·패널의 id 는 모듈 Map 이 붙이므로 테스트 사이에 남는다 — 값이 아니라 aria-controls ↔ 패널 id 일치로 본다
+describe('터미널 탭 (#120)', () => {
+  const X: TerminalSessionSpec = { issueId: 'o/r#etc', cwd: '/w/etc' }
+  const XP = (n: number) => `${X.issueId}::${n}`
+  const RX: TerminalSessionSpec = { issueId: 'ssh:my-server|o/r#etc', cwd: '/home/dev/w/etc', remote: { host: 'my-server', tmux: true } }
+  const RP = (n: number) => `${RX.issueId}::${n}`
+  const PROBE: SshProbe = { platform: 'linux', home: '/home/dev', git: 'git version 2.43.0', tmux: true }
+  /** 탭 2개(t0 = ::1, t2 = ::2) — 다시 켠 뒤 공유 파일이 되살린 모양(고른 탭 값 없음 = 첫 탭) */
+  const TWO = (p: (n: number) => string = XP) => ({ kind: 'tabs' as const, tabs: [{ id: 't0', no: 1, node: leaf(p(1)) }, { id: 't2', no: 2, node: leaf(p(2)) }] })
+  const THREE = () => ({ kind: 'tabs' as const, tabs: [...TWO().tabs, { id: 't3', no: 3, node: leaf(XP(3)) }] })
+
+  const tab = (name: string) => screen.getByRole('tab', { name: `터미널 ${name}` })
+  const tabNamesShown = () => within(screen.getByRole('tablist', { name: '터미널 탭' })).getAllByRole('tab').map((t) => t.textContent?.replace('×', '').replace('터미널 ', '').trim())
+  const plus = () => screen.getByRole('button', { name: '새 터미널 탭' })
+  const shown = () => screen.getAllByTestId('terminal-pane').filter((p) => p.closest('.hidden, [hidden]') === null)
+  /** 탭 버튼 안의 × — mouseDown 의 기본 동작(포커스·선택 이동)은 막는다 */
+  const clickClose = (name: string) => {
+    const mark = within(tab(name)).getByText('×')
+    const notPrevented = fireEvent.mouseDown(mark)
+    fireEvent.click(mark)
+    return notPrevented
+  }
+  const press = (i: number, init: KeyboardEventInit) => act(() => void xterm.instances[i].keyHandler?.(new KeyboardEvent('keydown', { ctrlKey: true, ...init })))
+  const nameInput = () => screen.getByRole('textbox', { name: '탭 이름' })
+
+  function setupTabs(o: { spec?: TerminalSessionSpec; tauri?: Partial<TauriApi>; started?: boolean } = {}) {
+    const spec = o.spec ?? X
+    let n = 0
+    const fake = createFakeTauri({ ptySpawn: async () => `pty-${++n}`, ...o.tauri })
+    useUiStore.setState({ selectedIssueId: spec.issueId })
+    if (o.started !== false) useUiStore.setState({ startedTerminals: { [spec.issueId]: true } })
+    const r = renderWithDeps(<TerminalTab sessions={[spec]} activeId={spec.issueId} visible />, makeDeps({ tauri: fake.tauri }))
+    return { ...r, tauri: fake.tauri }
+  }
+
+  beforeEach(() => {
+    useUiStore.setState({ tabNames: {}, selectedIssueId: X.issueId })
+    useHostsStore.setState({ probes: {} })
+    narrowMode.on = false
+  })
+
+  it('AC-13 ★기타는 터미널 영역 맨 위(안내 줄 위)에 터미널 탭 줄이 있고, 안내 줄은 탭 키를 알린다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    const bar = screen.getByRole('tablist', { name: '터미널 탭' })
+    expect(tab('1')).toHaveAttribute('aria-selected', 'true')
+    const hint = screen.getByText(`${TERMINAL_EXIT_HINT}: 터미널 밖으로 이동`)
+    expect(bar.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const region = screen.getByRole('region', { name: '터미널' })
+    expect(region).toHaveTextContent('Ctrl+T: 새 탭')
+    expect(region).toHaveTextContent('탭에서 F2: 이름 바꾸기')
+    expect(region).toHaveTextContent('Delete: 탭 닫기')
+    expect(plus()).toHaveAttribute('title', '새 터미널 탭 (Ctrl+T)')
+  })
+
+  it('AC-13 기본도 터미널 탭 줄이 있다', async () => {
+    const t = setupTabs({ spec: { issueId: DEFAULT_CORE_ID, cwd: '/home/u' } })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(t.tauri.ptySpawn.mock.calls[0][0].cwd).toBe('/home/u')
+    expect(tab('1')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('AC-14 일반 이슈(#번호)는 터미널 탭 줄이 없다', async () => {
+    const t = setup()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(screen.getAllByTestId('terminal-pane')).toHaveLength(1)
+    expect(screen.queryByRole('tablist', { name: '터미널 탭' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '새 터미널 탭' })).toBeNull()
+  })
+
+  it('AX 탭 줄은 ARIA 탭 패턴 — 탭의 aria-controls 는 그 탭의 패널(tabpanel, aria-labelledby = 탭 id)을 가리킨다(늦게 마운트하는 탭도)', async () => {
+    useUiStore.setState({ panes: { [X.issueId]: { tree: TWO(), focused: null, seq: 2, first: XP(1), tabSeq: 2 } } })
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    for (const name of ['1', '2']) {
+      const panel = document.getElementById(tab(name).getAttribute('aria-controls') ?? '')
+      expect(panel).toHaveAttribute('role', 'tabpanel')
+      expect(panel).toHaveAttribute('aria-labelledby', tab(name).id)
+    }
+  })
+
+  it('AC-05 [+] 를 누르면 새 탭(번호 이름, 패널 1개)으로 바꾸고 새 패널에 포커스한다 — 기존 탭의 터미널은 살아 있다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(tabNamesShown()).toEqual(['1', '2'])
+    expect(tab('2')).toHaveAttribute('aria-selected', 'true')
+    expect(tab('1')).toHaveAttribute('aria-selected', 'false')
+    expect(shown()).toHaveLength(1)
+    // 첫 탭을 t0 로 감싸도 그 터미널은 다시 만들지 않는다
+    expect(xterm.instances).toHaveLength(2)
+    expect(xterm.instances[1].focus).toHaveBeenCalledTimes(1)
+    expect(t.tauri.ptyKill).not.toHaveBeenCalled()
+  })
+
+  it('AC-06 다른 탭을 누르면 그 탭의 패널만 보이고, 숨은 탭의 터미널은 끝나지 않는다 — 돌아오면 그대로', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    fireEvent.click(tab('1'))
+    expect(tab('1')).toHaveAttribute('aria-selected', 'true')
+    expect(shown()).toHaveLength(1)
+    expect(shown()[0].contains(xterm.instances[0].host)).toBe(true)
+    fireEvent.click(tab('2'))
+    expect(shown()[0].contains(xterm.instances[1].host)).toBe(true)
+    await flush()
+    expect(xterm.instances).toHaveLength(2)
+    expect(t.tauri.ptyKill).not.toHaveBeenCalled()
+  })
+
+  it('AC-08 탭 이름을 더블클릭하고 새 이름 + Enter 면 바뀌고, Esc 면 원래 이름 그대로다(포커스는 그 탭 버튼으로)', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.doubleClick(tab('1'))
+    expect(nameInput()).toHaveValue('1')
+    expect(nameInput()).toHaveFocus()
+    fireEvent.change(nameInput(), { target: { value: '빌드' } })
+    fireEvent.keyDown(nameInput(), { key: 'Enter' })
+    expect(tab('빌드')).toHaveFocus()
+    expect(useUiStore.getState().tabNames[X.issueId]).toEqual({ t0: '빌드' })
+    fireEvent.doubleClick(tab('빌드'))
+    fireEvent.change(nameInput(), { target: { value: '다른 이름' } })
+    fireEvent.keyDown(nameInput(), { key: 'Escape' })
+    expect(screen.queryByRole('textbox', { name: '탭 이름' })).toBeNull()
+    expect(tab('빌드')).toHaveFocus()
+    expect(useUiStore.getState().tabNames[X.issueId]).toEqual({ t0: '빌드' })
+  })
+
+  it('AC-09 패널 1개인 탭의 [×] 는 확인 없이 그 탭을 닫고 그 터미널을 끝낸다 — 이웃 탭으로 바뀐다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(useUiStore.getState().terminalIds).toHaveProperty([XP(2)], 'pty-2'))
+    clickClose('2')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await vi.waitFor(() => expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-2'))
+    expect(tabNamesShown()).toEqual(['1'])
+    expect(tab('1')).toHaveAttribute('aria-selected', 'true')
+    expect(t.tauri.ptyKill).not.toHaveBeenCalledWith('pty-1')
+  })
+
+  it('AC-09 고른 탭을 바로 닫으면(Delete) 포커스는 새로 고른 탭 버튼으로 간다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    act(() => tab('2').focus())
+    fireEvent.keyDown(tab('2'), { key: 'Delete' })
+    expect(tabNamesShown()).toEqual(['1'])
+    expect(tab('1')).toHaveFocus()
+  })
+
+  /** 탭 1 = 패널 2개(Ctrl+D), 탭 2 = 패널 1개, 고른 탭은 2 */
+  async function twoPaneTab() {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    press(0, { key: 'd', code: 'KeyD' })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(useUiStore.getState().terminalIds).toHaveProperty([XP(3)], 'pty-3'))
+    return t
+  }
+
+  it('AC-10 패널 2개 이상인 탭의 [×] 는 확인 대화상자를 띄우고, [닫기] 면 그 탭의 모든 터미널을 끝내고 탭을 닫는다', async () => {
+    const t = await twoPaneTab()
+    clickClose('1')
+    const dialog = screen.getByRole('dialog', { name: '터미널 탭 닫기' })
+    expect(dialog).toHaveTextContent('1 탭의 터미널 2개를 모두 닫습니다. 실행 중인 프로그램도 끝납니다.')
+    fireEvent.click(within(dialog).getByRole('button', { name: '닫기' }))
+    await vi.waitFor(() => expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-2'))
+    expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-1')
+    expect(t.tauri.ptyKill).not.toHaveBeenCalledWith('pty-3')
+    expect(tabNamesShown()).toEqual(['2'])
+    expect(tab('2')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('EC-06 탭 닫기 확인에서 [취소]·Esc 는 아무것도 바꾸지 않는다(탭·패널·터미널 그대로) — 포커스는 그 탭 버튼으로', async () => {
+    const t = await twoPaneTab()
+    clickClose('1')
+    fireEvent.click(within(screen.getByRole('dialog', { name: '터미널 탭 닫기' })).getByRole('button', { name: '취소' }))
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(tab('1')).toHaveFocus()
+    clickClose('1')
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '터미널 탭 닫기' }), { key: 'Escape' })
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await flush()
+    expect(tabNamesShown()).toEqual(['1', '2'])
+    expect(t.tauri.ptyKill).not.toHaveBeenCalled()
+  })
+
+  it('AC-10 대화상자가 열린 채 알림으로 다른 ★기타로 가면 대화상자를 닫고 아무 터미널도 끝내지 않는다', async () => {
+    const Y: TerminalSessionSpec = { issueId: 'o/r2#etc', cwd: '/w/etc2' }
+    const split = (id: string) => splitPane(leaf(`${id}::1`), `${id}::1`, 'row', `${id}::2`)
+    useUiStore.setState({
+      startedTerminals: { [X.issueId]: true, [Y.issueId]: true },
+      panes: { [X.issueId]: { tree: split(X.issueId), focused: null, seq: 2 }, [Y.issueId]: { tree: split(Y.issueId), focused: null, seq: 2 } },
+    })
+    function Selected() {
+      const id = useUiStore((s) => s.selectedIssueId)
+      return <TerminalTab sessions={[X, Y]} activeId={id} visible />
+    }
+    let n = 0
+    const fake = createFakeTauri({ ptySpawn: async () => `pty-${++n}` })
+    renderWithDeps(<Selected />, makeDeps({ tauri: fake.tauri }))
+    await vi.waitFor(() => expect(fake.tauri.ptySpawn).toHaveBeenCalledTimes(4))
+    clickClose('1')
+    expect(screen.getByRole('dialog', { name: '터미널 탭 닫기' })).toBeInTheDocument()
+    act(() => goToPane(Y.issueId, `${Y.issueId}::1`))
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await flush()
+    expect(fake.tauri.ptyKill).not.toHaveBeenCalled()
+    expect(useUiStore.getState().panes[Y.issueId].tree).toEqual(split(Y.issueId))
+  })
+
+  it('AC-17 대화상자가 열린 채 다른 기기가 모든 탭을 닫고 새로 열면(새 t0, 다른 패널 id) [닫기] 는 그 새 탭을 닫지 않는다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    press(0, { key: 'd', code: 'KeyD' })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    clickClose('1')
+    expect(screen.getByRole('dialog', { name: '터미널 탭 닫기' })).toBeInTheDocument()
+    act(() => useUiStore.setState({ panes: { [X.issueId]: { tree: leaf(XP(5)), focused: null, seq: 5, first: XP(1) } } }))
+    await flush()
+    const close = screen.queryByRole('button', { name: '닫기' })
+    if (close) fireEvent.click(close)
+    await flush()
+    expect(useUiStore.getState().panes[X.issueId].tree).toEqual(leaf(XP(5)))
+    expect(tabNamesShown()).toEqual(['1'])
+  })
+
+  it('AC-11 탭의 마지막 패널을 Ctrl+W 로 닫으면 탭도 닫히고, 마지막 탭이면 탭 줄 없이 [새 터미널] — 포커스가 터미널에 있었으면 [새 터미널] 로', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    press(1, { key: 'w', code: 'KeyW' })
+    expect(tabNamesShown()).toEqual(['1'])
+    expect(tab('1')).toHaveAttribute('aria-selected', 'true')
+    act(() => xterm.instances[0].textarea!.focus())
+    press(0, { key: 'w', code: 'KeyW' })
+    expect(screen.getByText('터미널 패널을 모두 닫았습니다')).toBeInTheDocument()
+    expect(screen.queryByRole('tablist', { name: '터미널 탭' })).toBeNull()
+    expect(screen.getByRole('button', { name: '새 터미널' })).toHaveFocus()
+  })
+
+  it('AC-16 다시 켠 뒤 [터미널 열기] 는 고른 탭(첫 탭)의 셸만 시작하고, 다른 탭은 처음 누를 때 시작한다', async () => {
+    useUiStore.setState({ panes: { [X.issueId]: { tree: TWO(), focused: null, seq: 2, first: XP(1), tabSeq: 2 } } })
+    const t = setupTabs({ started: false })
+    fireEvent.click(screen.getByRole('button', { name: '터미널 열기' }))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    await flush()
+    expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1)
+    expect(t.tauri.ptySpawn.mock.calls[0][0].key).toBe(XP(1))
+    fireEvent.click(tab('2'))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(t.tauri.ptySpawn.mock.calls[1][0].key).toBe(XP(2))
+  })
+
+  it('AC-16 다른 화면이 띄운 터미널이 숨은 탭에만 있으면, 열지 않아도 그 탭으로 바꿔 붙는다 — 셸을 새로 만들지 않는다', async () => {
+    const FOUND = { id: 'pty-9', scrollback: 'hi', offset: 2, cols: 80, rows: 24 }
+    useUiStore.setState({ panes: { [X.issueId]: { tree: TWO(), focused: null, seq: 2, first: XP(1), tabSeq: 2 } }, terminalIds: { [XP(2)]: 'pty-9' } })
+    const t = setupTabs({ started: false, tauri: { ptyFind: async (key) => (key === XP(2) ? FOUND : null) } })
+    await vi.waitFor(() => expect(tab('2')).toHaveAttribute('aria-selected', 'true'))
+    await vi.waitFor(() => expect(xterm.instances.some((x) => x.written.includes('hi'))).toBe(true))
+    expect(t.tauri.ptySpawn).not.toHaveBeenCalled()
+    expect(t.tauri.ptyFind).not.toHaveBeenCalledWith(XP(1))
+  })
+
+  it('EC-03 원격(브라우저) 화면은 안내·[+] 에 Ctrl+T 를 쓰지 않고 [+] 버튼으로 탭을 만든다', async () => {
+    const t = setupTabs({ tauri: { runtime: 'remote' } })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(plus()).toHaveAttribute('title', '새 터미널 탭')
+    expect(screen.getByRole('region', { name: '터미널' })).not.toHaveTextContent('Ctrl+T')
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    expect(tabNamesShown()).toEqual(['1', '2'])
+  })
+
+  it('EC-09′ 깨진 공유 트리를 받아도 이 기기의 터미널을 끄지 않고, [새 터미널] 은 새 트리로 바꾼다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(useUiStore.getState().terminalIds).toHaveProperty([XP(1)], 'pty-1'))
+    act(() => useUiStore.setState({ panes: { [X.issueId]: { tree: { kind: 'weird' } as unknown as PaneTree, focused: null, seq: 3 } } }))
+    await flush()
+    expect(t.tauri.ptyKill).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '새 터미널' }))
+    expect(useUiStore.getState().panes[X.issueId].tree).toEqual(leaf(XP(4)))
+  })
+
+  it('EC-11 좁은 화면: 터미널 탭 줄 아래에 지금의 패널 번호 줄이 그대로 있다', async () => {
+    narrowMode.on = true
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    press(0, { key: 'd', code: 'KeyD' })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    const bar = screen.getByRole('tablist', { name: '터미널 탭' })
+    const numbers = screen.getByRole('tablist', { name: '터미널 패널' })
+    expect(bar.compareDocumentPosition(numbers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('EC-15 고르지 않은 탭의 [×] 는 포커스·선택을 옮기지 않고(mouseDown 기본 동작을 막음) 그 탭만 닫는다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    act(() => tab('2').focus())
+    expect(clickClose('1')).toBe(false)
+    expect(tabNamesShown()).toEqual(['2'])
+    expect(tab('2')).toHaveAttribute('aria-selected', 'true')
+    expect(tab('2')).toHaveFocus()
+  })
+
+  it('EC-16 마운트하지 않은 탭을 닫아도 그 탭의 터미널(호스트 전체에서 찾은 PTY)과 원격 -pN tmux 세션을 끝낸다', async () => {
+    useHostsStore.setState({ probes: { 'my-server': PROBE } })
+    useUiStore.setState({ panes: { [RX.issueId]: { tree: TWO(RP), focused: null, seq: 2, first: RP(1), tabSeq: 2 } } })
+    const ptyFind = vi.fn(async (key: string): Promise<PtyFound | null> =>
+      key === RP(2) ? { id: 'pty-7', scrollback: '', offset: 0, cols: 80, rows: 24, tmux: { session: 'minmo-x-p2', ephemeral: true } } : null,
+    )
+    const t = setupTabs({ spec: RX, tauri: { ptyFind } })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    clickClose('2')
+    await vi.waitFor(() => expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-7'))
+    await vi.waitFor(() => expect(t.tauri.sshExec).toHaveBeenCalledTimes(1))
+    expect(t.tauri.sshExec.mock.calls[0].slice(0, 2)).toEqual(['my-server', ['tmux', '-L', 'minmo', 'kill-session', '-t', '=minmo-x-p2']])
+    expect(tabNamesShown()).toEqual(['1'])
+  })
+
+  it('EC-16 endPanes: PTY 가 없으면 원격 tmux 를 쓰는 호스트에서 first 를 뺀 패널의 -pN 세션을 끝낸다', async () => {
+    const { tauri } = createFakeTauri()
+    await endPanes(tauri, RX, [RP(1), RP(3)], RP(1), true)
+    expect(tauri.ptyFind.mock.calls.map((c) => c[0])).toEqual([RP(1), RP(3)])
+    expect(tauri.ptyKill).not.toHaveBeenCalled()
+    expect(tauri.sshExec).toHaveBeenCalledTimes(1)
+    expect(tauri.sshExec.mock.calls[0].slice(0, 2)).toEqual(['my-server', ['tmux', '-L', 'minmo', 'kill-session', '-t', `=${tmuxSessionName(RX.cwd)}-p3`]])
+    // tmux 를 쓰지 않는 호스트·이 PC 의 터미널은 원격 세션을 끝내지 않는다
+    await endPanes(tauri, RX, [RP(3)], RP(1), false)
+    await endPanes(tauri, X, [XP(3)], XP(1), true)
+    expect(tauri.sshExec).toHaveBeenCalledTimes(1)
+  })
+
+  it('EC-16 endPanes: 한 패널의 ptyFind 가 실패해도 다음 패널은 정리한다', async () => {
+    const { tauri } = createFakeTauri({
+      ptyFind: async (key) => {
+        if (key === RP(2)) throw new Error('ssh: unreachable')
+        return { id: 'pty-3', scrollback: '', offset: 0, cols: 80, rows: 24, tmux: { session: 'minmo-x-p3', ephemeral: true } }
+      },
+    })
+    await expect(endPanes(tauri, RX, [RP(2), RP(3)], RP(1), true)).resolves.toBeUndefined()
+    expect(tauri.ptyKill).toHaveBeenCalledWith('pty-3')
+    await vi.waitFor(() => expect(tauri.sshExec).toHaveBeenCalledTimes(1))
+    expect(tauri.sshExec.mock.calls[0].slice(0, 2)).toEqual(['my-server', ['tmux', '-L', 'minmo', 'kill-session', '-t', '=minmo-x-p3']])
+  })
+
+  it('EC-08 원격 분할 패널(-pN)이 끝난 뒤 [다시 시작] 은 그 tmux 세션을 끝내지 않는다(패널을 닫을 때만)', async () => {
+    useHostsStore.setState({ probes: { 'my-server': PROBE } })
+    let n = 0
+    const spawned = new Map<string, { id: string; remote?: RemotePty }>()
+    const t = setupTabs({
+      spec: RX,
+      tauri: {
+        ptySpawn: async (req) => {
+          const id = `pty-${++n}`
+          if (req.key) spawned.set(req.key, { id, remote: req.remote })
+          return id
+        },
+        ptyFind: async (key) => {
+          const s = spawned.get(key)
+          return s ? { id: s.id, scrollback: '', offset: 0, cols: 80, rows: 24, tmux: s.remote?.session ? { session: s.remote.session, ephemeral: s.remote.ephemeral } : null } : null
+        },
+        // Rust 처럼 끝낸 터미널은 더 찾지 못한다
+        ptyKill: async (id) => {
+          for (const [k, v] of spawned) if (v.id === id) spawned.delete(k)
+        },
+        ptyWrite: async () => {
+          throw new Error('pty gone')
+        },
+      },
+    })
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    press(0, { key: 'd', code: 'KeyD' })
+    await vi.waitFor(() => expect(useUiStore.getState().terminalIds).toHaveProperty([RP(2)], 'pty-2'))
+    expect(t.tauri.ptySpawn.mock.calls[1][0].remote?.session).toMatch(/-p2$/)
+    await act(async () => {
+      xterm.instances[1].dataHandler?.('ls')
+      await flush()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '다시 시작' }))
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(3))
+    await flush()
+    expect(t.tauri.ptyKill).toHaveBeenCalledWith('pty-2')
+    expect(t.tauri.sshExec).not.toHaveBeenCalled()
+  })
+
+  it('EC-17 이름 입력 중의 Delete·F2·←/→·Space 는 탭 동작을 하지 않고, Ctrl+T 는 막는다(window 단축키가 새 탭을 만들지 않게)', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    fireEvent.doubleClick(tab('2'))
+    for (const key of ['Delete', 'F2', 'ArrowLeft', 'ArrowRight', ' ']) fireEvent.keyDown(nameInput(), { key })
+    const ctrlT = new KeyboardEvent('keydown', { key: 't', code: 'KeyT', ctrlKey: true, bubbles: true, cancelable: true })
+    act(() => void nameInput().dispatchEvent(ctrlT))
+    expect(ctrlT.defaultPrevented).toBe(true)
+    expect(nameInput()).toBeInTheDocument()
+    expect(tabNamesShown()).toEqual(['1', '2'])
+    expect(tab('2')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('EC-17 한글 조합 중의 Enter·Esc(isComposing · keyCode 229)는 저장·취소하지 않고, 그 뒤 보통 Enter 로 저장한다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.doubleClick(tab('1'))
+    fireEvent.change(nameInput(), { target: { value: '빌드' } })
+    fireEvent.keyDown(nameInput(), { key: 'Enter', isComposing: true })
+    fireEvent.keyDown(nameInput(), { key: 'Escape', isComposing: true })
+    // WebView2 의 한글 IME 는 조합을 끝내는 Enter 를 229 로 한 번 더 보낸다
+    fireEvent.keyDown(nameInput(), { key: 'Enter', keyCode: 229 })
+    expect(nameInput()).toHaveValue('빌드')
+    expect(useUiStore.getState().tabNames[X.issueId]).toBeUndefined()
+    fireEvent.keyDown(nameInput(), { key: 'Enter', keyCode: 13 })
+    expect(screen.queryByRole('textbox', { name: '탭 이름' })).toBeNull()
+    expect(tab('빌드')).toBeInTheDocument()
+  })
+
+  it('AX 키보드: ←/→/Home/End 는 포커스만 옮기고(셸을 만들지 않음) Enter·Space 로 고른다 — roving tabindex', async () => {
+    useUiStore.setState({ panes: { [X.issueId]: { tree: THREE(), focused: null, seq: 3, first: XP(1), tabSeq: 3 } } })
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    act(() => tab('1').focus())
+    fireEvent.keyDown(tab('1'), { key: 'ArrowRight' })
+    expect(tab('2')).toHaveFocus()
+    expect(tab('2')).toHaveAttribute('tabindex', '0')
+    expect(tab('1')).toHaveAttribute('tabindex', '-1')
+    fireEvent.keyDown(tab('2'), { key: 'End' })
+    expect(tab('3')).toHaveFocus()
+    fireEvent.keyDown(tab('3'), { key: 'Home' })
+    expect(tab('1')).toHaveFocus()
+    fireEvent.keyDown(tab('1'), { key: 'End' })
+    expect(tab('3')).toHaveFocus()
+    await flush()
+    expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1)
+    expect(tab('1')).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(tab('3'), { key: 'Enter' })
+    expect(tab('3')).toHaveAttribute('aria-selected', 'true')
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    fireEvent.keyDown(tab('3'), { key: 'ArrowLeft' })
+    fireEvent.keyDown(tab('2'), { key: ' ' })
+    expect(tab('2')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('AX 키보드: → 로 옮긴 탭에서 F2 → Enter 로 그 탭 이름을 바꾸고, Delete 로 고르지 않은 탭을 닫는다(고른 탭 그대로)', async () => {
+    useUiStore.setState({ panes: { [X.issueId]: { tree: THREE(), focused: null, seq: 3, first: XP(1), tabSeq: 3 } } })
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    act(() => tab('1').focus())
+    fireEvent.keyDown(tab('1'), { key: 'ArrowRight' })
+    fireEvent.keyDown(tab('2'), { key: 'F2' })
+    fireEvent.change(nameInput(), { target: { value: '서버' } })
+    fireEvent.keyDown(nameInput(), { key: 'Enter' })
+    expect(tab('서버')).toHaveFocus()
+    expect(tab('1')).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(tab('서버'), { key: 'Delete' })
+    expect(tabNamesShown()).toEqual(['1', '3'])
+    expect(tab('1')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('AX 우클릭(터치는 길게 누르기) 메뉴: [이름 바꾸기 (F2)] 는 입력란에 포커스하고, [탭 닫기 (Delete)] 는 그 탭을 닫는다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.click(plus())
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(2))
+    fireEvent.contextMenu(tab('1'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '이름 바꾸기 (F2)' }))
+    await vi.waitFor(() => expect(nameInput()).toHaveFocus())
+    fireEvent.keyDown(nameInput(), { key: 'Escape' })
+    fireEvent.contextMenu(tab('1'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '탭 닫기 (Delete)' }))
+    await vi.waitFor(() => expect(tabNamesShown()).toEqual(['2']))
+  })
+
+  it('AC-17 다른 기기가 포커스한 탭을 지우면 roving tabindex 0 은 고른 탭 버튼으로 돌아간다', async () => {
+    useUiStore.setState({ panes: { [X.issueId]: { tree: THREE(), focused: null, seq: 3, first: XP(1), tabSeq: 3 } } })
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    act(() => tab('1').focus())
+    fireEvent.keyDown(tab('1'), { key: 'End' })
+    expect(tab('3')).toHaveAttribute('tabindex', '0')
+    act(() => useUiStore.setState((s) => ({ panes: { [X.issueId]: { ...s.panes[X.issueId], tree: TWO() } } })))
+    expect(tabNamesShown()).toEqual(['1', '2'])
+    expect(tab('1')).toHaveAttribute('tabindex', '0')
+  })
+
+  it('AC-08 이름을 바꾸지 않고 Enter·blur 하면 저장하지 않는다 — 번호 이름이 명시 이름이 되지 않는다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.doubleClick(tab('1'))
+    fireEvent.keyDown(nameInput(), { key: 'Enter' })
+    expect(screen.queryByRole('textbox', { name: '탭 이름' })).toBeNull()
+    expect(useUiStore.getState().tabNames[X.issueId]).toBeUndefined()
+    fireEvent.doubleClick(tab('1'))
+    fireEvent.blur(nameInput())
+    expect(screen.queryByRole('textbox', { name: '탭 이름' })).toBeNull()
+    expect(useUiStore.getState().tabNames[X.issueId]).toBeUndefined()
+  })
+
+  it('AX 포커스가 탭 줄 밖으로 나가면 roving tabindex 0 은 고른 탭 버튼으로 돌아간다', async () => {
+    useUiStore.setState({ panes: { [X.issueId]: { tree: THREE(), focused: null, seq: 3, first: XP(1), tabSeq: 3 } } })
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    act(() => tab('1').focus())
+    fireEvent.keyDown(tab('1'), { key: 'End' })
+    expect(tab('3')).toHaveAttribute('tabindex', '0')
+    act(() => plus().focus())
+    expect(tab('1')).toHaveAttribute('tabindex', '0')
+    expect(tab('3')).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('AX 탭 버튼은 F2·Delete 키를 aria-keyshortcuts 로 알린다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(tab('1')).toHaveAttribute('aria-keyshortcuts', 'F2 Delete')
+  })
+
+  it('AX 탭 버튼의 포커스 링은 테마와 관계없는 밝은 고정 색이다(고른 탭 배경에서도 3:1)', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(tab('1').className).toContain('focus-visible:ring-neutral-100')
+    expect(tab('1').className).not.toContain('focus-visible:ring-ring')
   })
 })

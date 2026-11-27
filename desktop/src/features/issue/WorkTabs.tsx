@@ -3,6 +3,7 @@ import { useMemo, useRef } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import type { IssueTarget } from '@minmo/core'
 import { aliasOfIssue, useHost } from '../../app/host'
+import { isDefaultIssueId, workTabOf } from '../../lib/defaultWorkspace'
 import { useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
 import type { IssueOpenState } from '../../store/setup'
@@ -12,9 +13,10 @@ import { ChangesTab } from '../changes/ChangesTab'
 import { FilesTab } from '../files/FilesTab'
 import { NotesTab } from '../notes/NotesTab'
 import { TerminalTab } from '../terminal/TerminalTab'
+import { IssueTab } from './IssueTab'
 
 /**
- * 작업 탭: 터미널 · 변경 · 메모. 각 패널은 role=tabpanel + aria-labelledby 로 탭과 연결된다(Radix TabsContent).
+ * 작업 탭: 터미널 · 변경 · 파일 · 메모 · 이슈. 각 패널은 role=tabpanel + aria-labelledby 로 탭과 연결된다(Radix TabsContent).
  * 터미널은 이슈 전환에도 세션을 유지하도록 항상 마운트하고 hidden 만 토글한다.
  */
 export interface WorkTabsProps {
@@ -33,6 +35,9 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
   const host = useHost()
   const scopedId = target ? host.issueId(target.owner, target.repo, target.key) : ''
   const id = issueId ?? scopedId
+  // Why: 기본은 터미널만 쓴다 — 저장된 작업 탭과 관계없이 터미널을 보이고, 탭 줄은 DOM 을 남긴 채 감춘다(TerminalTab 이 다시 마운트되지 않게)
+  const isDefault = isDefaultIssueId(id)
+  const effectiveTab = workTabOf(id, tab)
   const terminalTrigger = useRef<HTMLButtonElement>(null)
 
   const sessions = useMemo(
@@ -48,15 +53,16 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
   const hasSession = sessions.some((s) => s.issueId === id)
 
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as WorkTab)} className="min-h-0 flex-1 gap-0" hidden={!target}>
+    <Tabs value={effectiveTab} onValueChange={(v) => setTab(v as WorkTab)} className="min-h-0 flex-1 gap-0" hidden={!target}>
       {target && (
-        <TabsList className="mx-3 mt-2">
+        <TabsList className="mx-3 mt-2" hidden={isDefault}>
           <TabsTrigger ref={terminalTrigger} value="terminal">
             터미널
           </TabsTrigger>
           <TabsTrigger value="changes">변경</TabsTrigger>
           <TabsTrigger value="files">파일</TabsTrigger>
           <TabsTrigger value="notes">메모</TabsTrigger>
+          <TabsTrigger value="issue">이슈</TabsTrigger>
         </TabsList>
       )}
       <div className="relative min-h-0 flex-1">
@@ -67,7 +73,7 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
         <TabsContent
           value="terminal"
           forceMount
-          hidden={tab !== 'terminal'}
+          hidden={effectiveTab !== 'terminal'}
           tabIndex={target && !hasSession ? 0 : -1}
           {...(target ? null : { 'aria-labelledby': undefined })}
           className="absolute inset-0 after:pointer-events-none after:absolute after:inset-0 focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring"
@@ -75,7 +81,7 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
           <TerminalTab
             sessions={sessions}
             activeId={target ? id : null}
-            visible={target !== null && tab === 'terminal'}
+            visible={target !== null && effectiveTab === 'terminal'}
             // Ctrl+Shift+M: 터미널 밖(탭 목록)으로 포커스 이동 — 화살표로 다른 탭, Tab 으로 다음 영역(AX-02)
             onExit={() => terminalTrigger.current?.focus()}
           />
@@ -112,6 +118,12 @@ export function WorkTabs({ target, issueId, state }: WorkTabsProps) {
         {target && (
           <TabsContent value="notes" tabIndex={-1} className="absolute inset-0">
             <NotesTab key={id} owner={target.owner} repo={target.repo} issueKey={target.key} />
+          </TabsContent>
+        )}
+        {/* Why: IssueTab 의 내용 영역이 Tab 정지점이므로 패널은 -1 (AX-19) */}
+        {target && (
+          <TabsContent value="issue" tabIndex={-1} className="absolute inset-0">
+            <IssueTab key={id} target={target} />
           </TabsContent>
         )}
       </div>

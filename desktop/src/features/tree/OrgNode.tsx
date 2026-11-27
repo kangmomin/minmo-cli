@@ -8,7 +8,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import type { GitHubOwner, GitHubRepo } from '@minmo/core'
 import { isLocalOwner } from '../../store/repos'
 import { useUiStore } from '../../store/ui'
-import type { PreviewIssue } from '../settings/SettingsDialog'
+import type { PreviewIssue } from '../settings/ScopeSettings'
 import { useOpenWindow } from './openWindow'
 import { OpenWindowButton } from './OpenWindowButton'
 import { RepoNode } from './RepoNode'

@@ -1,10 +1,11 @@
-import { BotIcon, FileKeyIcon, GitBranchIcon, Loader2Icon, ServerIcon, StarIcon } from 'lucide-react'
+import { BotIcon, FileKeyIcon, GitBranchIcon, HomeIcon, Loader2Icon, ServerIcon, StarIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { useHost } from '../../app/host'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import type { IssueTarget } from '@minmo/core'
+import { isDefaultTarget } from '../../lib/defaultWorkspace'
 import { useRepoFullNameIfNicknamed, useRepoLabel } from '../../store/repos'
 import type { IssueOpenState } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
@@ -14,7 +15,7 @@ import { IssueManageActions } from './IssueManageActions'
 import { LocalFilesDialog } from './LocalFilesDialog'
 import { useIssueActions } from './useWorktree'
 
-/** 상단 바: 저장소·이슈, 브랜치(AC-05), worktree 경로, 준비 상태 */
+/** Why: 기본은 저장소·브랜치가 없어 ⌂ 기본 · 홈 경로 · 에이전트 실행만 보인다 */
 export interface IssueHeaderProps {
   target: IssueTarget
   state: IssueOpenState | undefined
@@ -28,6 +29,7 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
   const repoFullName = useRepoFullNameIfNicknamed(target.owner, target.repo)
   const issueId = host.issueId(target.owner, target.repo, target.key)
   const [launchOpen, setLaunchOpen] = useState(false)
+  const isDefault = isDefaultTarget(target)
   // 트리 메뉴의 [에이전트 실행] — 작업 폴더가 준비되면 대화상자를 연다
   const launchRequest = useUiStore((s) => s.launchRequest)
   const phase = state?.phase
@@ -48,10 +50,17 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
           {host.label}
         </Badge>
       )}
-      <span className="text-sm text-muted-foreground" title={repoFullName}>
-        {repoLabel}
-      </span>
-      {target.number === null ? (
+      {isDefault ? (
+        <span className="flex items-center gap-1 font-medium">
+          <HomeIcon aria-hidden className="size-4" />
+          기본
+        </span>
+      ) : (
+        <span className="text-sm text-muted-foreground" title={repoFullName}>
+          {repoLabel}
+        </span>
+      )}
+      {isDefault ? null : target.number === null ? (
         <span className="flex items-center gap-1 font-medium">
           <StarIcon className="size-4 fill-amber-400 text-amber-500" />
           기타
@@ -68,10 +77,12 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
       )}
       {state?.phase === 'ready' && (
         <>
-          <Badge variant="secondary" className="font-mono" data-testid="issue-branch">
-            <GitBranchIcon />
-            {state.branch}
-          </Badge>
+          {!isDefault && (
+            <Badge variant="secondary" className="font-mono" data-testid="issue-branch">
+              <GitBranchIcon />
+              {state.branch}
+            </Badge>
+          )}
           <span className="min-w-0 truncate font-mono text-xs text-muted-foreground max-md:hidden" title={state.path}>
             {state.path}
           </span>
@@ -84,10 +95,14 @@ export function IssueHeader({ target, state }: IssueHeaderProps) {
             <BotIcon /> 에이전트 실행
           </Button>
           <LaunchAgentDialog issueId={issueId} target={target} open={launchOpen} onOpenChange={setLaunchOpen} />
-          <Button size="sm" variant="ghost" onClick={() => setLocalOpen(true)}>
-            <FileKeyIcon /> 로컬 파일
-          </Button>
-          <LocalFilesDialog target={target} worktreePath={state.path} open={localOpen} onOpenChange={setLocalOpen} />
+          {!isDefault && (
+            <>
+              <Button size="sm" variant="ghost" onClick={() => setLocalOpen(true)}>
+                <FileKeyIcon /> 로컬 파일
+              </Button>
+              <LocalFilesDialog target={target} worktreePath={state.path} open={localOpen} onOpenChange={setLocalOpen} />
+            </>
+          )}
         </>
       )}
       {state?.phase === 'opening' && (

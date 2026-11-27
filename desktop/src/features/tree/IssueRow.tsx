@@ -78,8 +78,8 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
   }, [hasWorktree, selected])
   const pathChangedId = useId()
   const deleteReasonId = useId()
-  // EC-16: 비활성 사유는 툴팁(마우스 전용)이 아니라 항목 안에 보이고 aria-describedby 로도 읽힌다(AX-04)
-  const deleteDisabledReason = isEtc ? '고정 이슈는 삭제할 수 없음' : !hasWorktree ? 'worktree 가 없습니다' : null
+  // 비활성 사유는 툴팁(마우스 전용)이 아니라 항목 안에 보이고 aria-describedby 로도 읽힌다(AX-04). ★기타도 지울 수 있다(#119)
+  const deleteDisabledReason = !hasWorktree ? 'worktree 가 없습니다' : null
 
   async function remove(confirmed: boolean) {
     setDeleting(true)
@@ -219,7 +219,7 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
             <DialogTitle>worktree 삭제</DialogTitle>
             {/* 데이터 손실 경고는 설명으로 두어 대화상자가 열릴 때 함께 낭독된다(AX-23) */}
             <DialogDescription>
-              {repoLabel} #{issue.number} {issue.title}
+              {repoLabel} {isEtc ? '기타' : `#${issue.number} ${issue.title}`}
               {confirm && (
                 <span className="mt-2 block text-foreground">
                   {countText('미커밋 변경', confirm.uncommitted)}, {countText('미push 커밋', confirm.unpushed)}. 삭제하면 이 변경을 잃게 됩니다.

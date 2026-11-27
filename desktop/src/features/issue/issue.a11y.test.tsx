@@ -6,14 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TooltipProvider } from '../../components/ui/tooltip'
 import { worktreeId } from '@minmo/core'
-import type { IssueTarget } from '@minmo/core'
+import type { GitHubClient, IssueTarget } from '@minmo/core'
 import { HostScope } from '../../app/host'
+import { DEFAULT_TARGET } from '../../lib/defaultWorkspace'
 import { useHostsStore } from '../../store/hosts'
 import { useSessionStore } from '../../store/session'
 import { MAX_LOG_LINES, useSetupStore } from '../../store/setup'
 import type { SetupLogEntry } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
-import { createFakeApi, createFakeTauri } from '../../test/fakes'
+import { createFakeApi, createFakeGitHub, createFakeTauri, flush } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { WorkTabs } from './WorkTabs'
 import { WorktreeSetupLog } from './WorktreeSetupLog'
@@ -155,6 +156,46 @@ describe('AX-02 터미널에서 Ctrl+Shift+M → 탭 목록으로 포커스 이�
       xterm.handlers[0](new KeyboardEvent('keydown', { key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true }))
     })
     expect(screen.getByRole('tab', { name: '터미널' })).toHaveFocus()
+  })
+})
+
+// #120 기본·★기타 — 터미널 탭 줄이 있다. 기본은 작업 탭 줄을 감추므로 Ctrl+Shift+M 은 고른 터미널 탭 버튼으로 간다(AX)
+describe('기본·★기타의 터미널 탭 (#120)', () => {
+  const ETC: IssueTarget = { owner: 'o', repo: 'r', key: 'etc', number: null, title: '' }
+
+  function renderFor(target: IssueTarget, path: string) {
+    const id = worktreeId(target.owner, target.repo, target.key)
+    useSetupStore.setState({ open: { [id]: { phase: 'ready', path, branch: '', pathChanged: false } } })
+    return renderWithDeps(
+      <TooltipProvider>
+        <WorktreeProvider>
+          <WorkTabs target={target} state={useSetupStore.getState().open[id]} />
+        </WorktreeProvider>
+      </TooltipProvider>,
+      makeDeps({ api: createFakeApi({ getNotes: async () => ({ body: '', updatedAt: null }) }) }),
+    )
+  }
+
+  it.each([
+    ['★기타', ETC, '/w/etc'],
+    ['기본', DEFAULT_TARGET, '/home/u'],
+  ])('AX %s: 터미널에서 Ctrl+Shift+M → 고른 터미널 탭 버튼으로 포커스', async (_, target, path) => {
+    renderFor(target, path)
+    fireEvent.click(screen.getByRole('button', { name: '터미널 열기' }))
+    await vi.waitFor(() => expect(xterm.handlers.length).toBeGreaterThan(0))
+    act(() => {
+      xterm.handlers[0](new KeyboardEvent('keydown', { key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true }))
+    })
+    expect(screen.getByRole('tab', { name: '터미널 1' })).toHaveFocus()
+  })
+
+  it('AC-02 기본은 작업 탭 줄(터미널·변경·파일·메모)을 감추고, 저장된 작업 탭과 관계없이 터미널만 보인다', () => {
+    useUiStore.setState({ tab: 'files' })
+    renderFor(DEFAULT_TARGET, '/home/u')
+    expect(screen.queryByRole('tab', { name: '변경' })).toBeNull()
+    expect(screen.queryByRole('tab', { name: '메모' })).toBeNull()
+    expect(screen.getByTestId('terminal-tab').closest('[role="tabpanel"]')).not.toHaveAttribute('hidden')
+    expect(screen.getByRole('button', { name: '터미널 열기' })).toBeInTheDocument()
   })
 })
 
@@ -330,5 +371,61 @@ describe('원격 터미널 방식(원격 호스트 대화상자의 "원격 터�
   it('켜면 전용 tmux 세션에 붙는다 — 원격에 tmux 가 없으면 로그인 셸', async () => {
     expect((await spawnRemote(true))?.session).toMatch(/^minmo-[0-9a-f]{10}$/)
     expect(await spawnRemote(true, false)).toEqual({ host: 'srv', session: null, ephemeral: false })
+  })
+})
+
+describe('#116 [이슈] 탭', () => {
+  const DETAIL = { number: 42, title: 'X', state: 'open' as const, htmlUrl: '', assignees: [], body: '' }
+
+  /** 작업 탭을 GitHub fake 와 함께 렌더한다 — getIssue 는 이슈 번호별 본문을 돌려준다 */
+  function renderIssueTabs(getIssue: GitHubClient['getIssue'] = async (_o, _r, number) => ({ ...DETAIL, number, body: `본문 ${number}` })) {
+    const github = createFakeGitHub({ getIssue })
+    const api = createFakeApi({ getNotes: async () => ({ body: '', updatedAt: null }) })
+    const ui = (target: IssueTarget) => (
+      <TooltipProvider>
+        <WorktreeProvider>
+          <WorkTabs target={target} state={useSetupStore.getState().open[ID]} />
+        </WorktreeProvider>
+      </TooltipProvider>
+    )
+    const r = renderWithDeps(ui(T), makeDeps({ api, github }))
+    return { github, ...r, rerenderWith: (target: IssueTarget) => r.rerender(ui(target)) }
+  }
+
+  it('EC-10 다른 탭을 보고 있으면 본문을 조회하지 않고, [이슈] 탭을 열 때 조회한다', async () => {
+    const user = userEvent.setup()
+    const { github } = renderIssueTabs()
+    await flush()
+    expect(github.getIssue).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('tab', { name: '이슈' }))
+    await vi.waitFor(() => expect(github.getIssue).toHaveBeenCalledWith('o', 'r', 42))
+  })
+
+  it('EC-11 [이슈] 탭은 tabpanel "이슈" 와 연결되고 패널 tabIndex=-1, 내용 영역 tabIndex=0 + 포커스 링, 표는 포커스 가능한 가로 스크롤 영역', async () => {
+    const user = userEvent.setup()
+    renderIssueTabs(async () => ({ ...DETAIL, body: '| a | b |\n| --- | --- |\n| 1 | 2 |' }))
+    const issueTab = screen.getByRole('tab', { name: '이슈' })
+    await user.click(issueTab)
+    const panel = screen.getByRole('tabpanel', { name: '이슈' })
+    expect(issueTab.getAttribute('aria-controls')).toBe(panel.id)
+    expect(panel).toHaveAttribute('tabindex', '-1')
+    const table = await within(panel).findByRole('table')
+    const content = panel.querySelector('[tabindex="0"]')
+    expect(content).not.toBeNull()
+    expect(content?.className).toContain('focus-visible:outline-ring')
+    const scroller = within(panel).getByRole('group', { name: '표: a, b' })
+    expect(scroller).toHaveAttribute('tabindex', '0')
+    expect(scroller).toContainElement(table)
+    expect(content).toContainElement(scroller)
+  })
+
+  it('EC-12 다른 이슈로 바꾸면 바꾼 이슈의 본문을 보이고 이전 본문은 남지 않는다', async () => {
+    const user = userEvent.setup()
+    const { rerenderWith } = renderIssueTabs()
+    await user.click(screen.getByRole('tab', { name: '이슈' }))
+    expect(await screen.findByText('본문 42')).toBeInTheDocument()
+    rerenderWith({ owner: 'o', repo: 'r', key: '43', number: 43, title: 'Y' })
+    expect(await screen.findByText('본문 43')).toBeInTheDocument()
+    expect(screen.queryByText('본문 42')).toBeNull()
   })
 })

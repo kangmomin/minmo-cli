@@ -1,12 +1,12 @@
 // 글자 크기 단축키·저장 값·설정 화면
-import { render, renderHook, screen } from '@testing-library/react'
+import { fireEvent, renderHook, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { ServerSettingsDialog } from '../features/server/ServerSettingsDialog'
-import { useServerStore } from '../store/server'
+import { AppearanceSection } from '../features/settings/PreferenceSections'
 import { FONT_SIZE, clampFontSize, useUiStore } from '../store/ui'
 import { createFakeTauri } from '../test/fakes'
+import { makeDeps, renderWithDeps } from '../test/render'
 import { fontSizeAction, useFontSizeShortcuts } from './fontSize'
 
 const ev = (init: Partial<KeyboardEvent>) => ({ ctrlKey: true, altKey: false, metaKey: false, shiftKey: false, key: '', ...init })
@@ -89,9 +89,8 @@ describe('단축키', () => {
 
 describe('설정 화면', () => {
   it('글자 크기를 입력하면 바로 적용되고, 범위 밖의 입력 중간 값은 적용하지 않는다 · [기본값]', async () => {
-    useServerStore.setState({ settingsOpen: true })
     const { tauri } = createFakeTauri()
-    render(<ServerSettingsDialog tauri={tauri} />)
+    renderWithDeps(<AppearanceSection />, makeDeps({ tauri }))
     const user = userEvent.setup()
     const input = await screen.findByRole('spinbutton', { name: '글자 크기(터미널·파일 편집기)' })
     expect(input).toHaveValue(13)
@@ -110,6 +109,17 @@ describe('설정 화면', () => {
     await user.type(input, '15{Enter}')
     expect(useUiStore.getState().fontSize).toBe(15)
     expect(tauri.serverSettingsSave).not.toHaveBeenCalled()
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('EC-14 범위 밖·소수는 적용하지 않고, 칸을 떠나면 지금 적용된 값으로 돌아간다', async () => {
+    renderWithDeps(<AppearanceSection />, makeDeps())
+    const input = await screen.findByRole('spinbutton', { name: '글자 크기(터미널·파일 편집기)' })
+    fireEvent.change(input, { target: { value: '14.5' } })
+    expect(useUiStore.getState().fontSize).toBe(13)
+    fireEvent.change(input, { target: { value: '40' } })
+    expect(useUiStore.getState().fontSize).toBe(13)
+    expect(input).toHaveValue(40)
+    fireEvent.blur(input)
+    expect(input).toHaveValue(13)
   })
 })
