@@ -121,20 +121,25 @@ pub(crate) fn subagent_files(projects: &Path, cwd: &str, since_ms: u64) -> Vec<S
     out
 }
 
-/// cwd 의 가장 최근 세션 기록의 끝부분(최대 256KiB)과 그 기록이 바뀐 시각(ms). 기록이 없거나 읽지 못하면 None.
+/// cwd 의 가장 최근 세션 기록의 끝부분(최대 256KiB)과 그 기록이 바뀐 시각(ms). 기록이 없으면 Ok(None), 열거나 읽지 못하면 Err.
 /// 기록은 길어질 수 있어 끝만 읽는다 — 첫 줄은 중간에서 잘릴 수 있다(화면 쪽이 해석하지 못한 줄을 건너뛴다)
-pub(crate) fn reply_tail(projects: &Path, cwd: &str) -> Option<(String, u64)> {
-    let session = current_session(projects, cwd, 0)?;
-    let mut file = File::open(&session).ok()?;
-    let len = file.metadata().ok()?.len();
+pub(crate) fn reply_tail(projects: &Path, cwd: &str) -> Result<Option<(String, u64)>, String> {
+    let Some(session) = current_session(projects, cwd, 0) else {
+        return Ok(None);
+    };
+    let fail = |e: std::io::Error| format!("세션 기록을 읽지 못했습니다: {e}");
+    let mut file = File::open(&session).map_err(fail)?;
+    let len = file.metadata().map_err(fail)?.len();
     file.seek(SeekFrom::Start(len.saturating_sub(REPLY_TAIL_BYTES)))
-        .ok()?;
+        .map_err(fail)?;
     let mut buf = Vec::new();
-    file.take(REPLY_TAIL_BYTES).read_to_end(&mut buf).ok()?;
-    Some((
+    file.take(REPLY_TAIL_BYTES)
+        .read_to_end(&mut buf)
+        .map_err(fail)?;
+    Ok(Some((
         String::from_utf8_lossy(&buf).into_owned(),
         mtime_ms(&session),
-    ))
+    )))
 }
 
 /// Claude Code 설정 폴더 — CLAUDE_CONFIG_DIR 이 있으면 그것, 없으면 ~/.claude (앱에서 띄운 터미널은 앱의 환경을 물려받는다)
@@ -164,17 +169,18 @@ pub async fn claude_subagents(cwd: String, since_ms: u64) -> Result<Vec<Subagent
 }
 
 /// cwd(작업 폴더)에서 도는 Claude Code 의 가장 최근 세션 기록 끝부분(마지막 답변 찾기용 — 해석은 화면 쪽에서).
-/// 기록 시각을 함께 보이므로 since 로 거르지 않는다. 기록이 없으면 None
+/// 기록 시각을 함께 보이므로 since 로 거르지 않는다. 기록이 없으면 None, 기록을 읽지 못하면 Err
 #[tauri::command]
 pub async fn claude_last_reply(cwd: String) -> Result<Option<ClaudeReplyTail>, String> {
     let Some(projects) = claude_projects_dir() else {
         return Ok(None);
     };
     tauri::async_runtime::spawn_blocking(move || {
-        reply_tail(&projects, &cwd).map(|(tail, updated_ms)| ClaudeReplyTail { tail, updated_ms })
+        reply_tail(&projects, &cwd)
+            .map(|r| r.map(|(tail, updated_ms)| ClaudeReplyTail { tail, updated_ms }))
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -314,7 +320,7 @@ mod tests {
         let last = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"END"}]}}"#;
         let body = format!("HEAD\n{}\n{last}\n", "x".repeat(1024 * 1024));
         write_at(&project.join("s.jsonl"), &body, 7_000);
-        let (tail, updated_ms) = reply_tail(&projects, "/w/app").unwrap();
+        let (tail, updated_ms) = reply_tail(&projects, "/w/app").unwrap().unwrap();
         assert_eq!(tail.len() as u64, REPLY_TAIL_BYTES);
         assert!(tail.ends_with(&format!("{last}\n")));
         assert!(!tail.contains("HEAD"));
@@ -338,7 +344,7 @@ mod tests {
         );
         assert_eq!(
             reply_tail(&projects, "/w/app"),
-            Some(("cur\n".to_string(), 3_000_000))
+            Ok(Some(("cur\n".to_string(), 3_000_000)))
         );
         let _ = fs::remove_dir_all(&projects);
     }
@@ -346,10 +352,22 @@ mod tests {
     #[test]
     fn reply_tail_is_none_without_a_session() {
         let projects = tmp("noreply");
-        assert_eq!(reply_tail(&projects, "/w/app"), None);
+        assert_eq!(reply_tail(&projects, "/w/app"), Ok(None));
         fs::create_dir_all(projects.join("-w-app")).unwrap();
-        assert_eq!(reply_tail(&projects, "/w/app"), None);
-        assert_eq!(reply_tail(&projects.join("missing"), "/w/app"), None);
+        assert_eq!(reply_tail(&projects, "/w/app"), Ok(None));
+        assert_eq!(reply_tail(&projects.join("missing"), "/w/app"), Ok(None));
+        let _ = fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn reply_tail_fails_when_the_newest_session_cannot_be_read() {
+        let projects = tmp("unreadable");
+        let project = projects.join("-w-app");
+        fs::create_dir_all(&project).unwrap();
+        write_at(&project.join("old.jsonl"), "old\n", 1_000);
+        // 가장 최근 "기록"이 파일이 아니다(폴더) — Windows 는 열기, Unix 는 읽기에서 실패한다
+        fs::create_dir_all(project.join("x.jsonl")).unwrap();
+        assert!(reply_tail(&projects, "/w/app").is_err());
         let _ = fs::remove_dir_all(&projects);
     }
 
