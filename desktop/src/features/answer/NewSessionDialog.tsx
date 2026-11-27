@@ -1,7 +1,6 @@
 // Why: 답변 모드(#122)는 트리를 숨기므로 새 세션을 시작할 이슈를 대화상자의 트리에서 고른다.
 import { useCallback } from 'react'
 
-import type { useHostConnection } from '../../app/host'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { useUiStore } from '../../store/ui'
 import { IssuePickContext } from '../tree/issuePick'
@@ -12,7 +11,7 @@ import type { SidebarProps } from '../tree/Sidebar'
 export interface NewSessionDialogProps {
   open: boolean
   onOpenChange(open: boolean): void
-  connection?: ReturnType<typeof useHostConnection>
+  connection?: SidebarProps['connection']
   onOpenSettings: SidebarProps['onOpenSettings']
   /** 대화상자가 닫힌 뒤 포커스를 둘 곳(카드 제목, 없으면 [새 세션] 버튼)으로 옮긴다 */
   onCloseFocus(): void

@@ -276,8 +276,8 @@ export function Workspace() {
                 issueId={selectedId}
                 state={issueHost.ready ? openState : undefined}
                 terminalOnly={answer}
-                onExit={answer ? focusSummary : undefined}
-                describedBy={answer ? whereId : undefined}
+                onExit={focusSummary}
+                describedBy={whereId}
               />
             </HostScope>
           ) : answer ? (
