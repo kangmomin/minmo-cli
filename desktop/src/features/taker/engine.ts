@@ -252,7 +252,7 @@ export function createTakerEngine(deps: TakerEngineDeps): TakerEngine {
     const alias = workHostAliasOf(useHostsStore.getState(), run.owner, run.repo)
     const issueId = hostOf(alias).issueId(run.owner, run.repo, String(run.number))
     // Why: 사용자가 이미 그 이슈에서 일하는 중이면 그 터미널 옆에서 자동 실행하지 않는다(재시도·다음 단계는 사용자가 고른 것)
-    if (!run.assigned && run.paneId === null && useUiStore.getState().startedTerminals[issueId]) {
+    if (memOf(run.id).attempt === 0 && !run.assigned && run.paneId === null && useUiStore.getState().startedTerminals[issueId]) {
       stopRun(run, '이미 터미널이 열려 있는 이슈', { issueId })
       return false
     }
