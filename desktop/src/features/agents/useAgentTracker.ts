@@ -10,7 +10,7 @@ import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { selectedTabId, tabOfPane } from '../terminal/panes'
 import { viewedInOtherWindow } from './windowView'
-import { STATUS_LABEL, derive, issueOfPane, useAgentStore } from './agentStore'
+import { PROCESS_POLL_MS, STATUS_LABEL, derive, issueOfPane, shellOnly, useAgentStore } from './agentStore'
 import type { PaneSignals } from './agentStore'
 import { AGENT_LABEL, guessProgram, parseTitle, titleSignal } from './detect'
 import { PtyStreamParser } from './ptyStream'
@@ -21,8 +21,6 @@ export const ECHO_MS = 400
 /** 작업이 끝난 직후의 벨은 "끝났다"는 알림음이다 — 이 시간 안의 벨은 입력 대기로 치지 않는다 */
 export const DONE_BELL_MS = 1500
 const TICK_MS = 1000
-/** 이 PC 의 터미널에서 도는 프로세스를 다시 묻는 간격 */
-const PROCESS_POLL_MS = 3000
 /** Claude Code 의 하위 에이전트 목록을 다시 읽는 간격 */
 const SUBAGENT_POLL_MS = 5000
 
@@ -53,9 +51,10 @@ type Tracked = PaneSignals & {
   subPolling: boolean
   /** 이 패널에서 Claude Code 를 처음 본 시각(없으면 0) — 그 전에 끝난 세션의 기록은 보지 않는다 */
   claudeSince: number
+  shellFirstAt: number
 }
 
-const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false, claudeSince: 0 })
+const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false, claudeSince: 0, shellFirstAt: 0 })
 
 /** Why: 대화상자가 덮고 있으면 보는 것이 아니다 */
 function isViewed(issueId: string, paneId: string): boolean {
@@ -96,6 +95,10 @@ export function useAgentTracker() {
       // 새로 작업을 시작하면 그 전의 벨은 지난 일이다
       if (next?.activity === 'working') t.bell = false
       store.set(paneId, next)
+      const shell = shellOnly(t)
+      if (shell !== true) t.shellFirstAt = 0
+      else if (t.shellFirstAt === 0) t.shellFirstAt = now
+      if (shell !== null) store.setShell(paneId, shell ? Math.max(t.shellFirstAt, t.lastOutputAt, inputAt.get(paneId) ?? 0) : null)
       // 알림은 알려진 에이전트만(빌드·개발 서버 같은 기타 프로그램이 멈출 때마다 알리지 않는다)
       if (event && next && next.agent !== 'other' && useUiStore.getState().agentNotify) {
         const target = useSetupStore.getState().targets[issueId]
@@ -141,7 +144,7 @@ export function useAgentTracker() {
           tracked.delete(paneId)
           inputAt.delete(paneId)
           mutedUntil.delete(paneId)
-          useAgentStore.getState().set(paneId, null)
+          useAgentStore.getState().clearPane(paneId)
         }
       }
       for (const [paneId, ptyId] of Object.entries(live)) {

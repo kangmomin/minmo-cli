@@ -103,6 +103,40 @@ describe('패널 역할 고정 — first (#89 D-26)', () => {
   })
 })
 
+describe('launchPane — 포커스를 요청하지 않는 배경 실행', () => {
+  const PREV = { paneId: 'x::1', token: 4 }
+
+  it('AC-05 focus=false 로 첫 패널을 만들면 패널·터미널 시작은 하되 포커스 요청은 그대로다', () => {
+    useUiStore.setState({ focusRequest: PREV })
+    const id = useUiStore.getState().launchPane(ID, false, false)
+    expect(id).toBe(P1)
+    expect(useUiStore.getState().startedTerminals).toEqual({ [ID]: true })
+    expect(leafIds(useUiStore.getState().panes[ID]?.tree ?? null)).toEqual([P1])
+    expect(request()).toBe(PREV)
+  })
+
+  it('AC-05 focus=false 이고 그 이슈에 패널이 이미 있으면 새 패널을 만들어도 마지막으로 쓴 패널(focused)을 바꾸지 않는다', () => {
+    useUiStore.setState({
+      panes: { [ID]: { tree: { kind: 'leaf', id: P1 }, focused: P1, seq: 1, first: P1 } },
+      terminalIds: { [P1]: 'pty-1' },
+      startedTerminals: { [ID]: true },
+      focusRequest: PREV,
+    })
+    const id = useUiStore.getState().launchPane(ID, true, false)
+    expect(id).toBe(P2)
+    expect(leafIds(useUiStore.getState().panes[ID]?.tree ?? null)).toEqual([P1, P2])
+    expect(useUiStore.getState().panes[ID]?.focused).toBe(P1)
+    expect(request()).toBe(PREV)
+  })
+
+  it('AC-05 focus 를 주지 않으면(기본값) 지금처럼 새 패널에 포커스를 요청한다', () => {
+    useUiStore.setState({ focusRequest: PREV })
+    const id = useUiStore.getState().launchPane(ID)
+    expect(request()).toEqual({ paneId: id, token: 5 })
+    expect(useUiStore.getState().panes[ID]?.focused).toBe(id)
+  })
+})
+
 describe('selectIssue', () => {
   it('같은 이슈를 다시 골라도 선택 번호가 오른다(좁은 화면이 작업 화면으로 넘어가는 신호)', () => {
     useUiStore.getState().selectIssue(ID)

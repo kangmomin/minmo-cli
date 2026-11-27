@@ -15,7 +15,7 @@ import type { PtyTmux, TauriApi, WindowsPty } from '../../lib/tauri'
 import { terminalBackground, terminalTheme } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
 import type { UiState } from '../../store/ui'
-import { LAUNCH_DELAY_MS, looksLikeAuthPrompt, takeLaunch } from '../agents/launchQueue'
+import { LAUNCH_DELAY_MS, dropLaunch, isLaunchCancelled, looksLikeAuthPrompt, markLaunched, takeLaunch } from '../agents/launchQueue'
 import { muteTerminalActivity, noteTerminalInput } from '../agents/useAgentTracker'
 import { PaneAgentStrip } from '../agents/AgentBadge'
 import { CLIPBOARD_KEYS, EDIT_KEYS, MOUSE_KEYS, PANE_KEYS, TERMINAL_EXIT_HINT, createTerminalKeyHandler } from './keys'
@@ -601,6 +601,9 @@ function TerminalSession({
       let launchCmd: string | undefined | null = null
       let launchTimer: ReturnType<typeof setTimeout> | undefined
       cleanups.push(() => clearTimeout(launchTimer))
+      cleanups.push(() => {
+        if (launchCmd) dropLaunch(paneId)
+      })
       const launchWhenReady = () => {
         if (!state.ptyId) return
         // 연결이 끊긴 동안의 입력은 원격으로 가지 않는다(EC-02) — 다시 연결된 뒤의 출력에서 넣는다
@@ -615,9 +618,19 @@ function TerminalSession({
           const buf = t.buffer?.active
           const line = buf?.getLine(buf.baseY + buf.cursorY)?.translateToString(true) ?? ''
           if (looksLikeAuthPrompt(line)) return
+          if (isLaunchCancelled(paneId)) {
+            launchCmd = undefined
+            return
+          }
           const cmd = launchCmd
           launchCmd = undefined
-          tauri.ptyWrite(id, `${cmd}\r`).catch(state.end)
+          tauri.ptyWrite(id, `${cmd}\r`).then(
+            () => markLaunched(paneId),
+            () => {
+              dropLaunch(paneId)
+              state.end()
+            },
+          )
         }, LAUNCH_DELAY_MS)
       }
       try {

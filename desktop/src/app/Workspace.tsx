@@ -23,12 +23,14 @@ import { WorkTabs } from '../features/issue/WorkTabs'
 import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
 import type { PreviewIssue } from '../features/settings/ScopeSettings'
 import { SettingsPage } from '../features/settings/SettingsPage'
+import { TakerActionsProvider, useIssueTaker } from '../features/taker/useIssueTaker'
 import { Sidebar } from '../features/tree/Sidebar'
 import { UsageBar } from '../features/usage/UsageBar'
 import { NEW_WINDOW_KEY, useNewWindowShortcut, useTerminalOpenShortcut } from '../features/terminal/keys'
 import { openWindow } from '../features/tree/openWindow'
 import { isDefaultIssueId, isDefaultTarget } from '../lib/defaultWorkspace'
 import { useFontSizeShortcuts } from '../lib/fontSize'
+import { isPrimaryWindow } from '../lib/windowScope'
 import { repoAliasOf, useHostsStore } from '../store/hosts'
 import { openSettings } from '../store/settingsPage'
 import type { SettingsTarget } from '../store/settingsPage'
@@ -82,12 +84,15 @@ export function Workspace() {
   // 그 알림을 누르면 해당 터미널로 간다
   useNotifyClick()
   const connection = useHostConnection()
+  const takerActions = useIssueTaker()
 
   // Why: 기본은 저장소가 없어 설정 미리보기 기준이 되지 않는다
   const selectedPreview: PreviewIssue | null = target && !isDefaultTarget(target) ? target : null
   const issueAlias = selectedId ? aliasOfIssue(selectedId) : null
   // 고른 이슈의 호스트에 아직 연결하지 않았으면 연결한다(앱을 다시 켠 뒤, 호스트 정보를 고친 뒤 등)
   const issueHost = useHostStatus(issueAlias)
+  // Why: 이슈 테이커가 도는 창(이 PC 의 주 창)은 고른 이슈가 없어도 배경 실행 터미널을 숨겨 둔다
+  const keepTerminals = isHost && isPrimaryWindow()
   // Why: 다시 켠 뒤·새 창에서는 열기 상태·targets 가 비어 있다 — 기본이 골라져 있으면 호스트가 준비될 때 다시 만든다.
   // 선택·작업 탭은 바꾸지 않는다(좁은 화면이 다시 연결될 때마다 작업 화면으로 넘어가지 않게)
   const openPhase = openState?.phase
@@ -111,6 +116,7 @@ export function Workspace() {
   // 사이드바·설정은 고른 호스트 기준, 오른쪽 이슈 패널은 그 이슈가 있는 호스트 기준이다
   // (사이드바에서 다른 호스트를 보는 동안에도 열어 둔 이슈와 터미널은 그대로 쓴다)
   return (
+    <TakerActionsProvider value={takerActions}>
     <HostScope alias={connection.ready ? connection.selected : null}>
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2 max-md:px-2">
@@ -175,9 +181,10 @@ export function Workspace() {
             openSettings({ section: 'workspace', target: { context: scope, preview: sameRepo ? selectedPreview : (preview ?? selectedPreview) }, scope })
           }}
         />
+        <HostScope alias={issueAlias}>
         <main className={`flex min-w-0 flex-1 flex-col ${showTree ? 'max-md:hidden' : ''}`}>
-          {target && selectedId ? (
-            <HostScope alias={issueAlias}>
+          {target && selectedId && (
+            <>
               {/* 연결 전에는 HostScope 가 이 PC 로 바뀌어 id 가 맞지 않고 [다시 열기] 가 이 PC 에서 연다 — 연결 상태를 대신 보인다 */}
               {issueHost.ready ? (
                 <>
@@ -188,16 +195,22 @@ export function Workspace() {
               ) : (
                 <HostStatusNotice alias={issueAlias ?? ''} status={issueHost} className="grid gap-2 border-b p-4 text-sm" testId="issue-host-status" />
               )}
+            </>
+          )}
+          {(target || keepTerminals) && (
+            <>
               {/* 터미널 탭은 모든 이슈의 터미널을 들고 있어 항상 둔다(내리면 다른 호스트의 터미널·에이전트 추적도 끊긴다).
                   연결 전에는 이 이슈의 작업 상태만 감춘다 */}
-              <WorkTabs target={target} issueId={selectedId} state={issueHost.ready ? openState : undefined} />
-            </HostScope>
-          ) : (
+              <WorkTabs target={target ?? null} issueId={target && selectedId ? selectedId : undefined} state={issueHost.ready ? openState : undefined} />
+            </>
+          )}
+          {!(target && selectedId) && (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
               왼쪽 트리에서 이슈(또는 ★기타)를 선택하세요
             </div>
           )}
         </main>
+        </HostScope>
       </div>
       {/* 사이드바에서 고른 호스트(바깥 HostScope)의 값을 보인다 */}
       <UsageBar />
@@ -206,5 +219,6 @@ export function Workspace() {
       <SettingsPage />
     </div>
     </HostScope>
+    </TakerActionsProvider>
   )
 }

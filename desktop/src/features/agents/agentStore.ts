@@ -39,6 +39,7 @@ export const issueOfPane = (paneId: string) => paneId.slice(0, paneId.lastIndexO
 
 /** 출력이 이만큼 끊기면 "작업 중"이 아니라고 본다(제목으로 상태를 알 수 없는 프로그램) */
 export const QUIET_MS = 4000
+export const PROCESS_POLL_MS = 3000
 
 /** 패널에서 모은 신호 */
 export type PaneSignals = {
@@ -93,12 +94,21 @@ export function derive(paneId: string, sig: PaneSignals, prev: PaneAgent | null,
   return { next, event }
 }
 
+export function shellOnly(sig: Pick<PaneSignals, 'processes' | 'tmuxProgram'>): boolean | null {
+  if (sig.tmuxProgram !== undefined) return guessProgram([sig.tmuxProgram]) === null
+  if (sig.processes !== null) return guessProgram(sig.processes) === null
+  return null
+}
+
 export interface AgentState {
   panes: Record<string, PaneAgent>
   /** 패널의 Claude Code 가 띄운 하위 에이전트들(실행 중인 것 먼저) */
   subagents: Record<string, Subagent[]>
+  shellSince: Record<string, number>
   set(paneId: string, next: PaneAgent | null): void
   setSubagents(paneId: string, subs: Subagent[]): void
+  setShell(paneId: string, at: number | null): void
+  clearPane(paneId: string): void
   clear(): void
 }
 
@@ -110,6 +120,28 @@ const sameSubs = (a: Subagent[], b: Subagent[]) => a.length === b.length && a.ev
 export const useAgentStore = create<AgentState>()((set) => ({
   panes: {},
   subagents: {},
+  shellSince: {},
+  setShell: (paneId, at) =>
+    set((s) => {
+      if (at === null) {
+        if (!(paneId in s.shellSince)) return s
+        const shellSince = { ...s.shellSince }
+        delete shellSince[paneId]
+        return { shellSince }
+      }
+      return s.shellSince[paneId] === at ? s : { shellSince: { ...s.shellSince, [paneId]: at } }
+    }),
+  clearPane: (paneId) =>
+    set((s) => {
+      if (!(paneId in s.panes) && !(paneId in s.subagents) && !(paneId in s.shellSince)) return s
+      const panes = { ...s.panes }
+      const subagents = { ...s.subagents }
+      const shellSince = { ...s.shellSince }
+      delete panes[paneId]
+      delete subagents[paneId]
+      delete shellSince[paneId]
+      return { panes, subagents, shellSince }
+    }),
   setSubagents: (paneId, subs) =>
     set((s) => {
       const cur = s.subagents[paneId]
@@ -136,7 +168,7 @@ export const useAgentStore = create<AgentState>()((set) => ({
       // 바뀐 것이 없으면 그대로 둔다 — 1초마다 다시 계산해도 화면을 다시 그리지 않게
       return cur && sameAgent(cur, next) ? s : { panes: { ...s.panes, [paneId]: next } }
     }),
-  clear: () => set({ panes: {}, subagents: {} }),
+  clear: () => set({ panes: {}, subagents: {}, shellSince: {} }),
 }))
 
 /**

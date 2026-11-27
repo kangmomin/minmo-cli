@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PtyDataEvent, PtyFound, PtyLink, PtyLinkEvent, PtyResizedEvent, RemotePty, SshProbe, TauriApi } from '../../lib/tauri'
 import { createFakeTauri, deferred, flush } from '../../test/fakes'
-import { LAUNCH_DELAY_MS, queueLaunch, takeLaunch } from '../agents/launchQueue'
+import { LAUNCH_DELAY_MS, cancelLaunch, launchResult, queueLaunch, resetLaunchQueue } from '../agents/launchQueue'
 import { goToPane } from '../agents/navigate'
 import { DEFAULT_CORE_ID } from '../../lib/defaultWorkspace'
 import { tmuxSessionName } from '../../lib/sshHost'
@@ -185,6 +185,10 @@ beforeEach(() => {
   xterm.webgl.failLoad = false
   xterm.fitTo = null
   useUiStore.setState({ panes: {}, focusRequest: null, terminalIds: {}, startedTerminals: { ...STARTED }, tab: 'terminal', selectedIssueId: null, theme: 'black' })
+})
+
+afterEach(() => {
+  resetLaunchQueue()
 })
 
 function setup(tauriOverrides: Partial<TauriApi> = {}) {
@@ -1634,7 +1638,7 @@ describe('원격 터미널 재접속 (#89)', () => {
       act(() => data.emit({ id: 'pty-1', data: '$ ' }))
       await vi.waitFor(() => expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-1', 'claude\r'))
     } finally {
-      takeLaunch(P1)
+      resetLaunchQueue()
     }
   })
 
@@ -1660,6 +1664,74 @@ describe('원격 터미널 재접속 (#89)', () => {
     const remote = t.tauri.ptySpawn.mock.calls[0][0].remote
     expect(remote).toMatchObject({ host: 'my-server', ephemeral: true })
     expect(remote?.session).toMatch(/^minmo-[0-9a-f]{10}-p2$/)
+  })
+})
+
+describe('이슈 테이커가 맡긴 명령의 결과', () => {
+  const PA = `${A.issueId}::1`
+
+  function emitter<T>() {
+    const cbs = new Set<(e: T) => void>()
+    return {
+      on: async (cb: (e: T) => void) => {
+        cbs.add(cb)
+        return () => void cbs.delete(cb)
+      },
+      emit: (e: T) => cbs.forEach((cb) => cb(e)),
+    }
+  }
+
+  async function open(overrides: Partial<TauriApi> = {}) {
+    const data = emitter<PtyDataEvent>()
+    const t = setup({ onPtyData: data.on, ...overrides })
+    await vi.waitFor(() => expect(useUiStore.getState().terminalIds[PA]).toBe('pty-1'))
+    const shellOutput = () => act(() => data.emit({ id: 'pty-1', data: 'PS C:\\w> ' }))
+    const waitPastDelay = () =>
+      act(async () => {
+        await new Promise((r) => setTimeout(r, LAUNCH_DELAY_MS + 100))
+      })
+    return { ...t, shellOutput, waitPastDelay }
+  }
+
+  it('EC-07 track 해 맡긴 명령은 셸 출력 뒤 터미널에 넣고 written 이 된다', async () => {
+    queueLaunch(PA, 'claude', { track: true })
+    const t = await open()
+    t.shellOutput()
+    await vi.waitFor(() => expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-1', 'claude\r'))
+    await vi.waitFor(() => expect(launchResult(PA)).toBe('written'))
+  })
+
+  it('EC-07 꺼낸 명령을 넣기 전에 터미널이 사라지면 dropped', async () => {
+    queueLaunch(PA, 'claude', { track: true })
+    const t = await open()
+    t.shellOutput()
+    t.unmount()
+    await t.waitPastDelay()
+    expect(t.tauri.ptyWrite).not.toHaveBeenCalledWith('pty-1', 'claude\r')
+    expect(launchResult(PA)).toBe('dropped')
+  })
+
+  it('AC-08 꺼낸 뒤 cancelLaunch 하면 셸 출력이 이어져도 명령을 넣지 않는다', async () => {
+    queueLaunch(PA, 'claude', { track: true })
+    const t = await open()
+    t.shellOutput()
+    cancelLaunch(PA)
+    t.shellOutput()
+    await t.waitPastDelay()
+    expect(t.tauri.ptyWrite).not.toHaveBeenCalledWith('pty-1', 'claude\r')
+    expect(launchResult(PA)).toBe('cancelled')
+  })
+
+  it('EC-07 ptyWrite 가 실패하면 dropped', async () => {
+    queueLaunch(PA, 'claude', { track: true })
+    const t = await open({
+      ptyWrite: async () => {
+        throw new Error('pty gone')
+      },
+    })
+    t.shellOutput()
+    await vi.waitFor(() => expect(t.tauri.ptyWrite).toHaveBeenCalledWith('pty-1', 'claude\r'))
+    await vi.waitFor(() => expect(launchResult(PA)).toBe('dropped'))
   })
 })
 
