@@ -3,10 +3,12 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 
 import { DEFAULT_AGENT_COMMANDS, LAUNCH_KINDS } from '../features/agents/launch'
 import type { LaunchKind } from '../features/agents/launch'
-import { closePane, leaf, leafIds, splitPane } from '../features/terminal/panes'
+import { activeTabOf, addTab, closePane, isPaneTree, leaf, leafIds, removeTab, selectedTabId, splitPane, tabList, tabOfPane } from '../features/terminal/panes'
 import type { PaneTree, SplitDir } from '../features/terminal/panes'
 import type { WorktreeEntry, WorktreePathStore } from '@minmo/core'
+import { hasTerminalTabs, workTabOf } from '../lib/defaultWorkspace'
 import { followOtherWindows, perWindowStorage } from '../lib/windowScope'
+import { normalizeNickname } from './repos'
 
 export type WorkTab = 'terminal' | 'changes' | 'files' | 'notes' | 'issue'
 /** ghostty = Ghostty 터미널의 기본 색(기본값) */
@@ -21,18 +23,39 @@ export type IssuePanes = {
   focused: string | null
   seq: number
   first?: string
-  /** [#120] 고른 터미널 탭(기기·창마다, TabsNode 일 때만) */
+  /** 고른 터미널 탭(기기·창마다, TabsNode 일 때만). 없거나 사라졌으면 첫 탭 */
   tab?: string
-  /** [#120] 그 이슈에서 만든 탭 수(공유, TabsNode 일 때만) */
+  /** 그 이슈에서 만든 탭 수 — 새 탭의 번호 이름(공유, TabsNode 일 때만) */
   tabSeq?: number
 }
 
 /**
- * [Red 스텁 #120] 탭 이름·고른 탭·포커스 정리 규칙 — store 동작과 applySharedUi 가 같은 함수를 쓴다.
- * 동작은 Phase 5.2 에서 구현한다(지금은 입력 그대로)
+ * 탭 이름·고른 탭·포커스 정리 규칙 — store 동작과 applySharedUi 가 같은 함수를 쓴다.
+ * Why: 깨진 트리는 다른 기기의 값이라 고치지 않는다(되올리면 그 기기의 터미널이 꺼진다)
  */
 export function reconcileIssuePanes(p: IssuePanes, names: Record<string, string> | undefined): { p: IssuePanes; names?: Record<string, string> } {
-  return { p, names }
+  if (p.tree !== null && !isPaneTree(p.tree)) return { p, names }
+  const ids = new Set(tabList(p.tree).map((t) => t.id))
+  const kept = Object.entries(names ?? {}).filter(([id]) => ids.has(id))
+  const nextNames = kept.length === 0 ? undefined : names && kept.length === Object.keys(names).length ? names : Object.fromEntries(kept)
+  const isTabs = p.tree?.kind === 'tabs'
+  const keepTab = isTabs && p.tab !== undefined && ids.has(p.tab)
+  const keepTabSeq = isTabs && p.tabSeq !== undefined
+  const selected = leafIds(activeTabOf(p.tree, keepTab ? p.tab : undefined)?.node ?? null)
+  const focused = p.focused !== null && selected.includes(p.focused) ? p.focused : null
+  if (focused === p.focused && ('tab' in p) === keepTab && ('tabSeq' in p) === keepTabSeq) return { p, names: nextNames }
+  const { tab, tabSeq, ...rest } = p
+  return { p: { ...rest, focused, ...(keepTab && { tab }), ...(keepTabSeq && { tabSeq }) }, names: nextNames }
+}
+
+// Why: 모든 동작이 같은 정리 규칙을 거쳐야 고른 탭·포커스·이름이 트리와 어긋나지 않는다
+function commitTree(s: UiState, issueId: string, p: IssuePanes, names: Record<string, string> | undefined): Pick<UiState, 'panes' | 'tabNames'> {
+  const r = reconcileIssuePanes(p, names)
+  if (r.names === s.tabNames[issueId]) return { panes: { ...s.panes, [issueId]: r.p }, tabNames: s.tabNames }
+  const tabNames = { ...s.tabNames }
+  if (r.names) tabNames[issueId] = r.names
+  else delete tabNames[issueId]
+  return { panes: { ...s.panes, [issueId]: r.p }, tabNames }
 }
 
 /** 패널이 없을 때 새로 만드는 패널 하나 — 이 패널이 first 가 된다(패널을 처음 만드는 모든 경로가 쓴다) */
@@ -215,7 +238,9 @@ export const useUiStore = create<UiState>()(
           delete startedTerminals[id]
           // 다시 만들면 패널 번호가 1부터 다시 시작한다 — 남은 요청이 새 터미널을 자동 포커스하지 않게 지운다
           const focusRequest = s.focusRequest?.paneId.startsWith(`${id}::`) ? null : s.focusRequest
-          return { worktreePathMap, terminalIds, panes, startedTerminals, focusRequest }
+          const tabNames = { ...s.tabNames }
+          delete tabNames[id]
+          return { worktreePathMap, terminalIds, panes, startedTerminals, focusRequest, tabNames }
         }),
       setTheme: (theme) => set({ theme }),
       setFontSize: (n) => set({ fontSize: clampFontSize(n) }),
@@ -236,19 +261,21 @@ export const useUiStore = create<UiState>()(
       launchPane: (issueId, keepFirst = false) => {
         const s = get()
         let cur = s.panes[issueId]
-        const leaves = leafIds(cur?.tree ?? null)
+        let names: Record<string, string> | undefined = s.tabNames[issueId]
+        const leaves = leafIds(activeTabOf(cur?.tree ?? null, cur?.tab)?.node ?? null)
         const commit = (next: NonNullable<typeof cur>, id: string) => {
           set({
-            panes: { ...s.panes, [issueId]: next },
+            ...commitTree(s, issueId, next, names),
             startedTerminals: { ...s.startedTerminals, [issueId]: true },
             focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 },
           })
           return id
         }
         if (!cur || leaves.length === 0) {
-          // 패널이 없으면(모두 닫음·아직 안 만듦) 새로 만든다
+          // 패널이 없으면(모두 닫음·아직 안 만듦·깨진 트리) 새로 만든다 — 옛 탭 이름은 새 터미널에 붙이지 않는다
           const fresh = freshPanes(issueId, (cur?.seq ?? 0) + 1)
           cur = fresh
+          names = undefined
           if (!keepFirst) return commit(fresh, fresh.focused)
           leaves.push(fresh.focused)
         } else if (!keepFirst && !leaves.some((p) => p in s.terminalIds)) {
@@ -263,10 +290,11 @@ export const useUiStore = create<UiState>()(
       openTerminal: (issueId) => {
         const s = get()
         const cur = s.panes[issueId]
-        const leaves = leafIds(cur?.tree ?? null)
-        // 이미 연 이슈는 항상 새 패널 — 첫 터미널이 아직 뜨는 중(terminalIds 에 없음)이어도 그 자리를 다시 쓰지 않는다
+        const leaves = leafIds(activeTabOf(cur?.tree ?? null, cur?.tab)?.node ?? null)
+        // 이미 연 이슈는 항상 새 패널(기본·기타는 새 탭) — 첫 터미널이 아직 뜨는 중(terminalIds 에 없음)이어도 그 자리를 다시 쓰지 않는다
         if (s.startedTerminals[issueId] && cur && leaves.length > 0) {
-          s.splitPane(issueId, cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[leaves.length - 1], 'row')
+          if (hasTerminalTabs(issueId)) s.newTab(issueId)
+          else s.splitPane(issueId, cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[leaves.length - 1], 'row')
           return
         }
         s.launchPane(issueId)
@@ -284,6 +312,7 @@ export const useUiStore = create<UiState>()(
           const terminalIds = { ...s.terminalIds }
           const panes = { ...s.panes }
           const startedTerminals = { ...s.startedTerminals }
+          const tabNames = { ...s.tabNames }
           for (const [from, to] of Object.entries(issues)) {
             if (worktreePathMap[from]) {
               worktreePathMap[to] = worktreePathMap[from]
@@ -292,6 +321,7 @@ export const useUiStore = create<UiState>()(
             for (const pane of leafIds(panes[from]?.tree ?? null)) delete terminalIds[pane]
             delete panes[from]
             delete startedTerminals[from]
+            delete tabNames[from]
           }
           const expanded = { ...s.expanded }
           for (const [from, to] of Object.entries(nodes)) {
@@ -303,15 +333,15 @@ export const useUiStore = create<UiState>()(
           const moved = s.selectedIssueId !== null && s.selectedIssueId in issues
           const focusRequest = Object.keys(issues).some((id) => s.focusRequest?.paneId.startsWith(`${id}::`)) ? null : s.focusRequest
           // 열려 있던 이슈는 선택을 풀어 둔다 — 옛 id 로 잡힌 열기 상태(터미널 등)를 새 id 로 다시 열게
-          return { worktreePathMap, terminalIds, panes, startedTerminals, expanded, focusRequest, selectedIssueId: moved ? null : s.selectedIssueId }
+          return { worktreePathMap, terminalIds, panes, startedTerminals, expanded, focusRequest, tabNames, selectedIssueId: moved ? null : s.selectedIssueId }
         }),
       focusIssueTerminal: (issueId) =>
         set((s) => {
-          if (s.tab !== 'terminal') return s
+          if (workTabOf(issueId, s.tab) !== 'terminal') return s
           const cur = s.panes[issueId]
-          const leaves = leafIds(cur?.tree ?? null)
-          // 이 화면이 연 터미널, 또는 다른 화면이 열어 이미 떠 있는 터미널(보이면 붙는다)
-          if (!s.startedTerminals[issueId] && !leaves.some((p) => p in s.terminalIds)) return s
+          // 이 화면이 연 터미널, 또는 다른 화면이 열어 이미 떠 있는 터미널(보이면 붙는다 — 어느 탭이든)
+          if (!s.startedTerminals[issueId] && !leafIds(cur?.tree ?? null).some((p) => p in s.terminalIds)) return s
+          const leaves = leafIds(activeTabOf(cur?.tree ?? null, cur?.tab)?.node ?? null)
           const paneId = cur && cur.focused !== null && leaves.includes(cur.focused) ? cur.focused : leaves[0]
           if (paneId === undefined) return s
           return { focusRequest: { paneId, token: (s.focusRequest?.token ?? 0) + 1 } }
@@ -337,7 +367,7 @@ export const useUiStore = create<UiState>()(
           const tree = splitPane(cur.tree, paneId, dir, newId)
           if (tree === cur.tree) return s
           return {
-            panes: { ...s.panes, [issueId]: { ...cur, tree, focused: newId, seq } },
+            ...commitTree(s, issueId, { ...cur, tree, focused: newId, seq }, s.tabNames[issueId]),
             focusRequest: { paneId: newId, token: (s.focusRequest?.token ?? 0) + 1 },
           }
         }),
@@ -347,31 +377,87 @@ export const useUiStore = create<UiState>()(
           if (!cur?.tree) return s
           const { tree, focus } = closePane(cur.tree, paneId)
           if (tree === cur.tree) return s
+          // Why: 숨은 탭의 패널이 닫혀도 보고 있는 탭과 포커스가 튀지 않게
+          if (tabOfPane(cur.tree, paneId) !== selectedTabId(cur.tree, cur.tab)) return commitTree(s, issueId, { ...cur, tree }, s.tabNames[issueId])
+          const tab = focus === null ? null : tabOfPane(tree, focus)
           return {
-            panes: { ...s.panes, [issueId]: { ...cur, tree, focused: focus } },
+            ...commitTree(s, issueId, { ...cur, tree, focused: focus, ...(tab !== null && { tab }) }, s.tabNames[issueId]),
             focusRequest: focus ? { paneId: focus, token: (s.focusRequest?.token ?? 0) + 1 } : s.focusRequest,
           }
         }),
       focusPane: (issueId, paneId) =>
         set((s) => {
           const cur = s.panes[issueId]
-          return !cur || cur.focused === paneId ? s : { panes: { ...s.panes, [issueId]: { ...cur, focused: paneId } } }
+          if (!cur) return s
+          // Why: 알림·현황·딥링크는 숨은 탭의 패널로도 간다 — 이미 포커스한 패널이어도 탭은 먼저 맞춘다
+          const tab = cur.tree?.kind === 'tabs' ? tabOfPane(cur.tree, paneId) : null
+          if (tab !== null && tab !== cur.tab) return commitTree(s, issueId, { ...cur, tab, focused: paneId }, s.tabNames[issueId])
+          return cur.focused === paneId ? s : { panes: { ...s.panes, [issueId]: { ...cur, focused: paneId } } }
         }),
       newPane: (issueId) =>
         set((s) => {
           const cur = s.panes[issueId]
-          if (cur?.tree) return s
+          // Why: 깨진 공유 트리에서도 [새 터미널] 이 동작해야 한다. 옛 탭 이름은 새 터미널에 붙이지 않는다
+          if (leafIds(cur?.tree ?? null).length > 0) return s
           const next = freshPanes(issueId, (cur?.seq ?? 0) + 1)
           return {
-            panes: { ...s.panes, [issueId]: next },
+            ...commitTree(s, issueId, next, undefined),
             focusRequest: { paneId: next.focused, token: (s.focusRequest?.token ?? 0) + 1 },
           }
         }),
-      // [Red 스텁 #120] 터미널 탭 동작 — state 를 바꾸지 않는다(Phase 5.2 에서 구현)
-      newTab: () => undefined,
-      selectTab: () => undefined,
-      closeTab: () => undefined,
-      renameTab: () => undefined,
+      newTab: (issueId) => {
+        const s = get()
+        const cur = s.panes[issueId]
+        if (!cur || leafIds(cur.tree).length === 0) {
+          s.launchPane(issueId)
+          return
+        }
+        const seq = cur.seq + 1
+        const id = paneIdOf(issueId, seq)
+        const no = Math.max(cur.tabSeq ?? 1, ...tabList(cur.tree).map((t) => t.no)) + 1
+        const tab = `t${seq}`
+        set({
+          ...commitTree(s, issueId, { ...cur, tree: addTab(cur.tree, { id: tab, no, node: leaf(id) }), focused: id, seq, tab, tabSeq: no }, s.tabNames[issueId]),
+          startedTerminals: { ...s.startedTerminals, [issueId]: true },
+          focusRequest: { paneId: id, token: (s.focusRequest?.token ?? 0) + 1 },
+        })
+      },
+      // Why: 포커스 요청을 내지 않는다 — 누른 탭 버튼에 포커스가 남아야 한다
+      selectTab: (issueId, tabId) =>
+        set((s) => {
+          const cur = s.panes[issueId]
+          const tab = tabList(cur?.tree ?? null).find((t) => t.id === tabId)
+          if (!cur || !tab) return s
+          const focused = leafIds(tab.node)[0]
+          if (cur.tab === tabId && cur.focused === focused) return s
+          return commitTree(s, issueId, { ...cur, tab: tabId, focused }, s.tabNames[issueId])
+        }),
+      closeTab: (issueId, tabId) =>
+        set((s) => {
+          const cur = s.panes[issueId]
+          if (!cur?.tree) return s
+          const { tree, focus } = removeTab(cur.tree, tabId)
+          if (tree === cur.tree) return s
+          // Why: 고르지 않은 탭을 닫아도 보는 탭이 바뀌지 않게. 포커스는 탭 줄이 정한다(요청하지 않음)
+          if (selectedTabId(cur.tree, cur.tab) !== tabId) return commitTree(s, issueId, { ...cur, tree }, s.tabNames[issueId])
+          const tab = focus === null ? null : tabOfPane(tree, focus)
+          return commitTree(s, issueId, { ...cur, tree, focused: focus, ...(tab !== null && { tab }) }, s.tabNames[issueId])
+        }),
+      renameTab: (issueId, tabId, name) =>
+        set((s) => {
+          if (!hasTerminalTabs(issueId) || !tabList(s.panes[issueId]?.tree ?? null).some((t) => t.id === tabId)) return s
+          // Why: 트리는 건드리지 않는다 — 이름 바꾸기가 트리를 바꾸면 다른 기기의 동시 분할·탭 추가와 부딪친다
+          const value = normalizeNickname(name)
+          const prev = s.tabNames[issueId] ?? {}
+          if ((prev[tabId] ?? '') === value) return s
+          const names = { ...prev }
+          if (value === '') delete names[tabId]
+          else names[tabId] = value
+          const tabNames = { ...s.tabNames }
+          if (Object.keys(names).length > 0) tabNames[issueId] = names
+          else delete tabNames[issueId]
+          return { tabNames }
+        }),
     }),
     {
       name: 'minmo-ui',

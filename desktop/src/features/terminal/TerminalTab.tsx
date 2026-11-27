@@ -22,7 +22,7 @@ import { attachLinks } from './links'
 import { attachOsc52 } from './osc52'
 import { ReconnectNotice } from './ReconnectNotice'
 import { TerminalKeyBar, registerTerminalInput, useNarrow, useTouch } from './TerminalKeyBar'
-import { layoutPanes, leafIds } from './panes'
+import { activeTabOf, isPaneTree, layoutPanes, leafIds } from './panes'
 import { usePtyLink } from './usePtyLink'
 import { attachWebgl } from './webgl'
 
@@ -46,7 +46,10 @@ const RECONNECT_MUTE_MS = 3000
 
 /** 패널이 아직 화면 구성에 있는가 — 없어진 패널의 터미널만 끝낸다 */
 function paneExists(issueId: string, paneId: string): boolean {
-  return leafIds(useUiStore.getState().panes[issueId]?.tree ?? null).includes(paneId)
+  const tree = useUiStore.getState().panes[issueId]?.tree ?? null
+  // Why: 깨진 공유 트리를 받아도 이 기기의 터미널을 끄지 않는다(그 트리는 읽을 때만 "패널 없음"이다)
+  if (tree !== null && !isPaneTree(tree)) return true
+  return leafIds(tree).includes(paneId)
 }
 
 /** ptySpawn 응답 전에 도착한 pty-data 를 id 별로 보관하는 상한(문자 수) */
@@ -130,7 +133,9 @@ export function TerminalTab({ sessions, activeId, visible, onExit }: TerminalTab
   const touch = useTouch()
   const activePane = useUiStore((s) => {
     const p = activeId ? s.panes[activeId] : undefined
-    return p ? (p.focused ?? leafIds(p.tree)[0] ?? null) : null
+    if (!p) return null
+    const leaves = leafIds(activeTabOf(p.tree, p.tab)?.node ?? null)
+    return p.focused !== null && leaves.includes(p.focused) ? p.focused : (leaves[0] ?? null)
   })
 
   // region 이름은 짧게 두고 탈출 안내는 보이는 한 줄 + aria-describedby 로 연결한다 — 이름·설명 중복 낭독 방지(AX-18)
@@ -193,7 +198,7 @@ function IssuePanes({ spec, active, hintId, onExit }: { spec: TerminalSessionSpe
     if (!panes) ensurePanes(spec.issueId)
   }, [ensurePanes, panes, spec.issueId])
   if (!panes) return null
-  const rects = layoutPanes(panes.tree)
+  const rects = layoutPanes(activeTabOf(panes.tree, panes.tab)?.node ?? null)
   const multiple = rects.length > 1
   // 좁은 화면(휴대폰)에서는 한 번에 한 패널만 크게 보이고, 위의 번호 버튼으로 바꾼다. 가려진 패널의 터미널도 그대로 살아 있다
   const shownId = narrow ? (rects.find((r) => r.id === panes.focused) ?? rects[0])?.id : undefined
