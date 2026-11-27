@@ -26,6 +26,29 @@ export interface AnswerSummaryProps {
 
 const isPressKey = (e: KeyboardEvent) => e.key === 'Enter' || e.key === ' '
 
+// Why: 누르면 포커스가 터미널로 간다 — 누른 채 둔 Enter·Space 의 반복이 그 터미널로 가지 않게 이 버튼이 받은 반복 아닌 keydown 의 keyup 에서만 누른다.
+function useKeyUpPress(press: () => void) {
+  const armed = useRef<string | null>(null)
+  return {
+    onKeyDown: (e: KeyboardEvent) => {
+      if (!isPressKey(e)) return
+      e.preventDefault()
+      if (!e.repeat) armed.current = e.key
+    },
+    onKeyUp: (e: KeyboardEvent) => {
+      if (!isPressKey(e)) return
+      e.preventDefault()
+      const pressed = armed.current === e.key
+      armed.current = null
+      if (pressed) press()
+    },
+    onBlur: () => {
+      armed.current = null
+    },
+    onClick: press,
+  }
+}
+
 export function AnswerSummary({ queue, whereId, headingRef, onNewSession }: AnswerSummaryProps) {
   const uid = useId()
   const ids = { heading: `${uid}-h`, answer: `${uid}-a`, skip: `${uid}-s`, urgent: `${uid}-u` }
@@ -37,7 +60,6 @@ export function AnswerSummary({ queue, whereId, headingRef, onNewSession }: Answ
   const where = useWhere(current, issueId)
   const canAnswer = ready && hasTerminal
   const canSkip = waiting.some((r) => r.paneId !== paneId)
-  const armed = useRef<string | null>(null)
 
   function answer() {
     // Why: 터미널이 없으면 누름이 focusRequest 로 남아, 나중에 열린 터미널이 사용자 모르게 포커스를 가져간다.
@@ -45,6 +67,8 @@ export function AnswerSummary({ queue, whereId, headingRef, onNewSession }: Answ
     queue.cancel()
     goToPane(issueId, paneId, true)
   }
+  const answerKeys = useKeyUpPress(answer)
+  const urgentKeys = useKeyUpPress(() => queue.seeUrgent())
 
   return (
     <section aria-labelledby={ids.heading} data-answer-summary data-testid="answer-summary" className="h-40 shrink-0 border-b max-md:h-24">
@@ -55,7 +79,6 @@ export function AnswerSummary({ queue, whereId, headingRef, onNewSession }: Answ
               세션 요약
             </h2>
             {current ? <StatusLine row={current} /> : <span className="text-muted-foreground">에이전트가 아직 없습니다</span>}
-            {/* Why: 자동 이동 뒤 누른 채 둔 Enter 의 반복이 새 터미널로 가지 않게 이 버튼이 받은 첫 keydown 의 keyup 에서만 누른다 */}
             <Button
               type="button"
               size="sm"
@@ -64,22 +87,7 @@ export function AnswerSummary({ queue, whereId, headingRef, onNewSession }: Answ
               aria-disabled={!canAnswer || undefined}
               aria-describedby={canAnswer ? whereId : `${ids.answer} ${whereId}`}
               className="aria-disabled:cursor-not-allowed"
-              onKeyDown={(e) => {
-                if (!isPressKey(e)) return
-                e.preventDefault()
-                if (!e.repeat) armed.current = e.key
-              }}
-              onKeyUp={(e) => {
-                if (!isPressKey(e)) return
-                e.preventDefault()
-                const press = armed.current === e.key
-                armed.current = null
-                if (press) answer()
-              }}
-              onBlur={() => {
-                armed.current = null
-              }}
-              onClick={answer}
+              {...answerKeys}
             >
               이 세션에 답하기
             </Button>
@@ -120,6 +128,10 @@ export function AnswerSummary({ queue, whereId, headingRef, onNewSession }: Answ
               data-testid="answer-skip"
               aria-disabled={!canSkip || undefined}
               aria-describedby={canSkip ? undefined : ids.skip}
+              onKeyDown={(e) => {
+                // Why: 누른 채 둔 Enter 의 반복마다 건너뛰지 않게
+                if (e.repeat && isPressKey(e)) e.preventDefault()
+              }}
               onClick={() => queue.skip()}
             >
               건너뛰기
@@ -137,7 +149,7 @@ export function AnswerSummary({ queue, whereId, headingRef, onNewSession }: Answ
                 <span id={ids.urgent} className="text-amber-700 dark:text-amber-400">
                   더 급한 세션 {urgent.length}개
                 </span>
-                <Button type="button" size="sm" variant="outline" className="h-7 px-2" aria-describedby={ids.urgent} onClick={() => queue.seeUrgent()}>
+                <Button type="button" size="sm" variant="outline" className="h-7 px-2" aria-describedby={ids.urgent} {...urgentKeys}>
                   보기
                 </Button>
               </>

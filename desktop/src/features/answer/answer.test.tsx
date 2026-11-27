@@ -352,6 +352,40 @@ describe('[건너뛰기]·[보기]·[새 세션]·기본 보기로(AC-07 · AC-1
     await waitFor(() => expect(announce()).toHaveTextContent(/다음 세션: .*#2 문서/))
   })
 
+  it('EC-25 [보기]도 Enter·Space 는 keydown 이 아니라 keyup 에서만 누른다 — 버튼이 받지 않은 keydown·누른 채 반복은 무시한다', async () => {
+    world({ agents: [done(A1, 65_000), attention(B1, 30_000), done(C1, 90_000)] })
+    const { user } = renderApp()
+    await user.click(toggle())
+    const see = within(summary()).getByRole('button', { name: '보기' })
+    act(() => see.focus())
+    for (const key of ['Enter', ' ']) {
+      // 다른 곳에서 누른 채 넘어온 키 — 이 버튼이 받은 keydown 이 없다
+      fireEvent.keyUp(see, { key })
+      // 누른 채 둔 키의 반복
+      expect(fireEvent.keyDown(see, { key, repeat: true })).toBe(false)
+      fireEvent.keyUp(see, { key })
+      expect(useUiStore.getState().selectedIssueId).toBe(A)
+    }
+    expect(fireEvent.keyDown(see, { key: 'Enter' })).toBe(false)
+    expect(useUiStore.getState().selectedIssueId).toBe(A)
+    fireEvent.keyUp(see, { key: 'Enter' })
+    expect(useUiStore.getState().selectedIssueId).toBe(B)
+  })
+
+  it('EC-25 [건너뛰기]에서 Enter 를 누른 채 두면 한 번만 건너뛴다 — 떼고 다시 누르면 또 건너뛴다', async () => {
+    // 기다리는 순서: 오래 기다린 것부터 #3 → #1 → #2
+    world({ agents: [done(A1, 65_000), done(B1, 30_000), done(C1, 90_000)] })
+    const { user } = renderApp()
+    await user.click(toggle())
+    const skip = screen.getByTestId('answer-skip')
+    act(() => skip.focus())
+    await user.keyboard('{Enter>3/}')
+    expect(useUiStore.getState().selectedIssueId).toBe(C)
+    await user.keyboard('{Enter}')
+    expect(useUiStore.getState().selectedIssueId).toBe(B)
+    expect(skip).toHaveFocus()
+  })
+
   it('AC-12 [새 세션]은 프로젝트·이슈 트리 대화상자를 연다(목록·카드 어디서든)', async () => {
     world({ agents: [done(A1, 65_000)] })
     const { user } = renderApp()
