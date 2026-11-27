@@ -234,6 +234,7 @@ describe('useIssueTaker — 주 창의 엔진', () => {
 
   it('A-23 켜진 저장소와 실행이 없으면 엔진은 돌아도 store 에 쓰지 않고 GitHub 를 부르지 않는다', async () => {
     seed([], {})
+    localStorage.removeItem(TAKER_STORAGE_KEY)
     let writes = 0
     const count = () => {
       writes++
