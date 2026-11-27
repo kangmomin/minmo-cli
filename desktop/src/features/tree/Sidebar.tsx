@@ -72,7 +72,16 @@ function useWindowScope(): WindowScope | null {
 
 /** 좌측 트리: 그룹 → 개인 계정(첫 노드) → 조직 → 저장소 → ★기타 + 이슈 (AC-03). 범위 창이면 그 조직·저장소·그룹만 */
 
-export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: SidebarProps & { className?: string }) {
+export function Sidebar({ connection, onOpenSettings, className }: SidebarProps & { className?: string }) {
+  return (
+    <SidebarFrame className={className}>
+      <SidebarContent connection={connection} onOpenSettings={onOpenSettings} />
+    </SidebarFrame>
+  )
+}
+
+// Why: [새 세션] 대화상자(#122)가 aside 없이 같은 트리를 쓴다.
+export function SidebarContent({ connection = LOCAL_ONLY, onOpenSettings }: SidebarProps) {
   const aliases = useHostsStore((s) => s.aliases)
   const peers = usePeersStore((s) => s.peers)
   const { tauri } = useBaseDeps()
@@ -125,7 +134,7 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
     : []
 
   return (
-    <SidebarFrame className={className}>
+    <>
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <select
           aria-label="작업 호스트"
@@ -278,7 +287,7 @@ export function Sidebar({ connection = LOCAL_ONLY, onOpenSettings, className }: 
           </div>
         </PublishContext.Provider>
       </ScrollArea>
-    </SidebarFrame>
+    </>
   )
 }
 
