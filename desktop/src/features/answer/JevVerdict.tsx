@@ -1,5 +1,5 @@
 // Jev 판정(#122) — 답변 모드 요약 카드에서 [Jev 판정]을 누르면 지금 패널의 터미널 글자를 TypeSafe Jev 로 보내 칩 3개를 보인다
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { useBaseDeps } from '../../app/deps'
@@ -11,7 +11,7 @@ import type { AgentRow } from '../agents/overview'
 import { readTerminalText } from '../terminal/terminalText'
 import { JEV_MAX_LINES, buildJevRequest, jevCode, jevErrorText, parseJevResponse } from './jev'
 import type { JevVerdict as Verdict } from './jev'
-import { useJevKeyStore } from './jevKey'
+import { useJevKeyStatus, useJevKeyStore } from './jevKey'
 
 const NEED_LABEL: Record<string, string> = { permission: '권한 허용', question: '질문에 답', next_task: '다음 작업 지시', error: '오류 확인', none: '없음' }
 const OUTCOME_LABEL: Record<string, string> = { success: '성공', partial: '일부 끝남', failed: '실패', unknown: '알 수 없음' }
@@ -32,11 +32,7 @@ export function JevVerdict({ row }: { row: AgentRow | null }) {
 }
 
 function VerdictBox({ row, tauri }: { row: AgentRow; tauri: TauriApi }) {
-  const saved = useJevKeyStore((s) => s.saved)
-  const checkFailed = useJevKeyStore((s) => s.error)
-  useEffect(() => {
-    void useJevKeyStore.getState().refresh(tauri)
-  }, [tauri])
+  const { saved, checkFailed } = useJevKeyStatus(tauri)
 
   // 판정은 그 세션의 그 기다림에 묶는다 — 세션이 바뀌거나 다시 기다리는 상태가 되면 지운다
   const key = `${rowKey(row)}\n${row.waitingSince}`
@@ -73,7 +69,7 @@ function VerdictBox({ row, tauri }: { row: AgentRow; tauri: TauriApi }) {
 
   let status: ReactNode = null
   if (saved === false) status = jevErrorText('jev_key_missing')
-  else if (shown?.kind === 'busy') status = 'Jev 판정 중…'
+  else if (busy) status = 'Jev 판정 중…'
   else if (shown?.kind === 'empty') status = '보낼 글자가 없습니다'
   else if (shown?.kind === 'done') status = shown.verdict ? <Chips verdict={shown.verdict} /> : '판정 없음'
 

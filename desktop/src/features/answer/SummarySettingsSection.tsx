@@ -1,5 +1,5 @@
 // 서버 설정 "세션 요약" 절(#122) — 답변 모드 요약 카드의 Claude 답변·Jev 판정 켜기와 Jev API 키 저장·지우기
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -7,7 +7,7 @@ import { Label } from '../../components/ui/label'
 import type { TauriApi } from '../../lib/tauri'
 import { useUiStore } from '../../store/ui'
 import { jevCode, jevErrorText } from './jev'
-import { saveJevKey, useJevKeyStore } from './jevKey'
+import { saveJevKey, useJevKeyStatus, useJevKeyStore } from './jevKey'
 
 export interface SummarySettingsSectionProps {
   tauri: TauriApi
@@ -24,14 +24,9 @@ export function SummarySettingsSection({ tauri, draft, onDraftChange }: SummaryS
   const setClaudeReply = useUiStore((s) => s.setSummaryClaudeReply)
   const jev = useUiStore((s) => s.summaryJev)
   const setJev = useUiStore((s) => s.setSummaryJev)
-  const saved = useJevKeyStore((s) => s.saved)
-  const checkFailed = useJevKeyStore((s) => s.error)
+  const { saved, checkFailed } = useJevKeyStatus(tauri)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    void useJevKeyStore.getState().refresh(tauri)
-  }, [tauri])
 
   const run = async (action: () => Promise<void>, failText: string) => {
     if (busy) return

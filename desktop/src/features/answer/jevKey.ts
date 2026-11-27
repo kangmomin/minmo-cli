@@ -1,4 +1,5 @@
 // Jev API 키 저장 여부(#122) — 서버 설정의 "세션 요약" 절과 요약 카드의 Jev 판정이 같이 쓴다. 키 원문은 화면으로 읽지 않는다
+import { useEffect } from 'react'
 import { create } from 'zustand'
 
 import type { TauriApi } from '../../lib/tauri'
@@ -32,6 +33,16 @@ export const useJevKeyStore = create<JevKeyState>((setState) => ({
     setState({ saved, error: false })
   },
 }))
+
+/** 키 저장 여부 — 마운트 때(그리고 tauri 가 바뀌면) 키체인을 다시 확인한다 */
+export function useJevKeyStatus(tauri: TauriApi): { saved: boolean | null; checkFailed: boolean } {
+  const saved = useJevKeyStore((s) => s.saved)
+  const checkFailed = useJevKeyStore((s) => s.error)
+  useEffect(() => {
+    void useJevKeyStore.getState().refresh(tauri)
+  }, [tauri])
+  return { saved, checkFailed }
+}
 
 /** 앞뒤 공백을 떼고 보이는 ASCII(0x21~0x7E)만 — Rust(commands/jev.rs valid_key)와 같은 검사 */
 const VALID_KEY = /^[\x21-\x7e]+$/
