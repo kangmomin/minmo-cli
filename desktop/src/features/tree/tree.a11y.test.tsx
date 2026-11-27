@@ -11,6 +11,7 @@ import { worktreeId } from '@minmo/core'
 import { useHostsStore } from '../../store/hosts'
 import { LOCAL_OWNER, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
+import { useSettingsPageStore } from '../../store/settingsPage'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { createFakeApi, createFakeGitHub, createFakeTauri, fail, ok } from '../../test/fakes'
@@ -46,6 +47,7 @@ const GLOBAL = {
 }
 
 beforeEach(() => {
+  useSettingsPageStore.setState(useSettingsPageStore.getInitialState(), true)
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useSessionStore.setState({ token: 'tok', status: 'online', me: { id: 'usr_x', githubLogin: 'octocat', avatarUrl: null } })
   useUiStore.setState({ expanded: {}, selectedIssueId: null, tab: 'terminal', worktreePathMap: {}, terminalIds: {} })
@@ -76,7 +78,8 @@ describe('AX-01 조직·프로젝트 설정을 키보드로 연다(⚙ 버튼)',
     btn.focus()
     await user.keyboard('{Enter}')
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByText(/조직 설정|my-org/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('tab', { name: '작업 공간' })).toHaveAttribute('aria-selected', 'true')
+    expect(await within(dialog).findByRole('radio', { name: '조직: my-org' })).toBeChecked()
     expect(await within(dialog).findByLabelText('브랜치 템플릿')).toBeInTheDocument()
   })
 

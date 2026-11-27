@@ -1,10 +1,7 @@
-import { AppWindowIcon, ListTreeIcon, LogOutIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
+import { AppWindowIcon, ListTreeIcon, LogOutIcon, SettingsIcon } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 
-import type { SettingsScope } from '@minmo/api-client'
-
-import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { AgentsButton, AgentsOverview, useLocalRows } from '../features/agents/AgentsOverview'
@@ -17,31 +14,29 @@ import { useDeepLinkOpen } from '../features/remote/deepLink'
 import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
 import { usePeerSync } from '../features/remote/peerSync'
 import { usePairSync } from '../features/pairSync/pairSync'
-import { RemoteAccessDialog } from '../features/remote/RemoteAccessDialog'
 import { useSharedTerminals } from '../features/remote/useRemoteHost'
 import { useBaseDeps } from './deps'
 import { useAuth } from '../features/auth/useAuth'
-import { CliAccessDialog } from '../features/cli/CliAccessDialog'
 import { IssueHeader } from '../features/issue/IssueHeader'
 import { AppVersion } from '../features/update/AppVersion'
 import { WorkTabs } from '../features/issue/WorkTabs'
 import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
-import { SettingsDialog } from '../features/settings/SettingsDialog'
-import type { PreviewIssue } from '../features/settings/SettingsDialog'
+import type { PreviewIssue } from '../features/settings/ScopeSettings'
+import { SettingsPage } from '../features/settings/SettingsPage'
 import { Sidebar } from '../features/tree/Sidebar'
 import { UsageBar } from '../features/usage/UsageBar'
 import { NEW_WINDOW_KEY, useNewWindowShortcut, useTerminalOpenShortcut } from '../features/terminal/keys'
 import { openWindow } from '../features/tree/openWindow'
 import { isDefaultIssueId, isDefaultTarget } from '../lib/defaultWorkspace'
 import { useFontSizeShortcuts } from '../lib/fontSize'
-import { openServerSettings } from '../store/server'
+import { repoAliasOf, useHostsStore } from '../store/hosts'
+import { openSettings } from '../store/settingsPage'
+import type { SettingsTarget } from '../store/settingsPage'
 import { HostStatusNotice } from './HostGate'
 import { HostScope, aliasOfIssue, useHostConnection, useHostStatus } from './host'
 import { useSessionStore } from '../store/session'
 import { useSetupStore } from '../store/setup'
 import { useUiStore } from '../store/ui'
-
-type SettingsTarget = { scope: SettingsScope; preview: PreviewIssue | null }
 
 /** 메인 레이아웃 (D-27): 상단 바 / 좌 트리 / 우 IssueHeader + 탭(터미널·변경·메모). 하단 OfflineBanner 는 App 이 둔다 */
 export function Workspace() {
@@ -51,10 +46,7 @@ export function Workspace() {
   const selectedId = useUiStore((s) => s.selectedIssueId)
   const target = useSetupStore((s) => (selectedId ? s.targets[selectedId] : undefined))
   const openState = useSetupStore((s) => (selectedId ? s.open[selectedId] : undefined))
-  const [settings, setSettings] = useState<SettingsTarget | null>(null)
-  const [cliOpen, setCliOpen] = useState(false)
   const [agentsOpen, setAgentsOpen] = useState(false)
-  const [remoteOpen, setRemoteOpen] = useState(false)
   // 좁은 화면(휴대폰)에서는 트리와 작업 화면을 한 번에 하나만 보인다 — 이슈를 고르면(같은 이슈를 다시 골라도) 작업 화면으로 넘어간다.
   // effect 가 아니라 고른 그 렌더에서 넘긴다: 자식(터미널)의 포커스 요청은 이 컴포넌트의 effect 보다 먼저 처리되므로,
   // effect 로 넘기면 터미널이 아직 가려진 채 포커스를 받지 못한다(#78)
@@ -71,7 +63,6 @@ export function Workspace() {
   const baseTauri = baseDeps.tauri
   const queryClient = useQueryClient()
   useSharedTerminals(baseTauri)
-  // 원격으로 붙은 화면에서는 이 PC 전용 설정(원격 접속·서버·원격 CLI)을 보이지 않는다
   const isHost = baseTauri.runtime !== 'remote'
   // 범위 없는 새 창(#105) — 원격 화면에서는 띄우지 않는다
   const openBlankWindow = useMemo(() => (isHost ? () => openWindow(baseTauri, null, null) : null), [isHost, baseTauri])
@@ -106,6 +97,17 @@ export function Workspace() {
     if (openPhase === undefined || openPhase === 'error') ensureDefaultOpen(selectedId, homeOf(issueAlias, baseHome))
   }, [selectedId, issueAlias, issueHost.ready, openPhase, baseHome])
 
+  const topSettingsTarget = (): SettingsTarget | null => {
+    // Why: 기본은 저장소가 없다 — 조직·프로젝트 범위를 만들 수 없어 전역만 보인다
+    if (!target || isDefaultTarget(target)) return null
+    const bound = repoAliasOf(useHostsStore.getState(), target.owner, target.repo)
+    const projectHost = bound === undefined ? (connection.ready ? connection.selected : null) : bound
+    // Why: 프로젝트 범위의 원본 위치·미리보기는 projectHost 기준이다 — 고른 이슈가 다른 호스트에 있으면 조직까지만 준다
+    const context: SettingsTarget['context'] =
+      issueAlias === projectHost ? { kind: 'project', owner: target.owner, repo: target.repo } : { kind: 'org', owner: target.owner }
+    return { context, preview: selectedPreview }
+  }
+
   // 사이드바·설정은 고른 호스트 기준, 오른쪽 이슈 패널은 그 이슈가 있는 호스트 기준이다
   // (사이드바에서 다른 호스트를 보는 동안에도 열어 둔 이슈와 터미널은 그대로 쓴다)
   return (
@@ -130,49 +132,19 @@ export function Workspace() {
             <TooltipContent>새 창 ({NEW_WINDOW_KEY})</TooltipContent>
           </Tooltip>
         )}
-        <ThemeToggle />
-        {isHost && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label="원격 접속" onClick={() => setRemoteOpen(true)}>
-                <MonitorSmartphoneIcon />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>원격 접속(다른 PC·휴대폰)</TooltipContent>
-          </Tooltip>
-        )}
-        {isHost && (
-          <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="원격 CLI 접속" onClick={() => setCliOpen(true)}>
-                  <TerminalSquareIcon />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>원격 CLI 접속</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="서버 설정" onClick={openServerSettings}>
-                  <ServerIcon />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>서버 설정</TooltipContent>
-            </Tooltip>
-          </>
-        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="전역 설정"
-              onClick={() => setSettings({ scope: { kind: 'global' }, preview: selectedPreview })}
+              aria-label="설정"
+              data-settings-trigger
+              onClick={() => openSettings({ target: topSettingsTarget(), scope: { kind: 'global' } })}
             >
               <SettingsIcon />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>전역 설정</TooltipContent>
+          <TooltipContent>설정</TooltipContent>
         </Tooltip>
         {/* 로그인·로그아웃은 호스트 PC 에서 한다 */}
         {isHost && (
@@ -196,10 +168,11 @@ export function Workspace() {
           className={showTree ? 'max-md:w-full' : 'max-md:hidden'}
           connection={connection}
           onOpenSettings={(scope, preview) => {
+            // Why: 트리는 조직·저장소 범위만 넘긴다 — 전역은 상단 ⚙ 로 연다
+            if (scope.kind === 'global') return
             // 선택된 이슈가 같은 저장소면 미리보기 기준으로 쓴다
-            const sameRepo =
-              target && scope.kind !== 'global' && target.owner === scope.owner && (scope.kind === 'org' || target.repo === scope.repo)
-            setSettings({ scope, preview: sameRepo ? selectedPreview : (preview ?? selectedPreview) })
+            const sameRepo = target && target.owner === scope.owner && (scope.kind === 'org' || target.repo === scope.repo)
+            openSettings({ section: 'workspace', target: { context: scope, preview: sameRepo ? selectedPreview : (preview ?? selectedPreview) }, scope })
           }}
         />
         <main className={`flex min-w-0 flex-1 flex-col ${showTree ? 'max-md:hidden' : ''}`}>
@@ -229,20 +202,8 @@ export function Workspace() {
       {/* 사이드바에서 고른 호스트(바깥 HostScope)의 값을 보인다 */}
       <UsageBar />
 
-      <CliAccessDialog open={cliOpen} onOpenChange={setCliOpen} />
-      <RemoteAccessDialog open={remoteOpen} onOpenChange={setRemoteOpen} />
       <AgentsOverview open={agentsOpen} onOpenChange={setAgentsOpen} />
-
-      {settings && (
-        <SettingsDialog
-          scope={settings.scope}
-          open
-          onOpenChange={(o) => {
-            if (!o) setSettings(null)
-          }}
-          previewIssue={settings.preview}
-        />
-      )}
+      <SettingsPage />
     </div>
     </HostScope>
   )

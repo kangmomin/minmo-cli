@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { RemoteStatus, TailscaleLogEvent, TailscaleStatus } from '../../lib/tauri'
 import { TAILSCALE_MISSING, createFakeTauri, deferred } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { RemoteAccessDialog, shareableAddress, withHttps } from './RemoteAccessDialog'
+import { RemoteAccessSettings, shareableAddress, withHttps } from './RemoteAccessSettings'
 import { TailscaleSection, appendLog } from './TailscaleSection'
 
 const NEEDS_LOGIN: TailscaleStatus = { ...TAILSCALE_MISSING, state: 'needs-login', install: null }
@@ -176,7 +176,7 @@ describe('RemoteAccessDialog 와 Tailscale', () => {
     const fake = createFakeTauri({ remoteStatus: async () => base, tailscaleStatus: async () => ({ ...RUNNING, httpsUrl: HTTPS }) })
     // 호스트가 Tailscale 주소에도 연 뒤의 목록
     fake.tauri.remoteStatus.mockResolvedValueOnce(base).mockResolvedValue(withTs)
-    renderWithDeps(<RemoteAccessDialog open onOpenChange={() => {}} />, makeDeps({ tauri: fake.tauri }))
+    renderWithDeps(<RemoteAccessSettings />, makeDeps({ tauri: fake.tauri }))
     const user = userEvent.setup()
     expect(await screen.findByText('http://100.64.0.1:8790')).toBeInTheDocument()
     expect(screen.getByText('Tailscale HTTPS')).toBeInTheDocument()
@@ -217,7 +217,7 @@ describe('RemoteAccessDialog 와 Tailscale', () => {
 
   it('Tailscale 이 없으면 원격 접속 설정을 건드리지 않고 설치 안내를 보인다', async () => {
     const fake = createFakeTauri()
-    renderWithDeps(<RemoteAccessDialog open onOpenChange={() => {}} />, makeDeps({ tauri: fake.tauri }))
+    renderWithDeps(<RemoteAccessSettings />, makeDeps({ tauri: fake.tauri }))
     expect(await screen.findByRole('button', { name: /Tailscale 설치/ })).toBeInTheDocument()
     expect(fake.tauri.remoteConfigure).not.toHaveBeenCalled()
   })

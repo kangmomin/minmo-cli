@@ -1,7 +1,7 @@
 // 하단 바의 AI 별 사용량 — 이 PC 의 값, 원격 호스트로 바꾸면 그 호스트의 값, 설정에서 끄기
 import { expect, test } from '@playwright/test'
 
-import { login, routeGitHub, routeServer } from './fixtures'
+import { login, openSettings, routeGitHub, routeServer } from './fixtures'
 
 test.beforeEach(async ({ page }) => {
   await routeServer(page)
@@ -19,8 +19,10 @@ test('하단 바에 이 PC 의 사용량이 보이고, 작업 호스트를 바�
   await expect(bar.getByTestId('usage-claude')).toHaveAttribute('title', /캐시에서 읽은 입력 30,000,000 \(합계에 넣지 않음\)/)
 
   await page.getByRole('button', { name: '원격 호스트 관리' }).click()
-  await page.getByTestId('ssh-host-mock-server').getByRole('button', { name: '추가' }).click()
+  const dialog = page.getByRole('dialog', { name: '설정', exact: true })
+  await dialog.getByTestId('ssh-host-mock-server').getByRole('button', { name: '추가' }).click()
   await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
   await page.getByRole('combobox', { name: '작업 호스트' }).selectOption('mock-server')
   await expect(bar.getByTestId('usage-host')).toHaveText('mock-server')
   await expect(bar.getByTestId('usage-claude')).toHaveText(/Claude 5k 오늘/)
@@ -33,9 +35,10 @@ test('하단 바에 이 PC 의 사용량이 보이고, 작업 호스트를 바�
 
 test('설정에서 끄면 하단 바가 사라지고 다시 불러와도 유지된다', async ({ page }) => {
   await expect(page.getByTestId('usage-bar')).toBeVisible()
-  await page.getByRole('button', { name: '서버 설정' }).click()
-  await page.getByRole('checkbox', { name: '하단 바에 AI 별 사용량 표시' }).uncheck()
+  const dialog = await openSettings(page, '알림·표시')
+  await dialog.getByRole('checkbox', { name: '하단 바에 AI 별 사용량 표시' }).uncheck()
   await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
   await expect(page.getByTestId('usage-bar')).toHaveCount(0)
   await page.reload()
   await expect(page.getByText('minmo', { exact: true })).toBeVisible()

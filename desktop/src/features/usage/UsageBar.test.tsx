@@ -6,11 +6,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { HostScope } from '../../app/host'
 import type { AgentUsage, CodexUsage, SshProbe, UsageTokens } from '../../lib/tauri'
 import { useHostsStore } from '../../store/hosts'
-import { useServerStore } from '../../store/server'
 import { useUiStore } from '../../store/ui'
 import { createFakeTauri, ok } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { ServerSettingsDialog } from '../server/ServerSettingsDialog'
+import { NotifySection } from '../settings/PreferenceSections'
 import { effectivePercent, formatTokens, limitsDetail, tokensDetail, totalTokens, windowLabel } from './format'
 import { UsageBar, usageItems } from './UsageBar'
 import { startOfToday } from './useAgentUsage'
@@ -156,11 +155,10 @@ describe('UsageBar', () => {
   it('설정에서 끄면 읽지도 보이지도 않는다 — 이 PC 에 저장한다', async () => {
     const { tauri } = createFakeTauri({ agentUsage: async () => ({ ...NONE, claude: tok(1000, 0) }) })
     const user = userEvent.setup()
-    useServerStore.setState({ settingsOpen: true })
     renderWithDeps(
       <>
         <UsageBar />
-        <ServerSettingsDialog tauri={tauri} />
+        <NotifySection />
       </>,
       makeDeps({ tauri }),
     )
@@ -170,6 +168,5 @@ describe('UsageBar', () => {
     await user.click(box)
     expect(screen.queryByTestId('usage-bar')).not.toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem('minmo-ui')!).state.showUsage).toBe(false)
-    useServerStore.setState({ settingsOpen: false })
   })
 })
