@@ -36,6 +36,33 @@ func scopeTarget(r *http.Request, scope settings.Scope) (owner, repo string, e *
 	return owner, repo, nil
 }
 
+// PCHeader 는 PC 별 설정을 쓰는 클라이언트가 보내는 PC 식별자(UUID) 헤더다.
+// 있으면 작업 폴더 경로·생성 후 스크립트 같은 값을 그 PC 의 것으로 읽고 쓴다(settings.GetForDevice).
+// 원격 접속 기기 토큰 헤더(x-minmo-device, 데스크탑 remote.rs)와 다른 것이다.
+const PCHeader = "X-Minmo-Pc"
+
+var rePC = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// pcID 는 PCHeader 값을 꺼낸다. 없으면 ""(함께 쓰는 값), 형식이 틀리면 400.
+func pcID(r *http.Request) (string, *apiError) {
+	v := r.Header.Get(PCHeader)
+	if v == "" {
+		return "", nil
+	}
+	if !rePC.MatchString(v) {
+		return "", badRequest(CodeInvalidPathParam, "pc")
+	}
+	return v, nil
+}
+
+// getRecord 는 pc 가 있으면 그 PC 의 값으로 읽는다.
+func (a *api) getRecord(r *http.Request, userID, pc string, scope settings.Scope, owner, repo string) (settings.Record, error) {
+	if pc != "" {
+		return settings.GetForDevice(r.Context(), a.db, userID, pc, scope, owner, repo)
+	}
+	return settings.Get(r.Context(), a.db, userID, scope, owner, repo)
+}
+
 // settingsRecordJSON 은 계약 SettingsRecord(5필드 nullable + updatedAt)다.
 type settingsRecordJSON struct {
 	settings.Input
@@ -54,7 +81,12 @@ func (a *api) getSettings(scope settings.Scope) func(http.ResponseWriter, *http.
 			writeAPIError(w, e)
 			return
 		}
-		rec, err := settings.Get(r.Context(), a.db, s.userID, scope, owner, repo)
+		pc, e := pcID(r)
+		if e != nil {
+			writeAPIError(w, e)
+			return
+		}
+		rec, err := a.getRecord(r, s.userID, pc, scope, owner, repo)
 		if err != nil {
 			a.internal(w, r, err)
 			return
@@ -75,6 +107,11 @@ func (a *api) putSettings(scope settings.Scope) func(http.ResponseWriter, *http.
 			writeAPIError(w, e)
 			return
 		}
+		pc, e := pcID(r)
+		if e != nil {
+			writeAPIError(w, e)
+			return
+		}
 		var in settings.Input
 		if e := decodeJSON(w, r, maxRequestBytes, &in); e != nil {
 			writeAPIError(w, e)
@@ -86,7 +123,7 @@ func (a *api) putSettings(scope settings.Scope) func(http.ResponseWriter, *http.
 		}
 		if scope == settings.ScopeGlobal && (in.SparsePaths == nil || in.PostCreateScriptPosix == nil || in.IgnoredCopyExclude == nil) {
 			// 나중에 추가된 필드는 이전 클라이언트가 보내지 않는다 — 전역은 저장된 값을 유지하고, 없으면 ""
-			cur, err := settings.Get(r.Context(), a.db, s.userID, scope, owner, repo)
+			cur, err := a.getRecord(r, s.userID, pc, scope, owner, repo)
 			if err != nil {
 				a.internal(w, r, err)
 				return
@@ -109,7 +146,13 @@ func (a *api) putSettings(scope settings.Scope) func(http.ResponseWriter, *http.
 				in.IgnoredCopyExclude = &v
 			}
 		}
-		rec, err := settings.Upsert(r.Context(), a.db, s.userID, scope, owner, repo, in, a.now())
+		var rec settings.Record
+		var err error
+		if pc != "" {
+			rec, err = settings.UpsertForDevice(r.Context(), a.db, s.userID, pc, scope, owner, repo, in, a.now())
+		} else {
+			rec, err = settings.Upsert(r.Context(), a.db, s.userID, scope, owner, repo, in, a.now())
+		}
 		if err != nil {
 			a.internal(w, r, err)
 			return
@@ -125,7 +168,18 @@ func (a *api) getEffective(w http.ResponseWriter, r *http.Request, s session) {
 		writeAPIError(w, e)
 		return
 	}
-	eff, err := settings.GetEffective(r.Context(), a.db, s.userID, owner, repo)
+	pc, e := pcID(r)
+	if e != nil {
+		writeAPIError(w, e)
+		return
+	}
+	var eff settings.Effective
+	var err error
+	if pc != "" {
+		eff, err = settings.GetEffectiveForDevice(r.Context(), a.db, s.userID, pc, owner, repo)
+	} else {
+		eff, err = settings.GetEffective(r.Context(), a.db, s.userID, owner, repo)
+	}
 	if err != nil {
 		a.internal(w, r, err)
 		return

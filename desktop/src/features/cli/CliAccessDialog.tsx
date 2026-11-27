@@ -20,13 +20,15 @@ export interface CliAccessDialogProps {
 }
 
 export function CliAccessDialog({ open, onOpenChange }: CliAccessDialogProps) {
+  const hosted = !!useServerStore((s) => s.status?.url)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>원격 CLI 접속</DialogTitle>
           <DialogDescription>
-            원격 서버에 minmo CLI 를 설치하고 SSH 로 접속해 이슈·worktree 를 관리합니다. 원격 CLI 는 SSH 역터널로 이 PC 의 서버를 씁니다.
+            원격 서버에 minmo CLI 를 설치하고 SSH 로 접속해 이슈·worktree 를 관리합니다.{' '}
+            {hosted ? '원격 CLI 는 이 앱과 같은 서버에 직접 붙습니다.' : '원격 CLI 는 SSH 역터널로 이 PC 의 서버를 씁니다.'}
           </DialogDescription>
         </DialogHeader>
         {open && <CliAccessBody />}
@@ -52,6 +54,8 @@ function CliAccessBody() {
   const [error, setError] = useState<string | null>(null)
   const issue = useMutation({ mutationFn: () => api.issueCliCode() })
   const port = portOf(useServerStore((s) => s.baseUrl))
+  // 배포된 서버를 쓰면 원격 CLI 도 그 서버에 직접 붙는다 — SSH 역터널이 필요 없다
+  const hostedUrl = useServerStore((s) => s.status?.url) ?? null
   const sshExample = sshConfigExample(port)
 
   useEffect(() => {
@@ -109,24 +113,35 @@ function CliAccessBody() {
         </div>
       </section>
 
-      <section aria-labelledby={`${uid}-ssh`} className="grid gap-2">
-        <h3 id={`${uid}-ssh`} className="text-sm font-medium">
-          2. SSH 설정 (이 PC 의 ~/.ssh/config)
-        </h3>
-        <pre className="overflow-x-auto rounded bg-muted p-3 text-xs" data-testid="ssh-config">
-          {sshExample}
-        </pre>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => void copy(sshExample, 'SSH 설정 예시를 복사했습니다')}>
-            <CopyIcon /> 설정 복사
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            `ssh my-server` 로 접속한 뒤 `minmo doctor` 로 연결을 확인합니다. 원격에 `~/.minmo` 폴더가 있어야 합니다.
-          </span>
-        </div>
-        <p className="text-xs text-muted-foreground">{SSH_SERVER_NOTE}</p>
-        <p className="text-xs text-muted-foreground">{sshWindowsNote(port)}</p>
-      </section>
+      {hostedUrl ? (
+        <section aria-labelledby={`${uid}-server`} className="grid gap-2">
+          <h3 id={`${uid}-server`} className="text-sm font-medium">
+            2. 서버 연결
+          </h3>
+          <p className="text-xs text-muted-foreground" data-testid="cli-hosted-note">
+            SSH 설정은 필요 없습니다. 원격 CLI 는 {hostedUrl} 에 직접 붙습니다. 접속한 뒤 `minmo doctor` 로 연결을 확인합니다.
+          </p>
+        </section>
+      ) : (
+        <section aria-labelledby={`${uid}-ssh`} className="grid gap-2">
+          <h3 id={`${uid}-ssh`} className="text-sm font-medium">
+            2. SSH 설정 (이 PC 의 ~/.ssh/config)
+          </h3>
+          <pre className="overflow-x-auto rounded bg-muted p-3 text-xs" data-testid="ssh-config">
+            {sshExample}
+          </pre>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => void copy(sshExample, 'SSH 설정 예시를 복사했습니다')}>
+              <CopyIcon /> 설정 복사
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              `ssh my-server` 로 접속한 뒤 `minmo doctor` 로 연결을 확인합니다. 원격에 `~/.minmo` 폴더가 있어야 합니다.
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">{SSH_SERVER_NOTE}</p>
+          <p className="text-xs text-muted-foreground">{sshWindowsNote(port)}</p>
+        </section>
+      )}
 
       <SessionsSection uid={uid} setStatus={setStatus} setError={setError} />
 

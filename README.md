@@ -28,11 +28,11 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 
 ### 처음 실행
 
-1. 설치 파일을 실행하고 minmo 를 켠다. 서버(`minmo-server`)가 앱과 함께 `127.0.0.1:8787` 에서 시작된다.
+1. 설치 파일을 실행하고 minmo 를 켠다. 앱은 배포된 서버(`https://minmo-cli-production.up.railway.app`)에 붙는다. 내장 서버(`minmo-server`)는 띄우지 않는다.
 2. **GitHub로 로그인** 을 누르면 화면에 8자리 코드가 보이고 브라우저에 `github.com/login/device` 가 열린다.
 3. 브라우저에서 그 코드를 입력하고 승인하면 앱이 자동으로 로그인된다. OAuth App 을 따로 등록할 필요가 없다. 조직 저장소가 보이지 않으면 그 조직의 **Third-party access** 에서 minmo 앱을 승인한다.
 
-서버 설정은 로그인 화면과 상단 바의 서버 아이콘에서 연다.
+서버 설정은 로그인 화면과 상단 바의 서버 아이콘에서 연다. 포트·토큰 암호화 키·서버 로그는 내장 서버를 쓰는 debug 빌드에만 해당한다(배포 빌드의 서버 설정에는 서버 주소만 나온다).
 
 | 항목 | 내용 |
 |------|------|
@@ -41,6 +41,7 @@ GitHub 조직 > 저장소 > 이슈를 트리로 보여 주고, 이슈를 열면 
 
 - 서버의 토큰 암호화 키는 처음 실행할 때 만들어 OS 키체인에 둔다(입력할 필요 없음).
 - 데이터: 설정·DB 는 `%APPDATA%\com.minmo.desktop`(`server.json`, `minmo.db`), 서버 로그는 `%LOCALAPPDATA%\com.minmo.desktop\logs\server.log`(직전 실행은 `server.prev.log`). 서버 설정의 **로그 폴더 열기** 로 연다.
+- 예전 버전이 쓰던 `minmo.db` 는 지우지 않지만 더 읽지 않는다. 배포된 서버로 바뀐 뒤 처음 한 번 다시 로그인한다(메모·설정은 옮겨지지 않는다).
 - 서버를 시작하지 못하면(예: 포트를 다른 프로그램이 사용) 원인과 [다시 시작]·[서버 설정]이 나온다. 앱이 비정상 종료해도 서버는 함께 끝난다.
 
 ## 모노레포 구조
@@ -172,7 +173,7 @@ npm run e2e        # Playwright(Tauri mock)
 Tauri 네이티브 빌드는 Rust(cargo)와 Go 가 필요하다. 서버는 사이드카로 설치 파일에 들어간다.
 
 - `npm run build:server --workspace desktop` 이 `desktop/src-tauri/binaries/minmo-server-<host triple>[.exe]` 를 빌드한다. `tauri dev`·`tauri build` 는 먼저 이것을 실행한다. `cargo test`·`clippy` 를 직접 돌릴 때도 먼저 한 번 실행해 둔다(없으면 Tauri 빌드 스크립트가 실패).
-- 앱은 시작할 때 서버를 띄우고 그 포트로 붙는다. `VITE_MINMO_SERVER` 를 주면(개발·Playwright) 그 주소를 대신 쓴다.
+- 배포 빌드는 서버를 띄우지 않고 `HOSTED_SERVER_URL`(`desktop/src-tauri/src/server.rs`, CSP `connect-src` 와 맞춘다)에 붙는다. debug 빌드는 시작할 때 서버를 띄우고 그 포트로 붙는다. `VITE_MINMO_SERVER` 를 주면(개발·Playwright) 그 주소를 대신 쓴다.
 - debug 빌드 전용 env
   - `MINMO_DESKTOP_PROFILE=<폴더>`: 설정·DB·로그를 그 폴더에 두고 키체인 서비스를 `com.minmo.desktop.dev` 로 분리한다.
   - `MINMO_EXTERNAL_SERVER=1`: 사이드카를 띄우지 않는다(따로 띄운 서버 + `VITE_MINMO_SERVER`).
@@ -293,6 +294,17 @@ worktree 를 새로 만들면 `.gitignore` 로 빠진 파일(`.env` 등)을 원�
 - **설정:** 전역·조직·저장소 설정의 "무시된 파일 가져오기"(`ignoredCopyExclude` — 제외 이름을 한 줄에 하나, `off` 면 가져오지 않음).
 - **순서:** [로컬 파일] 에 보관해 둔 파일 → 무시된 파일 → 생성 후 스크립트. 이미 있는 파일은 덮어쓰지 않으므로 보관해 둔 파일이 우선한다. 심볼릭 링크는 따라가지 않는다.
 - 일부 폴더만 체크아웃하는 저장소는 그 폴더 안과 최상위 파일만 가져온다. 일부 파일을 복사하지 못해도 나머지는 복사하고, 이슈는 열리며 준비 기록에 사유가 남는다. worktree 삭제는 진행 중인 복사가 끝난 뒤에 이뤄진다.
+
+## 경로·스크립트 공유 (PC 별 설정)
+
+같은 계정으로 로그인한 PC 들은 배포된 서버의 설정·메모를 함께 쓴다. 다만 그 PC 에만 맞는 값은 PC 마다 따로 둘 수 있다.
+
+- 전역 설정의 **경로·스크립트를 다른 PC 와 공유** 가 꺼져 있으면(기본) 작업 폴더 경로(`worktreePath`)·메인 clone 경로(`mainClonePath`)·생성 후 스크립트(`postCreateScript`, `postCreateScriptPosix`)·무시된 파일 가져오기(`ignoredCopyExclude`)를 이 PC 에만 저장한다(전역·조직·저장소 설정 모두). 켜면 다른 PC 와 같은 값을 쓴다.
+- 브랜치 이름 틀·기타 브랜치 이름·sparse 경로와 메모는 언제나 함께 쓴다.
+- 처음 끌 때는 지금 함께 쓰는 값이 그대로 보이고, 저장한 뒤부터 이 PC 의 값이 따로 간다. 다시 켜면 함께 쓰는 값으로 돌아간다(이 PC 에 저장한 값은 서버에 남는다).
+- 이 PC 에 따로 저장하지 않은 단계(전역·조직·저장소)는 함께 쓰는 값을 그대로 쓴다. 그래서 다른 PC 나 CLI 가 함께 쓰는 생성 후 스크립트를 바꾸면, 그 단계를 따로 저장하지 않은 PC 에서도 그 스크립트가 실행된다. 막으려면 그 단계의 설정을 이 PC 에서 한 번 저장한다.
+- 배포 순서: 서버를 먼저 배포한다. 데스크탑은 기본으로 `X-Minmo-Pc` 를 보내므로, 이 헤더를 모르는 예전 서버는 CORS preflight 에서 설정 요청을 거절한다.
+- 동작: 데스크탑이 설정 요청에 `X-Minmo-Pc: <이 PC 의 UUID>` 를 붙인다(`server.json` 의 `pcId`, 처음 실행할 때 만든다). 서버는 그 값이 있으면 위 필드를 `device_settings` 표에서 읽고 쓴다. 원격 화면의 요청에는 호스트 PC 가 자기 값을 붙인다.
 
 ## 설정 동기화 (페어링 코드)
 
@@ -455,13 +467,13 @@ go run ./cmd/minmo-sync        # 기본 127.0.0.1:8788, 외부 공개는 MINMO_A
 ## 원격 CLI (SSH)
 
 원격 서버에 `minmo` CLI 를 설치하면, SSH 로 접속한 그 서버의 터미널에서 데스크탑과 공유하는 데이터(메모·설정·보일 저장소)를 보고 바꿀 수 있다.
-데이터는 이 PC 의 minmo 서버에 있고, 원격 CLI 는 **SSH 역터널**로 그 서버를 쓴다(서버는 계속 `127.0.0.1` 에서만 듣는다).
+데이터는 배포된 minmo 서버에 있고, 원격 CLI 는 그 서버에 직접 붙는다(SSH 설정이 필요 없다). 직접 띄운 서버를 쓰려면 `MINMO_SERVER`(주소)나 `MINMO_SOCKET`(SSH 역터널 소켓)을 정한다.
 worktree·터미널은 CLI 가 아니라 데스크탑의 [원격 호스트](#원격-호스트-ssh) 기능으로 다룬다.
 
 ### 요구 사항(원격)
 
 - Linux·macOS·Windows, Node.js 22.12 이상
-- 원격 CLI 를 쓰는 동안 이 PC 의 데스크탑 앱(서버)이 켜져 있어야 한다
+- 인터넷 연결(배포된 서버에 붙는다). 직접 띄운 서버를 SSH 역터널로 쓸 때만 그 PC 의 서버가 켜져 있어야 한다
 - 원격이 Windows 면 [Windows 에서 쓰기](#windows-에서-쓰기) 를 본다
 
 ### 설치
@@ -484,7 +496,9 @@ mkdir -p ~/.minmo
 - Node.js 22.12 이상이 필요하다. Ubuntu 기본 apt 의 `nodejs` 는 이보다 낮을 수 있으니 nvm 이나 NodeSource 로 22 를 설치한다.
 - 저장소에서 직접 만들려면 `npm ci && npm run pack:cli` → `dist/kangmomin-minmo-cli-<버전>.tgz` 를 원격에 복사해 `npm i -g ./kangmomin-minmo-cli-<버전>.tgz`.
 
-### SSH 설정(이 PC 의 `~/.ssh/config`)
+### SSH 설정(이 PC 의 `~/.ssh/config`) — 직접 띄운 서버를 쓸 때만
+
+배포된 서버(기본)를 쓰면 이 절은 필요 없다. debug 빌드처럼 PC 에서 직접 띄운 서버를 원격에서 쓰려면 아래처럼 역터널하고 원격에서 `MINMO_SOCKET` 을 정한다.
 
 ```
 Host my-server
@@ -494,10 +508,10 @@ Host my-server
 ```
 
 - 데스크탑 서버 설정에서 포트를 바꿨다면 `8787` 대신 그 포트를 쓴다(데스크탑 "원격 CLI 접속" 화면의 예시는 설정된 포트로 보여 준다). 원격 CLI 를 쓰는 동안 데스크탑 앱(서버)이 켜져 있어야 하므로, 창을 닫을 때 **트레이로 최소화** 를 고르면 편하다.
-- TCP 포트 대신 **Unix 소켓**으로 역터널한다 — 원격의 다른 사용자가 포트로 접근하거나, 포트 충돌로 토큰이 엉뚱한 곳으로 가는 일을 막는다. CLI 는 `MINMO_SERVER` 를 명시하지 않으면 소켓만 쓰고(127.0.0.1:8787 로 넘어가지 않음), 소켓 소유자가 자신이 아니면 연결하지 않는다.
+- TCP 포트 대신 **Unix 소켓**으로 역터널한다 — 원격의 다른 사용자가 포트로 접근하거나, 포트 충돌로 토큰이 엉뚱한 곳으로 가는 일을 막는다. CLI 는 `MINMO_SOCKET` 을 명시했을 때만 소켓을 쓰고(127.0.0.1:8787 로는 넘어가지 않음), 소켓 소유자가 자신이 아니면 연결하지 않는다.
 - 원격 **sshd_config** 에 `StreamLocalBindUnlink yes` 가 있어야 재접속 때 이전 소켓을 바꿔 쓴다(관리자 설정, 클라이언트 쪽 같은 이름의 옵션은 RemoteForward 에 효과가 없다). 없으면 재접속 전에 원격에서 `rm ~/.minmo/server.sock` — `minmo doctor` 가 남은 소켓을 알려 준다. 같은 이유로 `ExitOnForwardFailure` 는 넣지 않는다(남은 소켓 때문에 접속 자체가 막힌다).
 - 원격 sshd 가 `AllowStreamLocalForwarding` 을 허용해야 한다(기본 허용). 원격에 `~/.minmo` 폴더가 먼저 있어야 한다.
-- 소켓 대신 다른 주소를 쓰려면 `MINMO_SERVER=http://…`, 소켓 경로는 `MINMO_SOCKET`.
+- 역터널 소켓을 쓰려면 원격에서 `MINMO_SOCKET=~/.minmo/server.sock` 을 정한다(정하지 않으면 배포된 서버에 붙는다). 다른 주소는 `MINMO_SERVER=http://…`.
 
 ### 로그인
 
@@ -522,13 +536,13 @@ CLI 는 시작할 때 서버 계정이 로그인한 계정과 같은지 확인�
 
 - `minmo` 만 입력하면 도움말을 보여 준다(명령을 주지 않았으므로 종료 코드 1). 없는 명령은 `unknown command` 로 알린다.
 - 이전 버전의 TUI 와 `ls`·`new`·`open`·`rm`·`mode`(로컬 모드)·`terminal`·`base-dir`·`base-repo` 는 없앴다. worktree·터미널·이슈 등록은 데스크탑(원격 호스트 포함)에서 한다.
-- 설정의 경로는 기기 간에 공유되므로 `~` 로 시작하게 둔다.
+- CLI 는 다른 PC 와 함께 쓰는 설정 값을 읽고 쓴다(데스크탑이 이 PC 에만 저장한 경로·스크립트는 보이지 않는다). 함께 쓰는 경로는 `~` 로 시작하게 둔다.
 
 ### Windows 에서 쓰기
 
 | | Linux·macOS | Windows |
 |---|---|---|
-| 서버 연결 | 역터널 Unix 소켓 `~/.minmo/server.sock` | **`MINMO_SERVER` 필수**(Node 가 Unix 소켓 파일에 붙지 못한다). 같은 PC: `MINMO_SERVER=http://127.0.0.1:8787` · 원격: `RemoteForward 127.0.0.1:18787 127.0.0.1:8787` + `ExitOnForwardFailure yes` 후 `MINMO_SERVER=http://127.0.0.1:18787` |
+| 서버 연결 | 배포된 서버(기본) · `MINMO_SOCKET` 을 정하면 역터널 Unix 소켓 | 배포된 서버(기본). 직접 띄운 서버는 **`MINMO_SERVER`** 로 정한다(Node 가 Unix 소켓 파일에 붙지 못한다). 같은 PC: `MINMO_SERVER=http://127.0.0.1:8787` · 원격: `RemoteForward 127.0.0.1:18787 127.0.0.1:8787` + `ExitOnForwardFailure yes` 후 `MINMO_SERVER=http://127.0.0.1:18787` |
 | 설정 폴더 | `~/.config/minmo` | `%APPDATA%\minmo` |
 | 기본 편집기(`minmo note`) | `vi` | 메모장을 열고 저장한 뒤 Enter(`EDITOR` 로 바꿈, 예: `code --wait`) |
 

@@ -81,7 +81,10 @@ pub fn tooltip(status: &Status) -> String {
         State::Starting => format!("minmo — 서버 시작 중 ({addr})"),
         State::Failed => "minmo — 서버 오류".to_string(),
         State::Stopped => "minmo — 서버 정지".to_string(),
-        State::External => "minmo — 외부 서버".to_string(),
+        State::External => match status.url.as_deref() {
+            Some(url) => format!("minmo — 서버 {}", url.trim_start_matches("https://")),
+            None => "minmo — 외부 서버".to_string(),
+        },
     }
 }
 
@@ -180,16 +183,21 @@ mod tests {
 
     #[test]
     fn tooltip_shows_address_while_running() {
-        let s = |state| Status {
-            state,
-            port: 18787,
-            message: None,
-        };
+        let s = |state| Status::new(state, 18787, None);
         assert_eq!(
             tooltip(&s(State::Running)),
             "minmo — 서버 실행 중 (127.0.0.1:18787)"
         );
         assert_eq!(tooltip(&s(State::Failed)), "minmo — 서버 오류");
+    }
+
+    #[test]
+    fn tooltip_shows_hosted_server() {
+        let mut s = Status::new(State::External, 18787, None);
+        s.url = Some("https://minmo.example".into());
+        assert_eq!(tooltip(&s), "minmo — 서버 minmo.example");
+        s.url = None;
+        assert_eq!(tooltip(&s), "minmo — 외부 서버");
     }
 }
 

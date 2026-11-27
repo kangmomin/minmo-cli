@@ -43,6 +43,13 @@ describe('helpers', () => {
     expect(sshConfigExample(18787)).toContain('RemoteForward /home/<사용자>/.minmo/server.sock 127.0.0.1:18787')
     expect(sshWindowsNote(18787)).toContain('RemoteForward 127.0.0.1:18787 127.0.0.1:18787')
   })
+
+  it('앱이 서버 주소를 알려 주면(배포 빌드) 내장 서버 포트 대신 그 주소를 쓴다', () => {
+    expect(serverBaseUrl(8787, 'https://minmo.example')).toBe('https://minmo.example')
+    expect(serverBaseUrl(18787, null)).toBe('http://127.0.0.1:18787')
+    expect(statusText({ state: 'external', port: 8787, message: null, url: 'https://minmo.example' })).toBe('연결됨 · https://minmo.example')
+    expect(statusText({ state: 'external', port: 8787, message: null })).toContain('외부 서버')
+  })
 })
 
 describe('ServerSettingsDialog', () => {
@@ -60,6 +67,16 @@ describe('ServerSettingsDialog', () => {
     expect(screen.queryByLabelText('Client ID')).toBeNull()
     expect(screen.queryByLabelText('Client Secret')).toBeNull()
     expect(screen.queryByText(/OAuth App/)).toBeNull()
+  })
+
+  it('내장 서버를 쓰지 않으면(배포 빌드) 서버 주소만 보여 주고 포트·다시 시작·로그는 숨긴다', async () => {
+    const fake = createFakeTauri({ serverSettingsGet: async () => SERVER_SETTINGS })
+    useServerStore.setState({ status: { state: 'external', port: 8787, message: null, url: 'https://minmo.example' }, settingsOpen: true })
+    render(<ServerSettingsDialog tauri={fake.tauri} />)
+    expect(await screen.findByTestId('server-status')).toHaveTextContent('연결됨 · https://minmo.example')
+    expect(screen.queryByLabelText('포트')).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 시작' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '로그 폴더 열기' })).toBeNull()
   })
 
   it('바뀐 값만 저장하고 닫는다', async () => {

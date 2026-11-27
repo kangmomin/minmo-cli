@@ -18,6 +18,13 @@ export function useServerStatusSubscription(tauri: TauriApi): ServerStatus | nul
       if (!alive) return
       gotEvent = true
       setStatus(s)
+      // 다른 창에서 경로·스크립트 공유를 바꾸면 상태가 한 번 더 온다 — 이 창도 PC 식별자를 맞춘다
+      if (tauri.runtime === 'native') {
+        void tauri.serverSettingsGet().then(
+          (v) => alive && useServerStore.getState().setPcId(v.pcId ?? null),
+          () => undefined,
+        )
+      }
     }
     // 구독이 등록된 뒤에 현재 상태를 읽는다 — 그 사이 보낸 이벤트(starting → running)를 놓치지 않게
     void (async () => {

@@ -1,4 +1,4 @@
-// 명령이 함께 쓰는 실행 컨텍스트: 데스크탑의 minmo 서버(역터널) API 와 그 위의 공유 데이터(ctx.data), 로그인 정보.
+// 명령이 함께 쓰는 실행 컨텍스트: minmo 서버 API 와 그 위의 공유 데이터(ctx.data), 로그인 정보.
 import type { ApiClient, Me } from '@minmo/api-client'
 
 import { checkLogin, serverBackend } from './backend'
@@ -35,7 +35,7 @@ export async function createContext(o: CreateContextOptions = {}): Promise<Ctx> 
   const env = o.env ?? process.env
   const paths = o.paths ?? defaultPaths(env)
   const creds = await loadCredentials(paths)
-  const server = o.serverTarget ?? resolveServer(paths.socket, env)
+  const server = o.serverTarget ?? resolveServer(env)
   const session = creds?.session ?? null
   const api = o.api ?? createServerApi(server, () => session)
   const out = o.out ?? { log: (s) => console.log(s), error: (s) => console.error(s) }

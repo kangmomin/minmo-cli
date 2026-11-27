@@ -62,6 +62,32 @@ describe('CT-21 메서드별 method · URL · Authorization', () => {
     expect(calls[0].headers.authorization).toBe('Bearer tok')
   })
 
+  it('PC 식별자가 있으면 설정 요청(조회·저장·effective)에만 X-Minmo-Pc 를 붙인다', async () => {
+    const calls: { url: string; headers: Record<string, string> }[] = []
+    let pcId: string | null = 'pc-1'
+    const api = createApiClient({
+      baseUrl: BASE,
+      getToken: () => 'tok',
+      getPcId: () => pcId,
+      fetch: async (input, init) => {
+        const headers: Record<string, string> = {}
+        new Headers(init?.headers).forEach((v, k) => (headers[k] = v))
+        calls.push({ url: String(input), headers })
+        return json(200, {})
+      },
+    })
+    await api.getSettings({ kind: 'global' })
+    await api.putSettings({ kind: 'org', owner: 'o' }, {})
+    await api.getEffective('o', 'r')
+    await api.getNotes('o', 'r', '1')
+    await api.me()
+    expect(calls.map((c) => c.headers['x-minmo-pc'])).toEqual(['pc-1', 'pc-1', 'pc-1', undefined, undefined])
+    // 경로를 함께 쓰면(null) 붙이지 않는다
+    pcId = null
+    await api.getSettings({ kind: 'global' })
+    expect(calls[5].headers['x-minmo-pc']).toBeUndefined()
+  })
+
   it('logout → DELETE /auth/session, Bearer 전송, 204 → undefined', async () => {
     const { api, calls } = setup(() => new Response(null, { status: 204 }))
     await expect(api.logout()).resolves.toBeUndefined()
