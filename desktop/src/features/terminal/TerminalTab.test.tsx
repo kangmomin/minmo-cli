@@ -1833,4 +1833,46 @@ describe('#122 답변 모드 — 입력 세기·패널 하나·설명 연결·�
     expect(fake.tauri.ptyWrite).toHaveBeenCalledWith('pty-1', '\x1b')
     outside.remove()
   })
+
+  it('EC-25 답변 모드 키 줄: 포커스가 키 줄 버튼에 있어도 첫 누름만 포커스를 옮기고 둘째 누름부터 보낸다 — 보이는 패널이 바뀌면(돌아와도) 다시 첫 누름은 포커스만', async () => {
+    media.touch = true
+    let n = 0
+    const fake = createFakeTauri({ ptySpawn: async () => `pty-${++n}` })
+    useUiStore.setState({ panes: { [A.issueId]: { tree: { kind: 'split', dir: 'row', a: { kind: 'leaf', id: P1 }, b: { kind: 'leaf', id: P2 } }, focused: P1, seq: 2 } } })
+    renderWithDeps(<TerminalTab sessions={[A]} activeId={A.issueId} visible singlePane />, makeDeps({ tauri: fake.tauri }))
+    await vi.waitFor(() => expect(Object.keys(useUiStore.getState().terminalIds).sort()).toEqual([P1, P2]))
+    const esc = () => screen.getByRole('button', { name: 'Esc' })
+    // Why: 키보드(Tab → Enter)·스위치·화면 읽기는 누르는 버튼에 포커스를 둔다 — 누를 때마다 포커스가 패널 밖(키 줄)이다.
+    const press = async () => {
+      act(() => esc().focus())
+      expect(document.activeElement?.closest('[data-pane-id]')).toBeNull()
+      fireEvent.click(esc())
+      await act(() => flush())
+    }
+    const writes = () => vi.mocked(fake.tauri.ptyWrite).mock.calls.length
+    const ptyOf = (paneId: string) => useUiStore.getState().terminalIds[paneId]
+    const termOf = (paneId: string) => xterm.instances.find((x) => x.host?.closest('[data-pane-id]')?.getAttribute('data-pane-id') === paneId)
+    const focused = (paneId: string) => termOf(paneId)?.focus.mock.calls.length ?? 0
+
+    await press()
+    expect(writes()).toBe(0)
+    expect(focused(P1)).toBe(1)
+    await press()
+    expect(fake.tauri.ptyWrite).toHaveBeenLastCalledWith(ptyOf(P1), '\x1b')
+    expect(writes()).toBe(1)
+
+    // 자동 이동처럼 보이는 패널이 바뀐다
+    act(() => useUiStore.getState().focusPane(A.issueId, P2))
+    await press()
+    expect(writes()).toBe(1)
+    expect(focused(P2)).toBe(1)
+    // 앞 패널로 돌아와도 다시 묻는다
+    act(() => useUiStore.getState().focusPane(A.issueId, P1))
+    await press()
+    expect(writes()).toBe(1)
+    expect(focused(P1)).toBe(2)
+    await press()
+    expect(fake.tauri.ptyWrite).toHaveBeenLastCalledWith(ptyOf(P1), '\x1b')
+    expect(writes()).toBe(2)
+  })
 })

@@ -1,5 +1,5 @@
 // 화면 키보드에 없는 키 줄 — 휴대폰·태블릿에서 터미널(에이전트 CLI)을 쓸 때 Esc·Tab·방향키·Ctrl+C 를 누를 수 있게 한다.
-import { useSyncExternalStore } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 
 import { goToPane } from '../agents/navigate'
 
@@ -58,12 +58,17 @@ export function TerminalKeyBar({
   paneId: string | null
   singlePane?: boolean
 }) {
+  // Why: 첫 누름으로 고른 패널 — 포커스가 키 줄 버튼에 남는 키보드·스위치·화면 읽기 사용자도 그 뒤에는 보낸다. 패널이 바뀌면 다시 묻는다.
+  const armed = useRef<string | null>(null)
+  useEffect(() => {
+    armed.current = null
+  }, [issueId, paneId])
   const press = (data: string) => {
     if (paneId === null) return
     const focusedPane = document.activeElement?.closest('[data-pane-id]')?.getAttribute('data-pane-id')
     // Why: 자동 이동 직후 누른 키가 사용자가 고르지 않은 세션으로 가지 않게 — 첫 누름은 그 터미널로 포커스만
-    if (singlePane && issueId !== null && focusedPane !== paneId) {
-      goToPane(issueId, paneId, true)
+    if (singlePane && issueId !== null && focusedPane !== paneId && armed.current !== paneId) {
+      if (goToPane(issueId, paneId, true)) armed.current = paneId
       return
     }
     inputs.get(paneId)?.(data)
