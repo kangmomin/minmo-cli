@@ -1,7 +1,9 @@
 // 답변 모드(#122)의 대기열 규칙 — 순수 함수(상태 기계). 화면·타이머는 useAnswerQueue 가 맡는다.
-// 스텁 — Phase 5.2(U3)에서 구현한다(Plan §3).
+import { statusRank } from '../agents/agentStore'
 import type { AgentStatus } from '../agents/agentStore'
+import { byName, rowKey } from '../agents/overview'
 import type { AgentRow } from '../agents/overview'
+import { leafIds } from '../terminal/panes'
 import type { PaneNode } from '../terminal/panes'
 
 /** 답을 보낸 뒤(마지막 입력 뒤) 이만큼 지나야 넘어간다 */
@@ -77,64 +79,195 @@ export type StepInput = {
 export type StepResult = { state: QueueState; go?: { row: AgentRow; reason: 'answered' | 'ended' | 'entry' }; cancelled?: true }
 
 /** 대기열에 오르는 줄 — 이 PC·알려진 에이전트·이슈를 아는 줄, 그 이슈의 패널 트리에 있는 패널만 */
-export function answerRows(_rows: AgentRow[], _panes: Record<string, { tree: PaneNode | null } | undefined>): AgentRow[] {
-  return []
+export function answerRows(rows: AgentRow[], panes: Record<string, { tree: PaneNode | null } | undefined>): AgentRow[] {
+  return rows.filter((r) => {
+    if (r.peer !== undefined || r.agent === 'other' || r.target === null) return false
+    const p = panes[r.issueId]
+    return p === undefined || leafIds(p.tree).includes(r.paneId)
+  })
 }
 
-export function isWaiting(_status: AgentStatus): boolean {
-  return false
+export function isWaiting(status: AgentStatus): boolean {
+  return status !== 'working'
 }
 
-export function skipRow(skipped: Skipped, _row: AgentRow): Skipped {
-  return skipped
+/** Why: 건너뛴 기록은 그때의 기다림에만 쓴다 — 다시 기다리는 상태가 되면(waitingSince 가 바뀜) 원래 순서로 돌아온다. */
+const skipOf = (skipped: Skipped, r: AgentRow) => {
+  const s = skipped[rowKey(r)]
+  return s !== undefined && s.waitingSince === r.waitingSince ? s : undefined
 }
 
-export function queueOrder(_rows: AgentRow[], _skipped: Skipped, _blocked: Blocked): { waiting: AgentRow[]; working: AgentRow[]; blockedRows: AgentRow[] } {
-  return { waiting: [], working: [], blockedRows: [] }
+export function skipRow(skipped: Skipped, row: AgentRow): Skipped {
+  if (row.waitingSince === null) return skipped
+  const seq = Math.max(0, ...Object.values(skipped).map((s) => s.seq)) + 1
+  return { ...skipped, [rowKey(row)]: { waitingSince: row.waitingSince, seq } }
 }
 
-export function urgentRows(_waiting: AgentRow[], _session: Session | null, _skipped: Skipped): AgentRow[] {
-  return []
+export function queueOrder(
+  rows: AgentRow[],
+  skipped: Skipped,
+  blocked: Blocked,
+): { waiting: AgentRow[]; working: AgentRow[]; blockedRows: AgentRow[] } {
+  const waitingAll = rows.filter((r) => isWaiting(r.status))
+  const open = waitingAll.filter((r) => blocked[rowKey(r)] !== true)
+  const fresh = open
+    .filter((r) => !skipOf(skipped, r))
+    .sort((a, b) => statusRank(a.status) - statusRank(b.status) || (a.waitingSince ?? 0) - (b.waitingSince ?? 0) || byName(a, b))
+  const later = open.filter((r) => skipOf(skipped, r)).sort((a, b) => (skipOf(skipped, a)?.seq ?? 0) - (skipOf(skipped, b)?.seq ?? 0))
+  return {
+    waiting: [...fresh, ...later],
+    working: rows.filter((r) => !isWaiting(r.status)).sort(byName),
+    blockedRows: waitingAll.filter((r) => blocked[rowKey(r)] === true).sort(byName),
+  }
 }
 
-const inert: Session = { issueId: null, paneId: null, shownWaiting: false, waitStart: null, shownStatus: null, agentSeen: false, goneAt: null, closedAt: null }
-
-export function sessionFromRow(_row: AgentRow): Session {
-  return { ...inert }
+export function urgentRows(waiting: AgentRow[], session: Session | null, skipped: Skipped): AgentRow[] {
+  if (session === null || session.shownStatus === null) return []
+  const { paneId } = session
+  const rank = statusRank(session.shownStatus)
+  return waiting.filter((r) => r.paneId !== paneId && !skipOf(skipped, r) && statusRank(r.status) < rank)
 }
 
-export function newSession(_shown: Shown): Session {
-  return { ...inert }
+export function sessionFromRow(row: AgentRow): Session {
+  const waiting = isWaiting(row.status)
+  return {
+    issueId: row.issueId,
+    paneId: row.paneId,
+    shownWaiting: waiting,
+    waitStart: row.waitingSince,
+    shownStatus: waiting ? row.status : null,
+    agentSeen: true,
+    goneAt: null,
+    closedAt: null,
+  }
 }
 
-export function blockRow(state: QueueState, _row: AgentRow): QueueState {
-  return state
+export function newSession(shown: Shown): Session {
+  return {
+    issueId: shown.issueId,
+    paneId: shown.paneId,
+    shownWaiting: false,
+    waitStart: null,
+    shownStatus: null,
+    agentSeen: false,
+    goneAt: null,
+    closedAt: null,
+  }
 }
 
-export function step(state: QueueState, _input: StepInput): StepResult {
-  return { state }
+export function blockRow(state: QueueState, row: AgentRow): QueueState {
+  return { ...state, blocked: { ...state.blocked, [rowKey(row)]: true } }
 }
 
-export function beginPending(state: QueueState, _row: AgentRow, _token: number, _from: Shown, _now: number, _reason: PendingReason): QueueState {
-  return state
+function follow(prev: Session | null, input: StepInput): Session {
+  const { shown } = input
+  if (prev !== null && prev.issueId === shown.issueId && prev.paneId === shown.paneId) return prev
+  const closed = prev !== null && prev.issueId === shown.issueId && !input.sessionPaneExists && prev.agentSeen
+  return { ...newSession(shown), closedAt: closed ? input.now : null }
 }
 
-export function hitPending(state: QueueState, _row: AgentRow): QueueState {
-  return state
+function observe(s: Session, input: StepInput): Session {
+  const { row } = input
+  const next = { ...s }
+  if (row) {
+    next.agentSeen = true
+    next.goneAt = null
+    if (isWaiting(row.status)) {
+      next.shownWaiting = true
+      next.waitStart = row.waitingSince
+      next.shownStatus ??= row.status
+      next.closedAt = null
+    } else next.shownStatus = null
+  }
+  if (input.paneHasAgent) next.goneAt = null
+  else if (!row && next.agentSeen && next.goneAt === null) {
+    // Why: 같은 패널에서 새로 띄운 에이전트가 지난 기다림을 물려받으면, 띄우려고 친 입력을 "답을 보냄"으로 읽는다.
+    return { ...next, goneAt: input.now, shownWaiting: false, waitStart: null, shownStatus: null }
+  }
+  return next
 }
 
-export function failPending(state: QueueState, _row: AgentRow): QueueState {
-  return state
+export function step(state: QueueState, input: StepInput): StepResult {
+  const { now, shown, row, lastInput } = input
+  let pending = state.pending
+  let cancelled = false
+  if (pending) {
+    // Why: 이동 중 같은 이슈 안의 화면 변화는 열기 과정이라 사용자 선택이 아니다 — 다른 이슈를 고르거나 옛 패널에 쳐야 취소한다.
+    const elsewhere = shown.issueId !== pending.from.issueId && shown.issueId !== pending.issueId
+    const typedInFrom = shown.issueId === pending.from.issueId && shown.paneId === pending.from.paneId && input.fromInput > pending.at
+    if (!elsewhere && !typedInFrom) return { state }
+    pending = null
+    cancelled = true
+  }
+
+  const session = observe(follow(state.session, input), input)
+  let entry = state.entry !== null && state.entry.issueId === shown.issueId ? state.entry : null
+  let blocked = state.blocked
+  if (row && input.shownReady && blocked[rowKey(row)] === true) {
+    // Why: 줄은 공유 PTY 목록에서 와서 열 수 있다는 증거가 아니다 — 이 창에서 열려 보일 때만 푼다.
+    blocked = { ...blocked }
+    delete blocked[rowKey(row)]
+  }
+  const done = (go?: StepResult['go']): StepResult => {
+    const next: QueueState = { session, entry, pending, skipped: state.skipped, blocked }
+    return go ? { state: next, go } : cancelled ? { state: next, cancelled: true } : { state: next }
+  }
+  const isBlocked = (r: AgentRow) => blocked[rowKey(r)] === true
+  const head = input.waiting.find((r) => r.paneId !== shown.paneId && !isBlocked(r))
+  const waitingHere = row !== null && isWaiting(row.status) && !isBlocked(row)
+  const quiet = now - lastInput >= ADVANCE_INPUT_GUARD_MS
+
+  if (input.overlay || input.narrowListOpen) {
+    entry = null
+    return done()
+  }
+
+  if (entry) {
+    if (lastInput > entry.startedAt) {
+      entry = null
+      return done()
+    }
+    if (entry.until === null || (row === null && shown.paneId !== null && now < entry.until)) return done()
+    entry = null
+    return done(!waitingHere && head && quiet ? { row: head, reason: 'entry' } : undefined)
+  }
+
+  const answered =
+    row !== null &&
+    row.status === 'working' &&
+    session.shownWaiting &&
+    session.waitStart !== null &&
+    lastInput > session.waitStart &&
+    lastInput <= row.since + ECHO_GRACE_MS
+  if (answered && quiet && head) return done({ row: head, reason: 'answered' })
+
+  // Why: 끝난 뒤 그 패널(닫았으면 보이는 옆 패널)에 입력했으면 사용자가 그 패널을 쓰는 중이다.
+  const endedAt = session.goneAt ?? session.closedAt
+  if (endedAt !== null && !waitingHere && lastInput <= endedAt && now - endedAt >= ENDED_CONFIRM_MS && quiet && head)
+    return done({ row: head, reason: 'ended' })
+  return done()
 }
 
-export function startEntry(state: QueueState, _shown: Shown, _now: number): QueueState {
-  return state
+export function beginPending(state: QueueState, row: AgentRow, token: number, from: Shown, now: number, reason: PendingReason): QueueState {
+  return { ...state, entry: null, pending: { token, issueId: row.issueId, paneId: row.paneId, row, from, at: now, reason } }
 }
 
-export function entryReady(state: QueueState, _now: number): QueueState {
-  return state
+export function hitPending(state: QueueState, row: AgentRow): QueueState {
+  return { ...state, session: sessionFromRow(row), pending: null }
+}
+
+export function failPending(state: QueueState, row: AgentRow): QueueState {
+  return { ...blockRow(state, row), pending: null }
+}
+
+export function startEntry(state: QueueState, shown: Shown, now: number): QueueState {
+  return { ...state, session: null, entry: { issueId: shown.issueId, startedAt: now, until: null } }
+}
+
+export function entryReady(state: QueueState, now: number): QueueState {
+  return state.entry ? { ...state, entry: { ...state.entry, until: now + ENTRY_GRACE_MS } } : state
 }
 
 export function cancelAll(state: QueueState): QueueState {
-  return state
+  return { ...state, pending: null, entry: null }
 }
