@@ -115,4 +115,22 @@ describe('#122 답변 모드의 새 글자색·포커스 표시', () => {
     expect(src).toContain('focus-visible:ring-ring')
     expect(src).not.toMatch(/focus-visible:ring-ring\/\d+/)
   })
+
+  it('EC-15 세션 목록의 지금 줄·hover 줄(bg-accent)은 흐린 글자를 text-foreground 로 바꾸고, 지금 줄은 배경색만이 아니라 굵게도 보인다', () => {
+    // Why: 라이트 테마의 --muted-foreground 는 --accent 위에서 4.5:1 이 안 된다 — 이 줄들은 --foreground 로 읽혀야 한다.
+    const light = themeBlock(':root')
+    expect(ratio(surfaceLuminance(light, 'muted-foreground'), surfaceLuminance(light, 'accent'))).toBeLessThan(4.5)
+    for (const selector of [':root', String.raw`\.dark`, String.raw`\.dark\.ghostty`]) {
+      const block = themeBlock(selector)
+      expect(ratio(surfaceLuminance(block, 'foreground'), surfaceLuminance(block, 'accent')), selector).toBeGreaterThanOrEqual(4.5)
+    }
+    const src = read('./features/answer/AnswerSessionList.tsx')
+    const row = src.slice(src.indexOf('function SessionRow'), src.indexOf('</button>', src.indexOf('function SessionRow')))
+    const classes = [...row.matchAll(/className="([^"]*)"/g)].map((m) => m[1].split(' '))
+    const button = classes.find((c) => c.includes('aria-[current=true]:bg-accent'))
+    expect(button).toEqual(expect.arrayContaining(['group', 'hover:bg-accent', 'aria-[current=true]:font-medium']))
+    const muted = classes.filter((c) => c.includes('text-muted-foreground'))
+    expect(muted.length).toBeGreaterThanOrEqual(3)
+    for (const c of muted) expect(c).toEqual(expect.arrayContaining(['group-hover:text-foreground', 'group-aria-[current=true]:text-foreground']))
+  })
 })

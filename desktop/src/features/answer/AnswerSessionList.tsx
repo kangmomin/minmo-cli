@@ -96,17 +96,17 @@ function SessionRow({ row, current, reasonId, onPick }: { row: AgentRow; current
         aria-disabled={reasonId !== null || undefined}
         aria-describedby={reasonId ?? undefined}
         onClick={onPick}
-        className="grid w-full min-w-0 gap-0.5 rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-[current=true]:bg-accent"
+        className="group grid w-full min-w-0 gap-0.5 rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-[current=true]:bg-accent aria-[current=true]:font-medium"
       >
         <span className="flex min-w-0 items-center gap-2">
           <StatusDot status={row.status} />
           <span className="text-xs text-foreground">{STATUS_LABEL[row.status]}</span>
-          <Elapsed aria-hidden="true" since={sinceOf(row)} className="ml-auto shrink-0 text-xs text-muted-foreground" />
+          <Elapsed aria-hidden="true" since={sinceOf(row)} className="ml-auto shrink-0 text-xs text-muted-foreground group-hover:text-foreground group-aria-[current=true]:text-foreground" />
         </span>
         <span className="truncate">
-          <span className="text-muted-foreground">{row.repo}</span> {row.issue}
+          <span className="text-muted-foreground group-hover:text-foreground group-aria-[current=true]:text-foreground">{row.repo}</span> {row.issue}
         </span>
-        {row.label && <span className="truncate text-xs text-muted-foreground">{row.label}</span>}
+        {row.label && <span className="truncate text-xs text-muted-foreground group-hover:text-foreground group-aria-[current=true]:text-foreground">{row.label}</span>}
       </button>
       {reasonId !== null && (
         <p id={reasonId} className="px-2 pb-1 text-xs text-destructive">
