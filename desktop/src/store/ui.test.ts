@@ -151,8 +151,9 @@ describe('#122 답변 모드 — 보기 상태(viewMode)·요약 설정', () => 
   it('AC-01 주 창은 보기 상태를 저장해 다시 켜도 답변 모드다 — 답변 모드면 터미널 탭, 모르는 저장 값은 지금 값을 지킨다', async () => {
     useUiStore.getState().setViewMode('answer')
     expect(stored()).toMatchObject({ viewMode: 'answer', tabBeforeAnswer: 'notes' })
-    localStorage.setItem('minmo-ui', JSON.stringify({ state: { viewMode: 'answer', tab: 'files', tabBeforeAnswer: 'issue' }, version: 2 }))
+    // 지금 값을 먼저 바꾼다 — persist 는 setState 마다 저장하므로, 저장 값을 쓴 뒤에 바꾸면 그 값을 덮는다
     useUiStore.setState({ viewMode: 'normal', tab: 'notes', tabBeforeAnswer: 'terminal' })
+    localStorage.setItem('minmo-ui', JSON.stringify({ state: { viewMode: 'answer', tab: 'files', tabBeforeAnswer: 'issue' }, version: 2 }))
     await useUiStore.persist.rehydrate()
     expect(useUiStore.getState()).toMatchObject({ viewMode: 'answer', tab: 'terminal', tabBeforeAnswer: 'issue' })
     localStorage.setItem('minmo-ui', JSON.stringify({ state: { viewMode: 'weird', tabBeforeAnswer: 'nope' }, version: 2 }))
