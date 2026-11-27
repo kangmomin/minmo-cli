@@ -13,6 +13,7 @@ import { useUiStore } from '../../store/ui'
 import { createFakeApi, createFakeGitHub, createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
 import { useAgentStore } from '../agents/agentStore'
+import { WorktreeProvider } from '../issue/useWorktree'
 import { DefaultRow } from './DefaultRow'
 import { Sidebar } from './Sidebar'
 import type { SidebarProps } from './Sidebar'
@@ -37,7 +38,10 @@ function renderSidebar(connection?: SidebarProps['connection']) {
   const github = createFakeGitHub({ listOwners: async () => [ACME], listRepos: async () => [{ owner: 'Acme', name: 'api', defaultBranch: 'main' }] })
   return renderWithDeps(
     <TooltipProvider>
-      <Sidebar connection={connection} onOpenSettings={() => {}} />
+      {/* Why: 범위 창은 그 저장소의 ★기타 행(IssueRow → useIssueActions)을 그리므로 Provider 가 필요하다(windows.test.tsx 와 같다) */}
+      <WorktreeProvider>
+        <Sidebar connection={connection} onOpenSettings={() => {}} />
+      </WorktreeProvider>
     </TooltipProvider>,
     makeDeps({ api, github }),
   )
