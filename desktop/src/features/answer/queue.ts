@@ -117,6 +117,29 @@ export function queueOrder(
   }
 }
 
+export type ListGroups = ReturnType<typeof queueOrder>
+export type ListHold = Record<string, { group: keyof ListGroups; at: number }>
+
+const LIST_GROUPS = ['waiting', 'working', 'blockedRows'] as const
+
+export function listHold(groups: ListGroups): ListHold {
+  const hold: ListHold = {}
+  let at = 0
+  for (const g of LIST_GROUPS) for (const r of groups[g]) hold[rowKey(r)] = { group: g, at: at++ }
+  return hold
+}
+
+/** Why: 고정하는 동안 줄은 그때의 묶음·순서에 둔다(줄 값은 새 것) — 상태가 바뀐 줄이 다른 목록으로 옮겨 포커스를 잃거나 아래 줄을 밀지 않게. 새 줄만 맞는 묶음 끝에 */
+export function holdGroups(groups: ListGroups, hold: ListHold | null): ListGroups {
+  if (!hold) return groups
+  const end = Object.keys(hold).length
+  const at = (r: AgentRow) => hold[rowKey(r)]?.at ?? end
+  const out: ListGroups = { waiting: [], working: [], blockedRows: [] }
+  for (const g of LIST_GROUPS) for (const r of groups[g]) out[hold[rowKey(r)]?.group ?? g].push(r)
+  for (const g of LIST_GROUPS) out[g].sort((a, b) => at(a) - at(b))
+  return out
+}
+
 export function urgentRows(waiting: AgentRow[], session: Session | null, skipped: Skipped): AgentRow[] {
   if (session === null || session.shownStatus === null) return []
   const { paneId } = session

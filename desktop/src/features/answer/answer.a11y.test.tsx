@@ -256,6 +256,26 @@ describe('답변 모드 접근성(EC-15)', () => {
     expect(within(summary()).getByRole('heading', { name: '세션 요약' })).toHaveFocus()
   })
 
+  it('EC-15 목록 안에 포커스가 있는 동안 기다리던 줄이 작업 중이 되어도 같은 자리·같은 묶음에 남아 포커스를 잃지 않고 아래 줄도 밀리지 않는다 — 목록을 떠나면 다시 묶는다', async () => {
+    world({ agents: [done(A1, 65_000), attention(B1, 30_000), done(C1, 90_000)] })
+    const { user } = renderApp()
+    await user.click(toggle())
+    // 기다리는 순서: 입력 대기(#2) → 끝남 중 오래 기다린 것(#3 → #1)
+    const [b, c, a] = rows()
+    expect(c).toHaveTextContent('#3 배포')
+    act(() => c.focus())
+    act(() => useAgentStore.getState().set(C1, busy(C1)))
+    expect(c.isConnected).toBe(true)
+    expect(c).toHaveFocus()
+    expect(c).toHaveAttribute('data-status', 'working')
+    const now = rows()
+    expect(now).toHaveLength(3)
+    ;[b, c, a].forEach((el, i) => expect(now[i]).toBe(el))
+    act(() => toggle().focus())
+    await waitFor(() => expect(rows().map((r) => r.getAttribute('data-status'))).toEqual(['attention', 'done', 'working']))
+    expect(rows()[2]).toHaveTextContent('#3 배포')
+  })
+
   it('EC-15 [새 세션] 대화상자를 닫으면 포커스가 사라지지 않고 카드 제목으로 간다', async () => {
     world({ agents: [done(A1, 65_000)] })
     const { user } = renderApp()

@@ -13,7 +13,9 @@ import {
   entryReady,
   failPending,
   hitPending,
+  holdGroups,
   isWaiting,
+  listHold,
   queueOrder,
   sessionFromRow,
   skipRow,
@@ -187,6 +189,24 @@ describe('queueOrder · isWaiting — 순서', () => {
     expect(ids(queueOrder([a, b, c], {}, blocked).blockedRows)).toEqual([B1])
     const bAgain = waitingRow(B1, 'attention', 999)
     expect(ids(queueOrder([a, bAgain, c], {}, blocked).blockedRows)).toEqual([B1])
+  })
+})
+
+describe('listHold · holdGroups — 목록 자리 고정(EC-15)', () => {
+  it('EC-15 고정하는 동안 줄은 그때의 묶음·순서에 두고(줄 값은 새 것) 새 줄만 맞는 묶음 끝에 둔다 — 사라진 줄은 빼고, 고정이 없으면 그대로', () => {
+    const a = waitingRow(A1, 'attention', 100)
+    const b = waitingRow(B1, 'done', 200)
+    const c = waitingRow(C1, 'done', 300)
+    const d = working(D1, 400)
+    const hold = listHold({ waiting: [a, b, c], working: [d], blockedRows: [] })
+    // b 는 작업 중이 되고, a 는 막히고, c 는 사라지고, 새 줄 e 가 맨 앞 순위로 기다린다
+    const bWorking = working(B1, 500)
+    const e = waitingRow(A2, 'attention', 600)
+    const live = { waiting: [e], working: [bWorking, d], blockedRows: [a] }
+    const out = holdGroups(live, hold)
+    expect({ waiting: ids(out.waiting), working: ids(out.working), blockedRows: ids(out.blockedRows) }).toEqual({ waiting: [A1, B1, A2], working: [D1], blockedRows: [] })
+    expect(out.waiting[1]).toBe(bWorking)
+    expect(holdGroups(live, null)).toBe(live)
   })
 })
 

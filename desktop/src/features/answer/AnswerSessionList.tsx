@@ -8,7 +8,8 @@ import { STATUS_LABEL } from '../agents/agentStore'
 import { rowKey } from '../agents/overview'
 import type { AgentRow } from '../agents/overview'
 import { Elapsed } from './Elapsed'
-import { sinceOf } from './queue'
+import { holdGroups, listHold, sinceOf } from './queue'
+import type { ListHold } from './queue'
 import type { AnswerQueue } from './useAnswerQueue'
 
 export interface AnswerSessionListProps {
@@ -20,31 +21,24 @@ export interface AnswerSessionListProps {
 export function AnswerSessionList({ queue, onNewSession, newSessionRef }: AnswerSessionListProps) {
   const uid = useId()
   const { waiting, working, blockedRows, current, pick } = queue
-  const groups = [
-    { key: 'waiting', title: `기다리는 세션 ${waiting.length}`, rows: waiting, blocked: false },
-    { key: 'working', title: `작업 중 ${working.length}`, rows: working, blocked: false },
-    ...(blockedRows.length > 0 ? [{ key: 'blocked', title: `열 수 없음 ${blockedRows.length}`, rows: blockedRows, blocked: true }] : []),
-  ]
 
-  // Why: 누르려던 줄이 상태가 바뀌어 다른 자리로 밀리지 않게 포인터·포커스가 목록 안에 있는 동안 묶음 안 순서를 고정한다.
+  // Why: 누르려던 줄이 상태가 바뀌어 다른 자리·다른 묶음으로 밀리지 않게 포인터·포커스가 목록 안에 있는 동안 줄의 묶음과 순서를 고정한다.
   const inside = useRef({ pointer: false, focus: false })
-  const [frozen, setFrozen] = useState<string[] | null>(null)
-  const liveKeys = groups.flatMap((g) => g.rows.map(rowKey))
+  const [frozen, setFrozen] = useState<ListHold | null>(null)
   const hold = (kind: 'pointer' | 'focus', on: boolean) => {
     const was = inside.current.pointer || inside.current.focus
     inside.current = { ...inside.current, [kind]: on }
     const is = inside.current.pointer || inside.current.focus
-    if (is && !was) setFrozen(liveKeys)
+    if (is && !was) setFrozen(listHold(queue))
     else if (!is && was) setFrozen(null)
   }
-  const arrange = (rows: AgentRow[]) => {
-    if (!frozen) return rows
-    const at = (r: AgentRow) => {
-      const i = frozen.indexOf(rowKey(r))
-      return i < 0 ? frozen.length : i
-    }
-    return [...rows].sort((a, b) => at(a) - at(b))
-  }
+  const shown = holdGroups(queue, frozen)
+  const blocked = new Set(blockedRows.map(rowKey))
+  const groups = [
+    { key: 'waiting', title: `기다리는 세션 ${waiting.length}`, rows: shown.waiting },
+    { key: 'working', title: `작업 중 ${working.length}`, rows: shown.working },
+    ...(blockedRows.length + shown.blockedRows.length > 0 ? [{ key: 'blocked', title: `열 수 없음 ${blockedRows.length}`, rows: shown.blockedRows }] : []),
+  ]
 
   return (
     <nav
@@ -59,7 +53,7 @@ export function AnswerSessionList({ queue, onNewSession, newSessionRef }: Answer
       }}
     >
       <div className="min-h-0 flex-1 overflow-y-auto py-2 pl-2 pr-3">
-        {liveKeys.length === 0 ? (
+        {waiting.length + working.length + blockedRows.length === 0 ? (
           <p className="p-2 text-sm text-muted-foreground">에이전트 세션이 없습니다. [새 세션]으로 시작하세요.</p>
         ) : (
           groups.map((g) => {
@@ -71,8 +65,8 @@ export function AnswerSessionList({ queue, onNewSession, newSessionRef }: Answer
                 </h2>
                 {g.rows.length > 0 && (
                   <ul aria-labelledby={headingId} className="grid gap-0.5">
-                    {arrange(g.rows).map((r, i) => (
-                      <SessionRow key={rowKey(r)} row={r} current={current !== null && rowKey(current) === rowKey(r)} reasonId={g.blocked ? `${headingId}-${i}` : null} onPick={() => pick(r)} />
+                    {g.rows.map((r, i) => (
+                      <SessionRow key={rowKey(r)} row={r} current={current !== null && rowKey(current) === rowKey(r)} reasonId={blocked.has(rowKey(r)) ? `${headingId}-${i}` : null} onPick={() => pick(r)} />
                     ))}
                   </ul>
                 )}
