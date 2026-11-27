@@ -40,7 +40,7 @@ export function TakerHeaderStatus({ issueId }: { issueId: string }) {
 
   const step = run ? Math.min(run.step + 1, run.steps.length) : 0
   const stop = run !== undefined && (run.status === 'queued' || isActive(run))
-  const retry = run?.status === 'failed' ? '자동 실행 다시 시도' : run?.status === 'interrupted' || run?.status === 'stopped' ? '이 단계부터 다시' : null
+  const retry = run?.status === 'failed' ? '자동 실행 다시 시도' : run?.status === 'interrupted' || run?.status === 'stopped' || run?.status === 'manualNext' ? '이 단계부터 다시' : null
 
   return (
     <div className="flex items-center gap-2 text-sm">

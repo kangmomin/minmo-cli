@@ -73,7 +73,7 @@ function TakerBody({ owner, repo, onDone }: { owner: string; repo: string; onDon
   const [announce, setAnnounce] = useState('')
   const pendingFocus = useRef<string | null>(null)
   const alias = useHostsStore((s) => workHostAliasOf(s, owner, repo))
-  const noTmux = useHostsStore((s) => alias !== null && !usesTmux(s, alias))
+  const noTmux = useHostsStore((s) => alias !== null && s.probes[alias] !== undefined && !usesTmux(s, alias))
   const allRuns = useTakerStore((s) => s.runs)
   const check = useTakerStore((s) => s.lastCheck[key])
 
@@ -300,6 +300,7 @@ function TakerBody({ owner, repo, onDone }: { owner: string; repo: string; onDon
           <li>연결 호스트가 tmux 를 쓰지 않는 원격이라 1단계만 자동으로 실행합니다. 끝났는지 알 수 없으므로 그다음은 머리줄이나 아래 실행 목록의 [다음 단계] 로 진행하세요.</li>
         )}
         <li>에이전트를 /exit·Ctrl+C 로 끝내도 그 단계가 끝난 것으로 보고 다음 단계를 시작합니다. 막으려면 먼저 [멈춤] 을 누르세요.</li>
+        <li>셸 프로필이 띄운 백그라운드 작업이나 에이전트가 띄운 개발 서버가 남으면 다음 단계로 넘어가지 않습니다. 이슈 머리줄의 [자동 실행 멈춤] 으로 푸세요.</li>
         <li>--continue 는 그 worktree 폴더의 마지막 대화를 잇습니다. 그 폴더에서 다른 Claude 대화를 시작했다면 그 대화를 잇습니다.</li>
         <li>같은 계정의 다른 PC 에서도 켜 두면 두 PC 가 모두 같은 이슈를 실행할 수 있고, 자동 실행한 패널·제목이 다른 기기에도 보입니다.</li>
         <li>주 창을 새로 고치면 진행 중이던 실행은 중단됨이 되고, 돌던 에이전트는 터미널에 남아 있을 수 있습니다.</li>
@@ -342,7 +343,7 @@ function TakerBody({ owner, repo, onDone }: { owner: string; repo: string; onDon
 function RunItem({ run, actions, onNextStep }: { run: TakerRun; actions: TakerActions | null; onNextStep(): void }) {
   const n = run.number
   const stop = run.status === 'queued' || isActive(run)
-  const retryLabel = run.status === 'failed' ? '다시 시도' : run.status === 'interrupted' || run.status === 'stopped' ? '이 단계부터 다시' : null
+  const retryLabel = run.status === 'failed' ? '다시 시도' : run.status === 'interrupted' || run.status === 'stopped' || run.status === 'manualNext' ? '이 단계부터 다시' : null
   return (
     <li className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
       <span className="min-w-0 truncate">

@@ -54,6 +54,7 @@ type RunMem = {
   assigning: boolean
   openCalled: boolean
   openDone: boolean
+  openSeen: boolean
   paneAt: number | null
   remoteNoTmux: boolean
   ptyId: string | null
@@ -71,6 +72,7 @@ const freshMem = (attempt: number): RunMem => ({
   assigning: false,
   openCalled: false,
   openDone: false,
+  openSeen: false,
   paneAt: null,
   remoteNoTmux: false,
   ptyId: null,
@@ -250,7 +252,7 @@ export function createTakerEngine(deps: TakerEngineDeps): TakerEngine {
     const alias = workHostAliasOf(useHostsStore.getState(), run.owner, run.repo)
     const issueId = hostOf(alias).issueId(run.owner, run.repo, String(run.number))
     // Why: 사용자가 이미 그 이슈에서 일하는 중이면 그 터미널 옆에서 자동 실행하지 않는다(재시도·다음 단계는 사용자가 고른 것)
-    if (memOf(run.id).attempt === 0 && run.paneId === null && useUiStore.getState().startedTerminals[issueId]) {
+    if (!run.assigned && run.paneId === null && useUiStore.getState().startedTerminals[issueId]) {
       stopRun(run, '이미 터미널이 열려 있는 이슈', { issueId })
       return false
     }
@@ -291,7 +293,13 @@ export function createTakerEngine(deps: TakerEngineDeps): TakerEngine {
     })()
   }
 
-  function openWorktree(run: TakerRun, m: RunMem, alias: string | null) {
+  // Why: 열기 도중 Provider 가 다시 마운트되면 open() 이 opening 인 채 바로 끝나므로, 이번 열기의 ready·error 를 본 뒤에만 지움을 판정한다
+  function seeOpen(m: RunMem, issueId: string) {
+    const phase = useSetupStore.getState().open[issueId]?.phase
+    if (m.openCalled && (phase === 'ready' || phase === 'error')) m.openSeen = true
+  }
+
+  function openWorktree(run: TakerRun, m: RunMem, alias: string | null, issueId: string) {
     m.openCalled = true
     const a = m.attempt
     const target: IssueTarget = { owner: run.owner, repo: run.repo, key: String(run.number), number: run.number, title: run.title }
@@ -301,10 +309,13 @@ export function createTakerEngine(deps: TakerEngineDeps): TakerEngine {
     } catch (e) {
       opened = Promise.reject(e)
     }
+    seeOpen(m, issueId)
     void opened
       .catch(() => undefined)
       .then(() => {
-        if (live(run.id, a)) m.openDone = true
+        if (!live(run.id, a)) return
+        seeOpen(m, issueId)
+        m.openDone = true
       })
   }
 
@@ -341,7 +352,7 @@ export function createTakerEngine(deps: TakerEngineDeps): TakerEngine {
         patch(run.id, { status: 'queued' })
         return
       }
-      openWorktree(run, m, alias)
+      openWorktree(run, m, alias, issueId)
       return
     }
     if (!m.openDone) return
@@ -402,11 +413,12 @@ export function createTakerEngine(deps: TakerEngineDeps): TakerEngine {
     const m = memOf(id)
     observePty(run, m, now)
     const open = useSetupStore.getState().open[issueId]
+    seeOpen(m, issueId)
     if (run.status === 'preparing' && m.openDone && open?.phase === 'error') {
       fail(run, open.message)
       return
     }
-    if (m.openDone && (!useUiStore.getState().worktreePathMap[issueId] || !open)) {
+    if (m.openDone && m.openSeen && (!useUiStore.getState().worktreePathMap[issueId] || !open)) {
       stopRun(run, 'worktree 삭제')
       return
     }
