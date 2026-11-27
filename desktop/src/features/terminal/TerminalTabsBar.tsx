@@ -185,7 +185,7 @@ export function TerminalTabsBar({ spec }: { spec: TerminalSessionSpec }) {
     const ed = editing
     setEditing(null)
     if (!ed) return
-    if (value !== null && liveTab(ed)) useUiStore.getState().renameTab(issueId, ed.tabId, value)
+    if (value !== null && value !== ed.initial && liveTab(ed)) useUiStore.getState().renameTab(issueId, ed.tabId, value)
     if (focusTab) tabButton(ed.tabId)?.focus()
   }
 
@@ -206,7 +206,13 @@ export function TerminalTabsBar({ spec }: { spec: TerminalSessionSpec }) {
 
   return (
     <div className="relative flex shrink-0 items-end gap-1 overflow-x-auto px-2 pt-1">
-      <div role="tablist" aria-label="터미널 탭" className="flex items-end gap-1">
+      <div
+        role="tablist"
+        aria-label="터미널 탭"
+        // Why: 탭 줄에 다시 들어오면 고른 탭에 포커스한다(APG) — 메뉴는 portal 이라 DOM 으로 안팎을 본다
+        onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setFocusedTab(null)}
+        className="flex items-end gap-1"
+      >
         {tabs.map((t) => (
           <TabButton
             key={t.id}
@@ -322,12 +328,13 @@ const TabButton = memo(function TabButton({
           id={ids.tab}
           aria-selected={selected}
           aria-controls={ids.panel}
+          aria-keyshortcuts="F2 Delete"
           tabIndex={tabbable ? 0 : -1}
           onClick={() => onSelect(tab.id)}
           onDoubleClick={() => onRename(tab.id, true)}
           onKeyDown={(e) => onKeyDown(e, tab.id)}
           onFocus={() => onFocusTab(tab.id)}
-          className="flex h-7 shrink-0 items-center gap-0.5 rounded-t border-b-2 border-transparent pl-2.5 text-xs whitespace-nowrap text-neutral-400 outline-none hover:text-neutral-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-selected:border-neutral-100 aria-selected:bg-neutral-700 aria-selected:text-neutral-100"
+          className="flex h-7 shrink-0 items-center gap-0.5 rounded-t border-b-2 border-transparent pl-2.5 text-xs whitespace-nowrap text-neutral-400 outline-none hover:text-neutral-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neutral-100 aria-selected:border-neutral-100 aria-selected:bg-neutral-700 aria-selected:text-neutral-100"
         >
           <span className="sr-only">터미널 </span>
           {/* Why: 이름 쪽이 × 보다 넓어야 탭 가운데를 누를 때 닫히지 않고 고른다("1" 만으로는 가운데가 × 위다) */}

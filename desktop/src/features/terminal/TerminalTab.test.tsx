@@ -2156,4 +2156,42 @@ describe('터미널 탭 (#120)', () => {
     expect(tabNamesShown()).toEqual(['1', '2'])
     expect(tab('1')).toHaveAttribute('tabindex', '0')
   })
+
+  it('AC-08 이름을 바꾸지 않고 Enter·blur 하면 저장하지 않는다 — 번호 이름이 명시 이름이 되지 않는다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    fireEvent.doubleClick(tab('1'))
+    fireEvent.keyDown(nameInput(), { key: 'Enter' })
+    expect(screen.queryByRole('textbox', { name: '탭 이름' })).toBeNull()
+    expect(useUiStore.getState().tabNames[X.issueId]).toBeUndefined()
+    fireEvent.doubleClick(tab('1'))
+    fireEvent.blur(nameInput())
+    expect(screen.queryByRole('textbox', { name: '탭 이름' })).toBeNull()
+    expect(useUiStore.getState().tabNames[X.issueId]).toBeUndefined()
+  })
+
+  it('AX 포커스가 탭 줄 밖으로 나가면 roving tabindex 0 은 고른 탭 버튼으로 돌아간다', async () => {
+    useUiStore.setState({ panes: { [X.issueId]: { tree: THREE(), focused: null, seq: 3, first: XP(1), tabSeq: 3 } } })
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    act(() => tab('1').focus())
+    fireEvent.keyDown(tab('1'), { key: 'End' })
+    expect(tab('3')).toHaveAttribute('tabindex', '0')
+    act(() => plus().focus())
+    expect(tab('1')).toHaveAttribute('tabindex', '0')
+    expect(tab('3')).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('AX 탭 버튼은 F2·Delete 키를 aria-keyshortcuts 로 알린다', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(tab('1')).toHaveAttribute('aria-keyshortcuts', 'F2 Delete')
+  })
+
+  it('AX 탭 버튼의 포커스 링은 테마와 관계없는 밝은 고정 색이다(고른 탭 배경에서도 3:1)', async () => {
+    const t = setupTabs()
+    await vi.waitFor(() => expect(t.tauri.ptySpawn).toHaveBeenCalledTimes(1))
+    expect(tab('1').className).toContain('focus-visible:ring-neutral-100')
+    expect(tab('1').className).not.toContain('focus-visible:ring-ring')
+  })
 })
