@@ -10,6 +10,7 @@ import type { IssueTarget } from '@minmo/core'
 
 import { TooltipProvider } from '../components/ui/tooltip'
 import { WorktreeProvider } from '../features/issue/useWorktree'
+import { DEFAULT_CORE_ID, DEFAULT_TARGET } from '../lib/defaultWorkspace'
 import type { TauriApi } from '../lib/tauri'
 import { useHostsStore } from '../store/hosts'
 import { useReposStore } from '../store/repos'
@@ -134,6 +135,13 @@ describe('사이드바 원격 호스트 관리', () => {
 
 describe('상단 ⚙ — 작업 공간 범위 후보', () => {
   it('EC-04 고른 이슈 없이 ⚙ 로 열면 범위 후보는 전역 하나 → "범위: 전역" 텍스트', async () => {
+    const user = renderWorkspace()
+    const dialog = await openWorkspaceSection(user)
+    await expectGlobalOnly(dialog)
+  })
+
+  it('EC-04 기본(저장소 없는 작업 공간)을 고르고 ⚙ 로 열어도 범위 후보는 전역 하나', async () => {
+    selectIssue(DEFAULT_CORE_ID, DEFAULT_TARGET)
     const user = renderWorkspace()
     const dialog = await openWorkspaceSection(user)
     await expectGlobalOnly(dialog)

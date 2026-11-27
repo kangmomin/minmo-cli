@@ -98,7 +98,8 @@ export function Workspace() {
   }, [selectedId, issueAlias, issueHost.ready, openPhase, baseHome])
 
   const topSettingsTarget = (): SettingsTarget | null => {
-    if (!target) return null
+    // Why: 기본은 저장소가 없다 — 조직·프로젝트 범위를 만들 수 없어 전역만 보인다
+    if (!target || isDefaultTarget(target)) return null
     const bound = repoAliasOf(useHostsStore.getState(), target.owner, target.repo)
     const projectHost = bound === undefined ? (connection.ready ? connection.selected : null) : bound
     // Why: 프로젝트 범위의 원본 위치·미리보기는 projectHost 기준이다 — 고른 이슈가 다른 호스트에 있으면 조직까지만 준다
