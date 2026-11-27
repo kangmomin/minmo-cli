@@ -23,7 +23,7 @@ pub(crate) fn descendant_names(root: u32) -> Vec<String> {
 }
 
 #[cfg(windows)]
-fn snapshot() -> Vec<(u32, u32, String)> {
+pub(crate) fn snapshot() -> Vec<(u32, u32, String)> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -58,7 +58,7 @@ fn snapshot() -> Vec<(u32, u32, String)> {
 }
 
 #[cfg(not(windows))]
-fn snapshot() -> Vec<(u32, u32, String)> {
+pub(crate) fn snapshot() -> Vec<(u32, u32, String)> {
     let out = match std::process::Command::new("ps")
         .args(["-A", "-o", "pid=,ppid=,comm="])
         .output()
