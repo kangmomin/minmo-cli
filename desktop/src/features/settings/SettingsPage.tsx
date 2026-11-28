@@ -8,6 +8,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } fr
 import { Input } from '../../components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import { useSettingsPageStore } from '../../store/settingsPage'
+import { SummarySettingsSection } from '../answer/SummarySettingsSection'
 import { CliAccessSettings } from '../cli/CliAccessSettings'
 import { HostsSettings } from '../hosts/HostsSettings'
 import { PairSyncSection } from '../pairSync/PairSyncSection'
@@ -32,7 +33,15 @@ const PANEL_CLASS = 'min-h-0 overflow-y-auto p-4 md:p-6'
 function ServerSection() {
   // Why: 서버는 이 PC 에서 돈다 — 원격 호스트 영역 안에서도 이 PC 의 tauri 로 읽고 저장한다
   const { tauri } = useBaseDeps()
-  return <ServerSettingsForm tauri={tauri} />
+  // Why: 입력 중인 Jev API 키(#122) — 분류를 바꾸거나 설정을 닫으면 사라진다(취소한 키가 남지 않게)
+  const [jevDraft, setJevDraft] = useState('')
+  return (
+    <div className="grid gap-5">
+      <ServerSettingsForm tauri={tauri} />
+      {/* Why: 키는 이 PC 의 키체인에만 둔다 — 서버·앱 처럼 원격 화면에는 없다. 서버 폼의 [저장] 과 따로 저장한다 */}
+      <SummarySettingsSection tauri={tauri} draft={jevDraft} onDraftChange={setJevDraft} />
+    </div>
+  )
 }
 
 const SECTION_BODY: Record<SectionId, ComponentType> = {

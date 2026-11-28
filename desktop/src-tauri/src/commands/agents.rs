@@ -2,7 +2,8 @@
 //   <설정 폴더>/projects/<작업 폴더 이름>/<세션 id>.jsonl                     … 세션 기록
 //   <설정 폴더>/projects/<작업 폴더 이름>/<세션 id>/subagents/agent-<id>.meta.json  … 하위 에이전트(종류·설명·끝났는지)
 // 공개된 규격이 아니라 Claude Code 버전에 따라 달라질 수 있다 — 읽지 못하면 빈 목록을 돌려준다(상태 표시는 그대로 동작한다).
-use std::fs;
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,6 +13,8 @@ use serde::Serialize;
 const MAX_SUBAGENTS: usize = 100;
 /// 메타 파일 하나의 크기 상한 — 넘으면 건너뛴다
 const MAX_META_BYTES: u64 = 64 * 1024;
+/// 마지막 답변을 찾을 때 읽는 세션 기록 끝부분의 크기
+const REPLY_TAIL_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +24,13 @@ pub struct SubagentFile {
     /// meta.json 원문(해석은 화면 쪽에서 — 원격 호스트와 같은 코드로)
     pub meta: String,
     /// 그 하위 에이전트의 기록이 마지막으로 바뀐 시각(ms)
+    pub updated_ms: u64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeReplyTail {
+    pub tail: String,
     pub updated_ms: u64,
 }
 
@@ -59,13 +69,10 @@ fn project_dir(projects: &Path, cwd: &str) -> Option<PathBuf> {
         })
 }
 
-/// projects 폴더에서 cwd 의 세션 중 가장 최근 것의 하위 에이전트 메타 파일들(최근 것부터).
+/// projects 폴더에서 cwd 의 세션 기록 중 가장 최근에 바뀐 것 = 지금 쓰는(또는 마지막으로 쓴) 세션.
 /// since_ms 이전에 마지막으로 바뀐 세션은 보지 않는다(이전 실행의 기록을 지금 것으로 보이지 않게)
-pub(crate) fn subagent_files(projects: &Path, cwd: &str, since_ms: u64) -> Vec<SubagentFile> {
-    let Some(project) = project_dir(projects, cwd) else {
-        return Vec::new();
-    };
-    // 가장 최근에 바뀐 세션 기록 = 지금 쓰는(또는 마지막으로 쓴) 세션
+fn current_session(projects: &Path, cwd: &str, since_ms: u64) -> Option<PathBuf> {
+    let project = project_dir(projects, cwd)?;
     let newest: Option<(SystemTime, PathBuf)> = fs::read_dir(&project)
         .ok()
         .into_iter()
@@ -75,12 +82,16 @@ pub(crate) fn subagent_files(projects: &Path, cwd: &str, since_ms: u64) -> Vec<S
         .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
         .filter_map(|p| Some((fs::metadata(&p).ok()?.modified().ok()?, p)))
         .max_by_key(|(t, _)| *t);
-    let Some((_, session)) = newest else {
+    let (_, session) = newest?;
+    (mtime_ms(&session) >= since_ms).then_some(session)
+}
+
+/// projects 폴더에서 cwd 의 세션 중 가장 최근 것의 하위 에이전트 메타 파일들(최근 것부터).
+/// since_ms 이전에 마지막으로 바뀐 세션은 보지 않는다(이전 실행의 기록을 지금 것으로 보이지 않게)
+pub(crate) fn subagent_files(projects: &Path, cwd: &str, since_ms: u64) -> Vec<SubagentFile> {
+    let Some(session) = current_session(projects, cwd, since_ms) else {
         return Vec::new();
     };
-    if mtime_ms(&session) < since_ms {
-        return Vec::new();
-    }
     let dir = session.with_extension("").join("subagents");
     let mut out: Vec<SubagentFile> = fs::read_dir(&dir)
         .ok()
@@ -110,6 +121,27 @@ pub(crate) fn subagent_files(projects: &Path, cwd: &str, since_ms: u64) -> Vec<S
     out
 }
 
+/// cwd 의 가장 최근 세션 기록의 끝부분(최대 256KiB)과 그 기록이 바뀐 시각(ms). 기록이 없으면 Ok(None), 열거나 읽지 못하면 Err.
+/// 기록은 길어질 수 있어 끝만 읽는다 — 첫 줄은 중간에서 잘릴 수 있다(화면 쪽이 해석하지 못한 줄을 건너뛴다)
+pub(crate) fn reply_tail(projects: &Path, cwd: &str) -> Result<Option<(String, u64)>, String> {
+    let Some(session) = current_session(projects, cwd, 0) else {
+        return Ok(None);
+    };
+    let fail = |e: std::io::Error| format!("세션 기록을 읽지 못했습니다: {e}");
+    let mut file = File::open(&session).map_err(fail)?;
+    let len = file.metadata().map_err(fail)?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(REPLY_TAIL_BYTES)))
+        .map_err(fail)?;
+    let mut buf = Vec::new();
+    file.take(REPLY_TAIL_BYTES)
+        .read_to_end(&mut buf)
+        .map_err(fail)?;
+    Ok(Some((
+        String::from_utf8_lossy(&buf).into_owned(),
+        mtime_ms(&session),
+    )))
+}
+
 /// Claude Code 설정 폴더 — CLAUDE_CONFIG_DIR 이 있으면 그것, 없으면 ~/.claude (앱에서 띄운 터미널은 앱의 환경을 물려받는다)
 fn claude_projects_dir() -> Option<PathBuf> {
     let base = match std::env::var_os("CLAUDE_CONFIG_DIR") {
@@ -134,6 +166,21 @@ pub async fn claude_subagents(cwd: String, since_ms: u64) -> Result<Vec<Subagent
     tauri::async_runtime::spawn_blocking(move || subagent_files(&projects, &cwd, since_ms))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// cwd(작업 폴더)에서 도는 Claude Code 의 가장 최근 세션 기록 끝부분(마지막 답변 찾기용 — 해석은 화면 쪽에서).
+/// 기록 시각을 함께 보이므로 since 로 거르지 않는다. 기록이 없으면 None, 기록을 읽지 못하면 Err
+#[tauri::command]
+pub async fn claude_last_reply(cwd: String) -> Result<Option<ClaudeReplyTail>, String> {
+    let Some(projects) = claude_projects_dir() else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        reply_tail(&projects, &cwd)
+            .map(|r| r.map(|(tail, updated_ms)| ClaudeReplyTail { tail, updated_ms }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -262,5 +309,77 @@ mod tests {
         assert!(subagent_files(&projects, "/w/app", 0).is_empty());
         assert!(subagent_files(&projects.join("missing"), "/w/app", 0).is_empty());
         let _ = fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn reply_tail_reads_only_the_end_of_a_long_session() {
+        let projects = tmp("tail");
+        let project = projects.join("-w-app");
+        fs::create_dir_all(&project).unwrap();
+        // 1MB 가 넘는 기록: 앞부분 표시는 읽지 않고, 끝의 마지막 답은 읽는다
+        let last = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"END"}]}}"#;
+        let body = format!("HEAD\n{}\n{last}\n", "x".repeat(1024 * 1024));
+        write_at(&project.join("s.jsonl"), &body, 7_000);
+        let (tail, updated_ms) = reply_tail(&projects, "/w/app").unwrap().unwrap();
+        assert_eq!(tail.len() as u64, REPLY_TAIL_BYTES);
+        assert!(tail.ends_with(&format!("{last}\n")));
+        assert!(!tail.contains("HEAD"));
+        assert_eq!(updated_ms, 7_000_000);
+        let _ = fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn reply_tail_reads_the_newest_session_whole_when_it_is_short() {
+        let projects = tmp("newest");
+        let project = projects.join("-w-app");
+        fs::create_dir_all(&project).unwrap();
+        write_at(&project.join("old.jsonl"), "old\n", 1_000);
+        write_at(&project.join("cur.jsonl"), "cur\n", 3_000);
+        // 하위 에이전트 폴더(<세션>/subagents)의 기록은 세션이 아니다
+        fs::create_dir_all(project.join("cur").join("subagents")).unwrap();
+        write_at(
+            &project.join("cur").join("subagents").join("agent-a.jsonl"),
+            "sub\n",
+            9_000,
+        );
+        assert_eq!(
+            reply_tail(&projects, "/w/app"),
+            Ok(Some(("cur\n".to_string(), 3_000_000)))
+        );
+        let _ = fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn reply_tail_is_none_without_a_session() {
+        let projects = tmp("noreply");
+        assert_eq!(reply_tail(&projects, "/w/app"), Ok(None));
+        fs::create_dir_all(projects.join("-w-app")).unwrap();
+        assert_eq!(reply_tail(&projects, "/w/app"), Ok(None));
+        assert_eq!(reply_tail(&projects.join("missing"), "/w/app"), Ok(None));
+        let _ = fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn reply_tail_fails_when_the_newest_session_cannot_be_read() {
+        let projects = tmp("unreadable");
+        let project = projects.join("-w-app");
+        fs::create_dir_all(&project).unwrap();
+        write_at(&project.join("old.jsonl"), "old\n", 1_000);
+        // Why: 가장 최근 "기록"이 파일이 아니다(폴더) — Windows 는 열기, Unix 는 읽기에서 실패한다
+        fs::create_dir_all(project.join("x.jsonl")).unwrap();
+        assert!(reply_tail(&projects, "/w/app").is_err());
+        let _ = fs::remove_dir_all(&projects);
+    }
+
+    #[test]
+    fn reply_tail_serializes_with_the_webview_field_names() {
+        let tail = ClaudeReplyTail {
+            tail: "x".into(),
+            updated_ms: 5,
+        };
+        assert_eq!(
+            serde_json::to_value(&tail).unwrap(),
+            serde_json::json!({ "tail": "x", "updatedMs": 5 })
+        );
     }
 }

@@ -241,6 +241,11 @@ export function createRemoteTauri(conn: RemoteConnection): TauriApi {
     tailscaleInstallCancel: async () => undefined,
     tailscaleLogin: hostOnly('Tailscale 로그인'),
     tailscaleServe: hostOnly('Tailscale HTTPS 설정'),
+    // Why: Jev 키는 호스트 키체인에 있고, 보내는 글자는 호스트 화면의 터미널 글자다
+    jevDecide: hostOnly('Jev 판정'),
+    jevKeyStatus: hostOnly('Jev API 키 확인'),
+    jevKeySet: hostOnly('Jev API 키 저장'),
+    jevKeyDelete: hostOnly('Jev API 키 지우기'),
     agentsPublish: async () => undefined,
   }
   return new Proxy(local as TauriApi, {

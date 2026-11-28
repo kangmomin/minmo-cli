@@ -26,6 +26,8 @@ export type AgentRow = {
   label: string
   status: AgentStatus
   since: number
+  /** Why: 작업 중이 아니게 된 시각(ms, 작업 중이면 null) — 답변 모드의 대기열 순서(#122) */
+  waitingSince: number | null
   lastOutputAt: number
   /** Claude Code 가 띄운 하위 에이전트들(실행 중인 것 먼저) */
   subagents: Subagent[]
@@ -60,6 +62,7 @@ export function toRows(panes: Record<string, PaneAgent>, ctx: RowContext, subage
       label: p.label,
       status: statusOf(p),
       since: p.since,
+      waitingSince: p.waitingSince,
       lastOutputAt: p.lastOutputAt,
       subagents: subagents[p.paneId] ?? [],
       running: runningCount(subagents[p.paneId]),
@@ -79,7 +82,7 @@ export function filterRows(rows: AgentRow[], view: Pick<AgentsView, 'statuses' |
   )
 }
 
-const byName = (a: AgentRow, b: AgentRow) => a.repo.localeCompare(b.repo) || a.issue.localeCompare(b.issue, undefined, { numeric: true }) || a.paneId.localeCompare(b.paneId)
+export const byName = (a: AgentRow, b: AgentRow) => a.repo.localeCompare(b.repo) || a.issue.localeCompare(b.issue, undefined, { numeric: true }) || a.paneId.localeCompare(b.paneId)
 
 export function sortRows(rows: AgentRow[], sort: AgentsView['sort']): AgentRow[] {
   const out = [...rows]

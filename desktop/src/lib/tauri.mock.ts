@@ -1,7 +1,7 @@
 // dev(VITE_TAURI_MOCK=1)·Playwright 용 인메모리 가짜 TauriApi.
 // - git 은 worktree 서비스가 쓰는 명령만 최소 시뮬레이션한다(clone·worktree add/list/remove·ref 확인·status).
 // - 브라우저 열기 등은 window.__MINMO_MOCK__ 로 노출해 E2E 가 확인한다.
-import type { CloseAction, CmdResult, DirEntry, NotifyTarget, Platform, PtyDataEvent, PtyLink, PtyLinkEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus, TailscaleLogEvent, TailscaleStatus } from './tauri'
+import type { ClaudeReplyTail, CloseAction, CmdResult, DirEntry, NotifyTarget, Platform, PtyDataEvent, PtyLink, PtyLinkEvent, ScriptLogEvent, ServerSettings, ServerStatus, SshHostInfo, SubagentFile, TauriApi, UpdateInfo, UpdateProgress, Peer, RemoteStatus, TailscaleLogEvent, TailscaleStatus } from './tauri'
 
 export type TauriMockOptions = {
   home?: string
@@ -33,6 +33,10 @@ export interface MinmoMockHandle {
   gitCalls: string[][]
   /** 터미널(PTY)로 보낸 입력 */
   ptyWrites: string[]
+  ptyWriteIds: string[]
+  ptySpawns: number
+  ptyFinds: number
+  ptyResizes: number
   /** n 번째(1부터)로 만든 터미널에 출력이 나온 것처럼 보낸다 */
   emitPty(n: number, data: string): void
   /** ptyReconnect 로 재접속을 요청한 터미널 id 기록 */
@@ -43,6 +47,9 @@ export interface MinmoMockHandle {
   setPtyProcesses(n: number, names: string[]): void
   /** 작업 폴더(cwd)에서 도는 Claude Code 의 하위 에이전트 메타 파일을 정한다 */
   setSubagents(cwd: string, files: SubagentFile[]): void
+  setClaudeReply(cwd: string, reply: ClaudeReplyTail | null): void
+  setJevResponse(response: string | { error: string }): void
+  jevBodies: string[]
   /** notify 로 띄운 알림 */
   notifications: { title: string; body: string }[]
   /** n 번째(1부터)로 띄운 알림을 누른 것처럼 알린다 */
@@ -156,6 +163,9 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
   const ptyCwd = new Map<string, string>()
   const ptyProcs = new Map<string, string[]>()
   const subagents = new Map<string, SubagentFile[]>()
+  const claudeReplies = new Map<string, ClaudeReplyTail | null>()
+  let jevResponse: string | { error: string } = { error: 'jev_unavailable' }
+  let jevKeySaved = false
   let ptySeq = 0
   const cancelled = new Set<string>()
   const closeListeners = new Set<() => void>()
@@ -202,6 +212,10 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     pickedFolder: null,
     gitCalls: [],
     ptyWrites: [],
+    ptyWriteIds: [],
+    ptySpawns: 0,
+    ptyFinds: 0,
+    ptyResizes: 0,
     emitPty: (n, data) => emitPty(`mock-pty-${n}`, data),
     ptyReconnects: [],
     emitPtyLink: (n, link) => {
@@ -209,6 +223,11 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     },
     setPtyProcesses: (n, names) => void ptyProcs.set(`mock-pty-${n}`, names),
     setSubagents: (cwd, files) => void subagents.set(cwd, files),
+    setClaudeReply: (cwd, reply) => void claudeReplies.set(cwd, reply),
+    setJevResponse: (response) => {
+      jevResponse = response
+    },
+    jevBodies: [],
     notifications: [],
     clickNotification: (n) => {
       const target = notifyTargets[n - 1]
@@ -330,6 +349,7 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     ghAvailable: async () => false,
 
     ptySpawn: async (req) => {
+      handle.ptySpawns += 1
       const id = `mock-pty-${++ptySeq}`
       ptyCwd.set(id, req.cwd)
       const where = req.remote ? `${req.remote.host}:${req.cwd}${req.remote.session ? ` [tmux ${req.remote.session}]` : ''}` : req.cwd
@@ -338,12 +358,18 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     },
     ptyWrite: async (id, data) => {
       handle.ptyWrites.push(data)
+      handle.ptyWriteIds.push(id)
       // 에코만 한다(Enter → 새 프롬프트)
       emitPty(id, data === '\r' ? '\r\n$ ' : data)
     },
-    ptyResize: async () => {},
+    ptyResize: async () => {
+      handle.ptyResizes += 1
+    },
     ptyWindows: async () => null,
-    ptyFind: async () => null,
+    ptyFind: async () => {
+      handle.ptyFinds += 1
+      return null
+    },
     ptyList: async () => [...ptyCwd].map(([id, cwd]) => ({ id, key: null, cwd, host: null })),
     onPtyExit: async () => () => {},
     onPtyResized: async () => () => {},
@@ -424,6 +450,19 @@ export function createTauriMock(opts?: TauriMockOptions): TauriApi {
     },
     ptyProcesses: async (id) => ptyProcs.get(id) ?? [],
     claudeSubagents: async (cwd) => subagents.get(cwd) ?? [],
+    claudeLastReply: async (cwd) => claudeReplies.get(cwd) ?? null,
+    jevDecide: async (body) => {
+      handle.jevBodies.push(body)
+      if (typeof jevResponse !== 'string') throw new Error(jevResponse.error)
+      return jevResponse
+    },
+    jevKeyStatus: async () => jevKeySaved,
+    jevKeySet: async () => {
+      jevKeySaved = true
+    },
+    jevKeyDelete: async () => {
+      jevKeySaved = false
+    },
     // 이 PC 의 사용량(고정 값) — 원격 호스트의 값은 아래 sshExec 가 돌려준다
     agentUsage: async () => ({
       claude: { input: 200_000, output: 40_000, cacheWrite: 960_000, cacheRead: 30_000_000 },

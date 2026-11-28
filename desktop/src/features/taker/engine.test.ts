@@ -182,7 +182,7 @@ function shellAt(paneId: string, at = clock) {
   useAgentStore.setState((s) => ({ shellSince: { ...s.shellSince, [paneId]: at } }))
 }
 function agentOn(paneId: string, activity: Activity = 'working') {
-  const agent: PaneAgent = { paneId, issueId: paneId.slice(0, paneId.lastIndexOf('::')), agent: 'claude', program: 'claude', label: '', activity, unseen: false, lastOutputAt: clock, since: clock }
+  const agent: PaneAgent = { paneId, issueId: paneId.slice(0, paneId.lastIndexOf('::')), agent: 'claude', program: 'claude', label: '', activity, unseen: false, lastOutputAt: clock, since: clock, waitingSince: null }
   useAgentStore.setState((s) => {
     const shellSince = { ...s.shellSince }
     delete shellSince[paneId]

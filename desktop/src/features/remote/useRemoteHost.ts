@@ -7,7 +7,7 @@ import { bindSharedStores } from '../../store/shared'
 import { useUiStore } from '../../store/ui'
 
 /** 호스트가 허용 목록으로 이미 걸렀지만(remote.rs ALLOWED), 화면에서도 이 PC 전용 호출은 실행하지 않는다 */
-const NEVER = /^(on[A-Z]|remote|keychain|server|app|openDir$|openUrl$|pickFolder$|notify$|windowOpen$|sshHostSave$|sshHostRemove$|runtime$)/
+const NEVER = /^(on[A-Z]|remote|keychain|jev|server|app|openDir$|openUrl$|pickFolder$|notify$|windowOpen$|sshHostSave$|sshHostRemove$|runtime$)/
 
 export async function runRemoteCall(tauri: TauriApi, method: string, args: unknown[]): Promise<unknown> {
   // 객체가 직접 가진 메서드만 — constructor·toString 같은 상속된 이름은 부르지 않는다

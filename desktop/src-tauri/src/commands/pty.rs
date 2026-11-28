@@ -827,7 +827,9 @@ fn adopt_console_hosts() {
 #[cfg(windows)]
 fn console_hosts() -> Vec<u32> {
     let me = std::process::id();
+    // Why: 조회 실패면 넣을 호스트가 없다(이전처럼 빈 목록) — 다음 ConPTY 를 열 때 다시 본다
     super::procs::snapshot()
+        .unwrap_or_default()
         .into_iter()
         .filter(|(_, ppid, name)| {
             *ppid == me
@@ -1423,7 +1425,7 @@ pub async fn pty_processes(state: State<'_, PtyState>, id: String) -> Result<Vec
         Some(pid) => {
             tauri::async_runtime::spawn_blocking(move || super::procs::descendant_names(pid))
                 .await
-                .map_err(err)
+                .map_err(err)?
         }
         None => Ok(Vec::new()),
     }

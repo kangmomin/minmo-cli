@@ -1,5 +1,5 @@
 // UI store — 트리에서 이슈를 눌렀을 때의 터미널 포커스 요청(#78)·이슈 선택 번호
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { activeTabOf, isPaneTree, leaf, leafIds, selectedTabId, splitPane, tabList } from '../features/terminal/panes'
 import type { PaneNode, PaneTree, TabsNode, TermTab } from '../features/terminal/panes'
@@ -467,5 +467,70 @@ describe('터미널 탭 (#120)', () => {
       const r = reconcileIssuePanes(p, given)
       expectPanesInvariants(r.p, r.names)
     }
+  })
+})
+
+// #122 답변 모드 — 창마다 따로 두는 보기 상태와 요약 설정(Plan §1, U1)
+describe('#122 답변 모드 — 보기 상태(viewMode)·요약 설정', () => {
+  const stored = () => (JSON.parse(localStorage.getItem('minmo-ui') ?? '{}') as { state: Record<string, unknown> }).state
+  beforeEach(() => {
+    localStorage.clear()
+    useUiStore.setState({ viewMode: 'normal', tabBeforeAnswer: 'terminal', tab: 'notes', selectedIssueId: ID, summaryClaudeReply: true, summaryJev: false })
+  })
+  afterEach(() => window.history.replaceState(null, '', '/'))
+
+  it('AC-01 켜면 답변 모드가 되고 터미널 탭을 보인다 — 같은 값을 다시 골라도 아무것도 바꾸지 않는다', () => {
+    useUiStore.getState().setViewMode('answer')
+    expect(useUiStore.getState()).toMatchObject({ viewMode: 'answer', tab: 'terminal', tabBeforeAnswer: 'notes' })
+    useUiStore.getState().setViewMode('answer')
+    expect(useUiStore.getState()).toMatchObject({ viewMode: 'answer', tab: 'terminal', tabBeforeAnswer: 'notes' })
+  })
+
+  it('AC-13 기본 보기로 돌아가면 들어가기 전 탭으로 돌아가고, 마지막으로 본 세션의 이슈가 선택된 채다', () => {
+    useUiStore.getState().setViewMode('answer')
+    expect(useUiStore.getState().tab).toBe('terminal')
+    // 답변 모드에서 다른 세션으로 옮겨 갔다
+    useUiStore.getState().selectIssue('o/r#7')
+    useUiStore.getState().setViewMode('normal')
+    expect(useUiStore.getState()).toMatchObject({ viewMode: 'normal', tab: 'notes', selectedIssueId: 'o/r#7' })
+  })
+
+  it('AC-01 주 창은 보기 상태를 저장해 다시 켜도 답변 모드다 — 답변 모드면 터미널 탭, 모르는 저장 값은 지금 값을 지킨다', async () => {
+    useUiStore.getState().setViewMode('answer')
+    expect(stored()).toMatchObject({ viewMode: 'answer', tabBeforeAnswer: 'notes' })
+    // 지금 값을 먼저 바꾼다 — persist 는 setState 마다 저장하므로, 저장 값을 쓴 뒤에 바꾸면 그 값을 덮는다
+    useUiStore.setState({ viewMode: 'normal', tab: 'notes', tabBeforeAnswer: 'terminal' })
+    localStorage.setItem('minmo-ui', JSON.stringify({ state: { viewMode: 'answer', tab: 'files', tabBeforeAnswer: 'issue' }, version: 2 }))
+    await useUiStore.persist.rehydrate()
+    expect(useUiStore.getState()).toMatchObject({ viewMode: 'answer', tab: 'terminal', tabBeforeAnswer: 'issue' })
+    localStorage.setItem('minmo-ui', JSON.stringify({ state: { viewMode: 'weird', tabBeforeAnswer: 'nope' }, version: 2 }))
+    await useUiStore.persist.rehydrate()
+    expect(useUiStore.getState()).toMatchObject({ viewMode: 'answer', tabBeforeAnswer: 'issue' })
+  })
+
+  it('AC-01 보조 창은 기본 보기로 시작하고, 시작한 뒤에는 다른 창이 저장한 보기 상태로 바뀌지 않으며 자기 보기 상태를 저장소에 쓰지 않는다', async () => {
+    localStorage.setItem('minmo-ui', JSON.stringify({ state: { viewMode: 'answer', tab: 'terminal' }, version: 2 }))
+    window.history.replaceState(null, '', '/?window=ws')
+    vi.resetModules()
+    const { useUiStore: ws } = await import('./ui')
+    expect(ws.getState().viewMode).toBe('normal')
+    ws.getState().setViewMode('answer')
+    expect(ws.getState().viewMode).toBe('answer')
+    // 주 창이 기본 보기로 바꿔 저장했다 — 다른 설정(테마)은 따라가고 보기 상태는 이 창의 것을 지킨다
+    localStorage.setItem('minmo-ui', JSON.stringify({ state: { viewMode: 'normal', theme: 'light' }, version: 2 }))
+    await ws.persist.rehydrate()
+    expect(ws.getState()).toMatchObject({ viewMode: 'answer', theme: 'light' })
+    expect(stored().viewMode).toBe('normal')
+  })
+
+  it('AC-11 세션 요약 설정(Claude 답변 기본 켬·Jev 판정 기본 끔)은 바꾸면 저장되고, boolean 이 아닌 저장 값은 버린다', async () => {
+    expect(useUiStore.getState()).toMatchObject({ summaryClaudeReply: true, summaryJev: false })
+    useUiStore.getState().setSummaryClaudeReply(false)
+    useUiStore.getState().setSummaryJev(true)
+    expect(useUiStore.getState()).toMatchObject({ summaryClaudeReply: false, summaryJev: true })
+    expect(stored()).toMatchObject({ summaryClaudeReply: false, summaryJev: true })
+    localStorage.setItem('minmo-ui', JSON.stringify({ state: { summaryClaudeReply: 'yes', summaryJev: 0 }, version: 2 }))
+    await useUiStore.persist.rehydrate()
+    expect(useUiStore.getState()).toMatchObject({ summaryClaudeReply: false, summaryJev: true })
   })
 })

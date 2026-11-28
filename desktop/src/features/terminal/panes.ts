@@ -127,6 +127,12 @@ export function closePane(tree: PaneTree, target: string): { tree: PaneTree | nu
   return { tree: { ...tree, tabs: tree.tabs.map((t, j) => (j === i ? { ...t, node: closed.tree! } : t)) }, focus: closed.focus }
 }
 
+/** Why: 지금 보이는 패널(#122): 고른 터미널 탭의 잎 중 focused 가 있으면 그것, 아니면 첫 잎, 없으면 null */
+export function effectivePane(p: { tree: PaneTree | null; focused: string | null; tab?: string } | undefined): string | null {
+  const ids = leafIds(activeTabOf(p?.tree ?? null, p?.tab)?.node ?? null)
+  return p?.focused != null && ids.includes(p.focused) ? p.focused : (ids[0] ?? null)
+}
+
 /** 패널 위치(부모 대비 비율 0~1) */
 export type PaneRect = { id: string; x: number; y: number; w: number; h: number }
 

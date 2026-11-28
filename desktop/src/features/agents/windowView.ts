@@ -5,16 +5,16 @@ import { useEffect } from 'react'
 
 import { workTabOf } from '../../lib/defaultWorkspace'
 import { useUiStore } from '../../store/ui'
-import { selectedTabId } from '../terminal/panes'
+import { effectivePane, selectedTabId } from '../terminal/panes'
 
 const KEY = 'minmo-window-view'
 /** 이 화면(창)의 id — 새로 고치면 바뀐다 */
 const ME = Math.random().toString(36).slice(2)
 
-/** Why: tab 은 창마다 따로 고른다. 패널이 없으면 null */
-type View = { by: string; issueId: string | null; terminal: boolean; tab: string | null }
+/** Why: tab 은 창마다 따로 고른다. 패널이 없으면 null. paneId: 답변 모드 창이면 보이는 패널(#122), 기본 보기는 null */
+export type View = { by: string; issueId: string | null; terminal: boolean; tab: string | null; paneId?: string | null }
 
-function readView(): View | null {
+export function readView(): View | null {
   try {
     const v: unknown = JSON.parse(localStorage.getItem(KEY) ?? 'null')
     return typeof v === 'object' && v !== null && typeof (v as View).by === 'string' ? (v as View) : null
@@ -23,10 +23,10 @@ function readView(): View | null {
   }
 }
 
-/** Why: tabId 를 주면 그 창이 같은 터미널 탭을 볼 때만 본 것으로 친다 */
-export function viewedInOtherWindow(issueId: string, tabId?: string | null): boolean {
-  const v = readView()
+/** Why: tabId 를 주면 그 창이 같은 터미널 탭을 볼 때만 본 것으로 친다. 답변 모드 창이면 그 패널(paneId)만 본 것이다(#122) */
+export function viewedInOtherWindow(issueId: string, tabId?: string | null, paneId?: string, v: View | null = readView()): boolean {
   if (v === null || v.by === ME || v.issueId !== issueId || !v.terminal) return false
+  if (v.paneId != null && paneId !== undefined && v.paneId !== paneId) return false
   // Why: 탭을 모르는 쪽(옛 값·모르는 패널)이 있으면 지금처럼 이슈만 본다
   return typeof tabId !== 'string' || typeof v.tab !== 'string' || v.tab === tabId
 }
@@ -39,10 +39,11 @@ export function useWindowViewBroadcast() {
     const p = s.selectedIssueId === null ? undefined : s.panes[s.selectedIssueId]
     return p ? selectedTabId(p.tree, p.tab) : null
   })
+  const paneId = useUiStore((s) => (s.viewMode === 'answer' && s.selectedIssueId !== null ? effectivePane(s.panes[s.selectedIssueId]) : null))
   useEffect(() => {
     const write = () => {
       try {
-        if (document.hasFocus()) localStorage.setItem(KEY, JSON.stringify({ by: ME, issueId, terminal, tab } satisfies View))
+        if (document.hasFocus()) localStorage.setItem(KEY, JSON.stringify({ by: ME, issueId, terminal, tab, paneId } satisfies View))
       } catch {
         // 저장소를 쓸 수 없으면 알리지 않는다(주 창이 알림을 한 번 더 띄울 뿐이다)
       }
@@ -63,5 +64,5 @@ export function useWindowViewBroadcast() {
       window.removeEventListener('blur', clear)
       window.removeEventListener('pagehide', clear)
     }
-  }, [issueId, terminal, tab])
+  }, [issueId, terminal, tab, paneId])
 }

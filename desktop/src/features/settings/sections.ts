@@ -29,7 +29,7 @@ export const SECTIONS: Section[] = [
   { id: 'hosts', title: '원격 호스트', keywords: ['원격 호스트', 'SSH', '호스트', 'tmux', '포트'], visible: always },
   { id: 'remote', title: '원격 접속', keywords: ['원격 접속', '휴대폰', '기기 등록', '등록 코드', 'QR', 'Tailscale', 'LAN', '포트', '다른 PC'], visible: notRemote },
   { id: 'cli', title: '원격 CLI', keywords: ['원격 CLI', 'CLI', '로그인 코드', 'SSH', 'RemoteForward', '세션'], visible: notRemote },
-  { id: 'server', title: '서버·앱', keywords: ['서버', '포트', '다시 시작', '로그', '업데이트', '버전', '창 닫기', '트레이'], visible: notRemote },
+  { id: 'server', title: '서버·앱', keywords: ['서버', '포트', '다시 시작', '로그', '업데이트', '버전', '창 닫기', '트레이', '세션 요약', '답변 모드', 'Jev'], visible: notRemote },
 ]
 
 export function visibleSections(runtime: RuntimeKind): Section[] {

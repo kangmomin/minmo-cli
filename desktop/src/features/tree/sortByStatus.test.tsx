@@ -33,6 +33,7 @@ const pane = (key: string, o: Partial<PaneAgent>): PaneAgent => ({
   unseen: false,
   lastOutputAt: 0,
   since: 0,
+  waitingSince: null,
   ...o,
 })
 

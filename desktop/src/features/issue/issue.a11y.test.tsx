@@ -429,3 +429,47 @@ describe('#116 [이슈] 탭', () => {
     expect(screen.queryByText('본문 42')).toBeNull()
   })
 })
+
+// #122 답변 모드의 터미널 패널(AX-A5) — 탭 목록 없이 터미널만, 이름 없는 tabpanel·끊긴 idref 가 없다
+describe('#122 WorkTabs terminalOnly (답변 모드)', () => {
+  function renderTerminalOnly(onExit = vi.fn()) {
+    const api = createFakeApi({ getNotes: async () => ({ body: '', updatedAt: null }) })
+    renderWithDeps(
+      <TooltipProvider>
+        <WorktreeProvider>
+          <WorkTabs target={T} state={useSetupStore.getState().open[ID]} terminalOnly onExit={onExit} describedBy="answer-where" />
+        </WorktreeProvider>
+      </TooltipProvider>,
+      makeDeps({ api }),
+    )
+    return { onExit }
+  }
+
+  it('AC-02 탭 목록이 없고 터미널만 보인다 — 터미널 영역은 tabpanel 이 아니다(이름 없는 tabpanel 없음, Tab 정지점 아님)', () => {
+    renderTerminalOnly()
+    expect(screen.queryByRole('tablist')).toBeNull()
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+    expect(screen.queryAllByRole('tabpanel', { hidden: true })).toHaveLength(0)
+    const panel = screen.getByTestId('terminal-tab').closest('[data-slot="tabs-content"]')
+    expect(panel).not.toBeNull()
+    expect(panel).not.toHaveAttribute('aria-labelledby')
+    expect(panel).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('EC-15 답변 모드에는 끊긴 idref 가 없다 — aria-labelledby·aria-controls 가 가리키는 요소가 모두 있다', () => {
+    renderTerminalOnly()
+    const refs = [...document.querySelectorAll('[aria-labelledby],[aria-controls]')].flatMap((el) => [el.getAttribute('aria-labelledby'), el.getAttribute('aria-controls')]).flatMap((v) => (v ? v.split(' ') : []))
+    for (const id of refs) expect(document.getElementById(id), id).not.toBeNull()
+    expect(screen.queryAllByRole('tabpanel', { hidden: true })).toHaveLength(0)
+  })
+
+  it('EC-15 터미널에서 Ctrl+Shift+M 은 탭 목록이 아니라 onExit(요약 카드 제목)으로 포커스를 옮긴다', async () => {
+    const { onExit } = renderTerminalOnly()
+    fireEvent.click(screen.getByRole('button', { name: '터미널 열기' }))
+    await vi.waitFor(() => expect(xterm.handlers.length).toBeGreaterThan(0))
+    act(() => {
+      xterm.handlers[0](new KeyboardEvent('keydown', { key: 'M', code: 'KeyM', ctrlKey: true, shiftKey: true }))
+    })
+    expect(onExit).toHaveBeenCalledTimes(1)
+  })
+})

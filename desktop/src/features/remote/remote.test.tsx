@@ -630,3 +630,26 @@ describe('RemoteAccessDialog (호스트의 원격 접속 설정)', () => {
     expect(fake.tauri.remotePairCancel).toHaveBeenCalled()
   })
 })
+
+// #122 Jev 판정은 이 PC 의 화면에서만 — 키는 호스트 키체인에 있고, 보내는 글자는 그 PC 의 터미널 화면이다
+describe('#122 원격과 Jev', () => {
+  it('EC-11 붙은 기기가 보낸 Jev 호출(판정·키 상태·저장·지우기)은 이 PC 가 실행하지 않는다 — Claude 기록 읽기는 실행한다', async () => {
+    const fake = createFakeTauri()
+    await expect(runRemoteCall(fake.tauri, 'claudeLastReply', ['/w/1'])).resolves.toBeNull()
+    for (const m of ['jevDecide', 'jevKeyStatus', 'jevKeySet', 'jevKeyDelete']) {
+      await expect(runRemoteCall(fake.tauri, m, ['{}']), m).rejects.toThrow('원격에서 쓸 수 없는')
+    }
+    expect(fake.tauri.jevDecide).not.toHaveBeenCalled()
+    expect(fake.tauri.jevKeySet).not.toHaveBeenCalled()
+  })
+
+  it('EC-11 원격 화면의 Jev 호출은 호스트로 보내지 않고 바로 거절한다', async () => {
+    const { ws, conn } = await connected()
+    const tauri = createRemoteTauri(conn)
+    const calls = [tauri.jevDecide('{}'), tauri.jevKeyStatus(), tauri.jevKeySet('k'), tauri.jevKeyDelete()]
+    for (const c of calls) c.catch(() => undefined)
+    await Promise.resolve()
+    expect(ws.sent).toHaveLength(1)
+    for (const c of calls) await expect(c).rejects.toThrow('호스트 PC')
+  })
+})

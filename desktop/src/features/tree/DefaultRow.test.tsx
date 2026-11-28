@@ -98,6 +98,7 @@ describe('기본 행', () => {
       unseen: false,
       lastOutputAt: 0,
       since: Date.now(),
+      waitingSince: null,
     })
     renderWithDeps(<DefaultRow />, makeDeps())
     expect(within(screen.getByTestId('default-row')).getByRole('img', { name: '에이전트 작업 중' })).toBeInTheDocument()

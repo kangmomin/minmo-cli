@@ -29,6 +29,8 @@ export type PaneAgent = {
   lastOutputAt: number
   /** 지금 상태가 된 시각(ms) */
   since: number
+  /** Why: 작업 중이 아니게 된 시각(ms) — 작업 중이면 null, 기다리는 동안(상태가 바뀌어도) 유지(#122) */
+  waitingSince: number | null
 }
 
 export const statusOf = (p: Pick<PaneAgent, 'activity' | 'unseen'>): AgentStatus =>
@@ -86,6 +88,7 @@ export function derive(paneId: string, sig: PaneSignals, prev: PaneAgent | null,
     unseen,
     lastOutputAt: sig.lastOutputAt,
     since: was && was.activity === activity ? was.since : now,
+    waitingSince: activity === 'working' ? null : (was?.waitingSince ?? now),
   }
   const before = was ? statusOf(was) : null
   const after = statusOf(next)
@@ -113,7 +116,7 @@ export interface AgentState {
 }
 
 const sameAgent = (a: PaneAgent, b: PaneAgent) =>
-  a.agent === b.agent && a.program === b.program && a.label === b.label && a.activity === b.activity && a.unseen === b.unseen && a.since === b.since && a.lastOutputAt === b.lastOutputAt
+  a.agent === b.agent && a.program === b.program && a.label === b.label && a.activity === b.activity && a.unseen === b.unseen && a.since === b.since && a.lastOutputAt === b.lastOutputAt && a.waitingSince === b.waitingSince
 
 const sameSubs = (a: Subagent[], b: Subagent[]) => a.length === b.length && a.every((x, i) => x.id === b[i].id && x.finished === b[i].finished && x.updatedAt === b[i].updatedAt && x.description === b[i].description)
 

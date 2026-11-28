@@ -1,5 +1,5 @@
 import { StarIcon } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useContext, useEffect, useId, useRef, useState } from 'react'
 
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
@@ -17,6 +17,7 @@ import { TakerRowIcon } from '../taker/TakerStatus'
 import { describeOpenError, useIssueActions } from '../issue/useWorktree'
 import { AssigneeBadge } from './AssigneeBadge'
 import { shrinkBadge } from './badgeClasses'
+import { IssuePickContext } from './issuePick'
 import { githubErrorMessage } from './useTree'
 import type { TreeIssue } from './useTree'
 
@@ -59,6 +60,8 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
   // 로컬 저장소의 작업은 앱에서 닫고 다시 연다(GitHub 이슈는 GitHub 에서)
   const isTask = isLocalOwner(owner) && issue.number !== null
   const target: IssueTarget = { owner, repo, key: issue.key, number: issue.number, title: isEtc ? '' : issue.title }
+  const pick = useContext(IssuePickContext)
+  const pickThis = pick && (() => pick(issueId, () => void actions.open(target)))
   const [confirm, setConfirm] = useState<DeleteCheck | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -111,6 +114,7 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
               // 고르기 전에 본다 — 준비 중인 이슈에는 터미널이 없다(#78: 그때는 포커스를 옮기지 않는다)
               const ready = useSetupStore.getState().open[issueId]?.phase === 'ready'
               onOpen?.()
+              if (pickThis) return pickThis()
               void actions.open(target)
               // selectIssue 와 같은 이벤트에서 요청해야 새 이슈의 터미널이 보이는 렌더에서 포커스한다
               if (ready) useUiStore.getState().focusIssueTerminal(issueId)
@@ -165,9 +169,10 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem onSelect={() => void actions.open(target)}>열기</ContextMenuItem>
+          <ContextMenuItem onSelect={() => (pickThis ? pickThis() : void actions.open(target))}>열기</ContextMenuItem>
           <ContextMenuItem
             onSelect={() => {
+              if (pickThis) return pickThis()
               // 이슈를 열고(작업 폴더 준비) 준비되면 이슈 머리줄이 실행 대화상자를 띄운다
               useUiStore.getState().setLaunchRequest(issueId)
               void actions.open(target)

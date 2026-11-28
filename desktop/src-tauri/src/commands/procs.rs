@@ -17,13 +17,14 @@ pub(crate) fn descendants(procs: &[(u32, u32, String)], root: u32) -> Vec<String
     names
 }
 
-/// root 의 자손 프로세스 이름들. 조회하지 못하면 빈 목록(감지는 터미널 제목만으로 한다)
-pub(crate) fn descendant_names(root: u32) -> Vec<String> {
-    descendants(&snapshot(), root)
+/// root 의 자손 프로세스 이름들. 조회하지 못하면 Err
+// Why: 빈 목록은 "셸만 남음(에이전트 끝남)"으로 읽힌다 — 조회 실패를 끝남으로 보지 않게 Err 로 구분한다
+pub(crate) fn descendant_names(root: u32) -> Result<Vec<String>, String> {
+    snapshot().map(|procs| descendants(&procs, root))
 }
 
 #[cfg(windows)]
-pub(crate) fn snapshot() -> Vec<(u32, u32, String)> {
+pub(crate) fn snapshot() -> Result<Vec<(u32, u32, String)>, String> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -34,11 +35,19 @@ pub(crate) fn snapshot() -> Vec<(u32, u32, String)> {
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snap == INVALID_HANDLE_VALUE {
-            return out;
+            return Err(format!(
+                "CreateToolhelp32Snapshot: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         let mut entry: PROCESSENTRY32W = std::mem::zeroed();
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
         let mut more = Process32FirstW(snap, &mut entry) != 0;
+        if !more {
+            let e = std::io::Error::last_os_error();
+            CloseHandle(snap);
+            return Err(format!("Process32FirstW: {e}"));
+        }
         while more {
             let len = entry
                 .szExeFile
@@ -54,19 +63,19 @@ pub(crate) fn snapshot() -> Vec<(u32, u32, String)> {
         }
         CloseHandle(snap);
     }
-    out
+    Ok(out)
 }
 
 #[cfg(not(windows))]
-pub(crate) fn snapshot() -> Vec<(u32, u32, String)> {
-    let out = match std::process::Command::new("ps")
+pub(crate) fn snapshot() -> Result<Vec<(u32, u32, String)>, String> {
+    let out = std::process::Command::new("ps")
         .args(["-A", "-o", "pid=,ppid=,comm="])
         .output()
-    {
-        Ok(o) if o.status.success() => o.stdout,
-        _ => return Vec::new(),
-    };
-    parse_ps(&String::from_utf8_lossy(&out))
+        .map_err(|e| format!("ps: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("ps: {}", out.status));
+    }
+    Ok(parse_ps(&String::from_utf8_lossy(&out.stdout)))
 }
 
 /// `ps -A -o pid=,ppid=,comm=` 출력 → (pid, ppid, 이름). comm 은 경로일 수 있어 마지막 조각만 쓴다
@@ -131,6 +140,12 @@ mod tests {
     #[test]
     fn snapshot_contains_this_process() {
         let me = std::process::id();
-        assert!(snapshot().iter().any(|(pid, _, _)| *pid == me));
+        assert!(snapshot().unwrap().iter().any(|(pid, _, _)| *pid == me));
+    }
+
+    #[test]
+    fn descendant_names_reads_the_tree_of_a_live_process() {
+        // Why: 테스트 프로세스에는 자손이 없을 수 있다 — 목록이 아니라 조회 성공(Ok)만 본다
+        assert!(descendant_names(std::process::id()).is_ok());
     }
 }

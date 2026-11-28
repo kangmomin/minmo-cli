@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { FIRST_TAB_ID, activeTabOf, addTab, closePane, isPaneTree, layoutPanes, leaf, leafIds, removeTab, selectedTabId, splitPane, tabList, tabOfPane } from './panes'
+import { FIRST_TAB_ID, activeTabOf, addTab, closePane, effectivePane, isPaneTree, layoutPanes, leaf, leafIds, removeTab, selectedTabId, splitPane, tabList, tabOfPane } from './panes'
 import type { PaneNode, PaneTree, TabsNode, TermTab } from './panes'
 
 describe('패널 분할 트리', () => {
@@ -119,5 +119,24 @@ describe('터미널 탭 트리 (#120)', () => {
     expect(leafIds(broken)).toEqual([])
     expect(tabList(null)).toEqual([])
     expect(tabList(leaf(P1))).toEqual([{ id: FIRST_TAB_ID, no: 1, node: leaf(P1) }])
+  })
+})
+
+describe('#122 지금 보이는 패널(effectivePane)', () => {
+  it('AC-02 고른 패널(focused)이 트리에 있으면 그것, 없거나 닫혔으면 첫 패널, 패널이 없으면 null', () => {
+    const tree = splitPane(leaf('p1'), 'p1', 'row', 'p2')
+    expect(effectivePane({ tree, focused: 'p2' })).toBe('p2')
+    expect(effectivePane({ tree, focused: 'p9' })).toBe('p1')
+    expect(effectivePane({ tree, focused: null })).toBe('p1')
+    expect(effectivePane({ tree: null, focused: 'p1' })).toBeNull()
+    expect(effectivePane(undefined)).toBeNull()
+  })
+
+  it('AC-02 터미널 탭(#120): 고른 탭의 패널만 본다 — focused 가 다른 탭에 있으면 고른 탭의 첫 패널, 고른 탭 값이 없으면 첫 탭', () => {
+    const tree: TabsNode = { kind: 'tabs', tabs: [{ id: 't0', no: 1, node: leaf('p1') }, { id: 't2', no: 2, node: splitPane(leaf('p2'), 'p2', 'row', 'p3') }] }
+    expect(effectivePane({ tree, focused: 'p3', tab: 't2' })).toBe('p3')
+    expect(effectivePane({ tree, focused: 'p1', tab: 't2' })).toBe('p2')
+    expect(effectivePane({ tree, focused: 'p3' })).toBe('p1')
+    expect(effectivePane({ tree, focused: null, tab: 't9' })).toBe('p1')
   })
 })

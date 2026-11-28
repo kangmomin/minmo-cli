@@ -42,6 +42,10 @@ export const MOUSE_KEYS = { openLink: 'Ctrl+클릭', forceSelect: 'Shift+드래�
 export const EDIT_KEYS = { deleteWord: 'Ctrl+Backspace', newline: 'Shift+Enter' } as const
 export const EDIT_KEY_DATA = { deleteWord: '\x17', newline: '\x1b\r' } as const
 
+export function overlayOpen(): boolean {
+  return document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"]') !== null
+}
+
 /**
  * Ctrl+T: 지금 고른 이슈의 터미널을 연다(없으면 시작, 있으면 새 패널). 포커스가 어디에 있든 동작하게 window 에서 받는다.
  * 작업 폴더가 준비되지 않았거나 대화상자·메뉴가 열려 있으면 아무것도 하지 않는다.
@@ -54,7 +58,7 @@ export function useTerminalOpenShortcut() {
       const ui = useUiStore.getState()
       const id = ui.selectedIssueId
       if (!id || useSetupStore.getState().open[id]?.phase !== 'ready') return
-      if (document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"]')) return
+      if (overlayOpen()) return
       e.preventDefault()
       ui.openTerminal(id)
       ui.setTab('terminal')
@@ -73,7 +77,7 @@ export function useNewWindowShortcut(open: (() => void) | null) {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (!isNewWindowKey(e) || e.repeat || e.defaultPrevented) return
-      if (document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"]')) return
+      if (overlayOpen()) return
       e.preventDefault()
       open()
     }
