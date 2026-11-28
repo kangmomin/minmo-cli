@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 
 import { Button } from '../../components/ui/button'
@@ -9,10 +9,6 @@ import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { getTauri } from '../../lib/tauri'
 import type { CloseAction, ServerSettings, ServerSettingsInput, TauriApi } from '../../lib/tauri'
 import { useServerStore } from '../../store/server'
-import { FONT_SIZE, useUiStore } from '../../store/ui'
-import { SummarySettingsSection } from '../answer/SummarySettingsSection'
-import { jevCode, jevErrorText } from '../answer/jev'
-import { saveJevKey } from '../answer/jevKey'
 import { AppUpdateSection } from '../update/AppUpdateSection'
 import { CLOSE_OPTIONS, parsePort, statusText } from './serverSettings'
 
@@ -33,13 +29,14 @@ export function ServerSettingsDialog({ tauri = getTauri() }: ServerSettingsDialo
           <DialogTitle>서버 설정</DialogTitle>
           <DialogDescription>minmo 서버는 앱과 함께 이 PC 에서 실행됩니다. 원격 CLI 도 SSH 로 이 서버를 씁니다.</DialogDescription>
         </DialogHeader>
-        {open && <ServerSettingsBody tauri={tauri} onDone={() => setOpen(false)} />}
+        {open && <ServerSettingsForm tauri={tauri} onDone={() => setOpen(false)} />}
       </DialogContent>
     </Dialog>
   )
 }
 
-function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void }) {
+/** Why: 대화상자와 설정 화면이 함께 쓴다 — onDone 이 있으면 대화상자(저장·취소 후 닫음), 없으면 설정 화면(열린 채 저장 결과를 보인다) */
+export function ServerSettingsForm({ tauri, onDone }: { tauri: TauriApi; onDone?: () => void }) {
   const uid = useId()
   const fid = (name: string) => `${uid}-${name}`
   const status = useServerStore((s) => s.status)
@@ -47,19 +44,17 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
   const [loadError, setLoadError] = useState<string | null>(null)
   const [port, setPort] = useState('')
   const [closeAction, setCloseAction] = useState<CloseAction>('ask')
-  const fontSize = useUiStore((s) => s.fontSize)
-  const setFontSize = useUiStore((s) => s.setFontSize)
-  const agentNotify = useUiStore((s) => s.agentNotify)
-  const showUsage = useUiStore((s) => s.showUsage)
-  const setShowUsage = useUiStore((s) => s.setShowUsage)
-  const setAgentNotify = useUiStore((s) => s.setAgentNotify)
-  // 입력 중인 글자 — 범위 안의 숫자가 됐을 때만 적용한다("1" 을 치는 순간 9 로 바뀌지 않게)
-  const [fontDraft, setFontDraft] = useState(String(fontSize))
-  useEffect(() => setFontDraft(String(fontSize)), [fontSize])
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  // Why: 입력 중인 Jev API 키는 여기 둬야 대화상자를 닫을 때 사라진다 — 취소한 키가 다음에 열 때 남지 않는다
-  const [jevDraft, setJevDraft] = useState('')
+  const [saved, setSaved] = useState(false)
+  const saveButton = useRef<HTMLButtonElement>(null)
+  // Why: 저장 중에는 [저장] 이 disabled 라 포커스를 잃는다 — 저장이 끝나 다시 쓸 수 있게 된 뒤 되돌린다
+  const focusSave = useRef(false)
+  useEffect(() => {
+    if (saving || !focusSave.current) return
+    focusSave.current = false
+    saveButton.current?.focus()
+  }, [saving])
 
   useEffect(() => {
     let alive = true
@@ -92,34 +87,32 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
     if (!loaded) return
     setError(null)
     if (parsedPort === null) {
+      setSaved(false)
       setError('포트는 1024~65535 사이의 숫자여야 합니다')
       return
     }
-    // Why: 공백만 있으면 저장할 키가 없다 — 키 검사에 막혀 서버 설정까지 저장하지 못하지 않게 건너뛴다.
-    if (jevDraft.trim() !== '') {
-      setSaving(true)
-      try {
-        await saveJevKey(tauri, jevDraft)
-      } catch (err) {
-        setError(`Jev API 키를 저장하지 못했습니다: ${jevErrorText(jevCode(err))}`)
-        return
-      } finally {
-        setSaving(false)
-      }
-    }
-    setJevDraft('')
     const input: ServerSettingsInput = {}
     if (parsedPort !== loaded.port) input.port = parsedPort
     if (closeAction !== loaded.closeAction) input.closeAction = closeAction
     if (Object.keys(input).length === 0) {
-      onDone()
+      onDone?.()
       return
     }
+    setSaved(false)
     setSaving(true)
     try {
       // 포트가 바뀌면 서버가 새 포트로 다시 시작되고, 앱(App)이 running 을 보고 새 주소로 다시 붙는다
-      await tauri.serverSettingsSave(input)
-      onDone()
+      const next = await tauri.serverSettingsSave(input)
+      if (onDone) {
+        onDone()
+        return
+      }
+      // Why: 열린 채 다시 저장할 수 있어, 바뀐 값을 가리는 기준은 서버가 돌려준 값이어야 한다
+      setLoaded(next)
+      setPort(String(next.port))
+      setCloseAction(next.closeAction)
+      setSaved(true)
+      focusSave.current = true
     } catch (err) {
       setError(`저장하지 못했습니다: ${errorText(err)}`)
     } finally {
@@ -171,8 +164,6 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
 
       <AppUpdateSection tauri={tauri} headingId={fid('app')} />
 
-      <SummarySettingsSection tauri={tauri} draft={jevDraft} onDraftChange={setJevDraft} />
-
       <section className="grid gap-2" aria-labelledby={fid('close')}>
         <h3 id={fid('close')} className="text-sm font-semibold">
           창을 닫을 때
@@ -188,78 +179,24 @@ function ServerSettingsBody({ tauri, onDone }: { tauri: TauriApi; onDone(): void
         <p className="text-xs text-muted-foreground">트레이로 최소화하면 창을 닫아도 서버가 계속 실행되어 원격 CLI 를 쓸 수 있습니다. 트레이 메뉴의 [종료]로 끝냅니다.</p>
       </section>
 
-      <section className="grid gap-2" aria-labelledby={fid('font')}>
-        <h3 id={fid('font')} className="text-sm font-semibold">
-          글자 크기(터미널·파일 편집기)
-        </h3>
-        <div className="flex items-center gap-2">
-          <Input
-            id={fid('font-size')}
-            aria-labelledby={fid('font')}
-            type="number"
-            min={FONT_SIZE.min}
-            max={FONT_SIZE.max}
-            step={1}
-            value={fontDraft}
-            onChange={(e) => {
-              setFontDraft(e.target.value)
-              const n = Number(e.target.value)
-              if (Number.isInteger(n) && n >= FONT_SIZE.min && n <= FONT_SIZE.max) setFontSize(n)
-            }}
-            onBlur={() => setFontDraft(String(fontSize))}
-            // 이 값은 바로 적용된다 — Enter 가 아래의 서버 설정 저장(서버 재시작)을 일으키지 않게 한다
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter') return
-              e.preventDefault()
-              e.currentTarget.blur()
-            }}
-            className="w-24"
-          />
-          <span className="text-sm text-muted-foreground">px</span>
-          <Button type="button" variant="outline" size="sm" disabled={fontSize === FONT_SIZE.default} onClick={() => setFontSize(FONT_SIZE.default)}>
-            기본값
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          바꾸면 바로 적용되고 이 PC 에 저장됩니다({FONT_SIZE.min}~{FONT_SIZE.max}px). 단축키: Ctrl + 키우기 · Ctrl - 줄이기 · Ctrl 0 기본값.
-        </p>
-      </section>
-
-      <section className="grid gap-2" aria-labelledby={fid('agents')}>
-        <h3 id={fid('agents')} className="text-sm font-semibold">
-          에이전트 알림
-        </h3>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={agentNotify} onChange={(e) => setAgentNotify(e.target.checked)} />
-          에이전트가 작업을 끝내거나 입력을 기다리면 알림 띄우기
-        </label>
-        <p className="text-xs text-muted-foreground">그 터미널을 보고 있지 않을 때만 알립니다. 바꾸면 바로 적용되고 이 PC 에 저장됩니다.</p>
-      </section>
-
-      <section className="grid gap-2" aria-labelledby={fid('usage')}>
-        <h3 id={fid('usage')} className="text-sm font-semibold">
-          AI 사용량
-        </h3>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={showUsage} onChange={(e) => setShowUsage(e.target.checked)} />
-          하단 바에 AI 별 사용량 표시
-        </label>
-        <p className="text-xs text-muted-foreground">
-          지금 보는 호스트의 기록에서 읽습니다(읽기만 합니다). Codex 는 마지막으로 쓴 시점의 한도 사용률, Claude Code · Gemini CLI 는 오늘 쓴 토큰 수입니다. 원격 호스트는 python3 이 있어야 합니다.
-        </p>
-      </section>
-
       {error && (
         <p className="rounded bg-destructive/10 p-2 text-sm text-destructive" role="alert">
           {error}
         </p>
       )}
 
-      <DialogFooter>
-        <Button type="button" variant="ghost" onClick={onDone}>
-          취소
-        </Button>
-        <Button type="submit" disabled={saving}>
+      <DialogFooter className="items-center">
+        {onDone ? (
+          <Button type="button" variant="ghost" onClick={onDone}>
+            취소
+          </Button>
+        ) : (
+          // Why: live region 은 미리 렌더해 두어야 변화가 읽힌다
+          <p className="mr-auto text-sm text-muted-foreground" role="status">
+            {saved ? '저장했습니다' : ''}
+          </p>
+        )}
+        <Button ref={saveButton} type="submit" disabled={saving}>
           저장
         </Button>
       </DialogFooter>

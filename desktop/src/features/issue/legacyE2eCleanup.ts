@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 
 import { aliasOfIssue, hostOf, useHostDeps } from '../../app/host'
+import { isDefaultIssueId } from '../../lib/defaultWorkspace'
 import type { TauriApi } from '../../lib/tauri'
 import { useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
@@ -44,7 +45,8 @@ export function useLegacyE2eCleanup() {
       // probe 확인과 deps 선택을 같은 동기 구간에서 한다(그 사이 probe 가 바뀌지 않는다) — probe 가 없는 원격 이슈에 hostDeps 는 이 PC 를 돌려준다
       const probes = useHostsStore.getState().probes
       for (const [id, o] of Object.entries(useSetupStore.getState().open)) {
-        if (o.phase !== 'ready') continue
+        // Why: 기본의 작업 폴더는 그 호스트의 홈이다 — 홈의 .minmo 는 지운 기능의 결과 폴더가 아니다
+        if (o.phase !== 'ready' || isDefaultIssueId(id)) continue
         const alias = aliasOfIssue(id)
         if (alias !== null && !probes[alias]) continue
         const key = `${alias ?? ''}\n${o.path}`

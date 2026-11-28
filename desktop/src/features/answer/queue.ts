@@ -4,7 +4,7 @@ import type { AgentStatus } from '../agents/agentStore'
 import { byName, rowKey } from '../agents/overview'
 import type { AgentRow } from '../agents/overview'
 import { leafIds } from '../terminal/panes'
-import type { PaneNode } from '../terminal/panes'
+import type { PaneTree } from '../terminal/panes'
 
 /** Why: 답을 보낸 뒤(마지막 입력 뒤) 이만큼 지나야 넘어간다 */
 export const ADVANCE_INPUT_GUARD_MS = 2000
@@ -72,7 +72,7 @@ export type StepInput = {
 export type StepResult = { state: QueueState; go?: { row: AgentRow; reason: 'answered' | 'ended' | 'entry' }; cancelled?: true }
 
 /** Why: 대기열에 오르는 줄 — 이 PC·알려진 에이전트·이슈를 아는 줄, 그 이슈의 패널 트리에 있는 패널만 */
-export function answerRows(rows: AgentRow[], panes: Record<string, { tree: PaneNode | null } | undefined>): AgentRow[] {
+export function answerRows(rows: AgentRow[], panes: Record<string, { tree: PaneTree | null } | undefined>): AgentRow[] {
   return rows.filter((r) => {
     if (r.peer !== undefined || r.agent === 'other' || r.target === null) return false
     const p = panes[r.issueId]

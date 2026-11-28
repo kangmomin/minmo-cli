@@ -1,6 +1,7 @@
 // 전체 현황의 줄 만들기와 필터·정렬·그루핑(순수 함수 — 화면은 AgentsOverview.tsx)
 import type { IssueTarget } from '@minmo/core'
 
+import { isDefaultIssueId } from '../../lib/defaultWorkspace'
 import type { AgentsView } from '../../store/ui'
 import { STATUS_LABEL, STATUS_ORDER, statusOf } from './agentStore'
 import type { AgentStatus, PaneAgent } from './agentStore'
@@ -48,13 +49,14 @@ export function toRows(panes: Record<string, PaneAgent>, ctx: RowContext, subage
   return Object.values(panes).map((p) => {
     const t = ctx.targets[p.issueId]
     const host = ctx.hostOf(p.issueId)
+    const isDefault = isDefaultIssueId(p.issueId)
     return {
       paneId: p.paneId,
       issueId: p.issueId,
       host,
       hostLabel: host ?? '이 PC',
-      repo: t ? ctx.repoLabel(t.owner, t.repo) : p.issueId,
-      issue: !t ? '' : t.number === null ? '기타' : `#${t.number} ${t.title}`,
+      repo: isDefault ? '기본' : t ? ctx.repoLabel(t.owner, t.repo) : p.issueId,
+      issue: isDefault || !t ? '' : t.number === null ? '기타' : `#${t.number} ${t.title}`,
       agent: p.agent,
       agentLabel: p.agent === 'other' ? `기타(${p.program})` : AGENT_LABEL[p.agent],
       label: p.label,

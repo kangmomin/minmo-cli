@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 
 import { aliasOfIssue, hostOf, useHostDeps } from '../../app/host'
 import { useHostsStore } from '../../store/hosts'
+import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { useAgentStore } from '../agents/agentStore'
 import { ago } from '../agents/overview'
@@ -28,7 +29,12 @@ export function ClaudeReply({ row }: { row: AgentRow | null }) {
 function ReplyBox({ row, alias }: { row: AgentRow; alias: string | null }) {
   const { paneId, issueId, waitingSince, since } = row
   const hostDeps = useHostDeps()
-  const cwd = useUiStore((s) => s.worktreePathMap[issueId]?.path ?? null)
+  // Why: 기본(#120)은 worktree 가 없다 — 작업 폴더(홈)는 열기 상태에만 있다(useAgentTracker 와 같다)
+  const openPath = useSetupStore((s) => {
+    const open = s.open[issueId]
+    return open?.phase === 'ready' ? open.path : null
+  })
+  const cwd = useUiStore((s) => s.worktreePathMap[issueId]?.path ?? openPath)
   // Why: 같은 작업 폴더에 Claude Code 가 여럿이면 어느 기록이 이 패널 것인지 알 수 없다
   const crowded = useAgentStore((s) => Object.values(s.panes).filter((p) => p.agent === 'claude' && p.issueId === issueId).length > 1)
 

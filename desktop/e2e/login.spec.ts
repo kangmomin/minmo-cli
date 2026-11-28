@@ -14,7 +14,7 @@ test('로그인 버튼 → 코드 표시·브라우저 열기 → 승인 확인 
   expect(calls.find((c) => c.path === '/auth/github/device/poll')?.body).toEqual({ deviceId: 'e2e-device' })
   expect(calls.some((c) => c.path === '/me')).toBe(true)
   expect(calls.some((c) => c.path === '/me/github-token')).toBe(true)
-  await expect(page.getByRole('button', { name: '전역 설정' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '설정', exact: true })).toBeVisible()
 })
 
 test('승인 전에는 코드를 보이며 기다리고, 승인되면 자동으로 로그인된다 · 코드 복사·브라우저 다시 열기', async ({ page, context }) => {
@@ -37,7 +37,7 @@ test('승인 전에는 코드를 보이며 기다리고, 승인되면 자동으�
   await expect.poll(() => page.evaluate(() => window.__MINMO_MOCK__?.openedUrls)).toEqual([VERIFY_URL, VERIFY_URL])
   // 아직 승인 전: /me 를 부르지 않는다
   expect(calls.some((c) => c.path === '/me')).toBe(false)
-  await expect(page.getByRole('button', { name: '전역 설정' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('button', { name: '설정', exact: true })).toBeVisible({ timeout: 10_000 })
   expect(polls).toBe(3)
 })
 
@@ -67,9 +67,13 @@ test('E1 503(Client ID 없음·Device Flow 꺼짐) → 안내만 보이고, 서�
   await page.goto('/')
   await page.getByRole('button', { name: 'GitHub로 로그인' }).click()
   await expect(page.getByRole('alert')).toContainText('GitHub 로그인 설정(Client ID·Device Flow)이 올바르지 않습니다')
+  // EC-11 로그인 전에는 설정 ⚙ 가 없다(서버 설정 대화상자가 열리면 바깥이 가려지므로 그 전에 확인)
+  await expect(page.getByRole('button', { name: '설정', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '서버 설정' }).click()
   const dialog = page.getByRole('dialog', { name: '서버 설정' })
   await expect(dialog.getByLabel('포트')).toBeVisible()
+  // 열리는 것은 서버 설정 대화상자뿐 — dialog `설정` 은 없다
+  await expect(page.getByRole('dialog', { name: '설정', exact: true })).toHaveCount(0)
   await expect(dialog.getByText('Client Secret')).toHaveCount(0)
   await expect(dialog.getByText(/OAuth App/)).toHaveCount(0)
 })

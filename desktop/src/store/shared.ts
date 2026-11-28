@@ -4,7 +4,7 @@
 import { LAUNCH_KINDS } from '../features/agents/launch'
 import type { LaunchKind } from '../features/agents/launch'
 import { leafIds } from '../features/terminal/panes'
-import type { PaneNode } from '../features/terminal/panes'
+import type { PaneTree } from '../features/terminal/panes'
 import { bindShared, merge3 } from '../lib/sharedState'
 import type { TauriApi } from '../lib/tauri'
 import { aliasOfHostId, useHostsStore } from './hosts'
@@ -13,7 +13,7 @@ import { normalizeGroup, normalizeNickname, useReposStore } from './repos'
 import type { ReposState } from './repos'
 import { useSetupStore } from './setup'
 import type { SetupState } from './setup'
-import { useUiStore } from './ui'
+import { reconcileIssuePanes, useUiStore } from './ui'
 import type { IssuePanes, UiState } from './ui'
 
 type SharedRepos = Pick<ReposState, 'added' | 'local' | 'nicknames' | 'groups'>
@@ -22,13 +22,18 @@ type SharedHosts = Pick<HostsState, 'baseRepos' | 'baseDirs' | 'repoHosts'>
 type SharedUi = {
   worktreePathMap: UiState['worktreePathMap']
   agentCommands: UiState['agentCommands']
-  /** 포커스는 기기마다 다르므로 뺀다. first(원격 tmux 의 기본 세션을 쓰는 패널)는 기기마다 같아야 한다(#89 D-26) */
-  panes: Record<string, Pick<IssuePanes, 'tree' | 'seq' | 'first'>>
+  /**
+   * Why: first(원격 tmux 의 기본 세션을 쓰는 패널)는 기기마다 같아야 한다(#89 D-26).
+   * 공유 = tree·seq·first·tabSeq(와 아래 tabNames) / 기기별 = focused·tab(고른 터미널 탭)
+   */
+  panes: Record<string, Pick<IssuePanes, 'tree' | 'seq' | 'first' | 'tabSeq'>>
   /**
    * 열어 본 이슈의 정보(번호·제목) — 다른 기기가 연 이슈의 터미널도 이 화면의 에이전트 현황에 이름과 함께 나오고,
    * 다른 PC 에서 그 이슈를 바로 열 수 있다
    */
   targets?: SetupState['targets']
+  /** Why: 늘 보낸다 — merge3 는 키가 없으면 "지워짐"으로 합친다 */
+  tabNames?: UiState['tabNames']
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -37,8 +42,31 @@ export function pickSharedUi(s: UiState): SharedUi {
   return {
     worktreePathMap: s.worktreePathMap,
     agentCommands: s.agentCommands,
-    panes: Object.fromEntries(Object.entries(s.panes).map(([id, p]) => [id, { tree: p.tree, seq: p.seq, ...(p.first !== undefined && { first: p.first }) }])),
+    panes: Object.fromEntries(
+      Object.entries(s.panes).map(([id, p]) => [id, { tree: p.tree, seq: p.seq, ...(p.first !== undefined && { first: p.first }), ...(p.tabSeq !== undefined && { tabSeq: p.tabSeq }) }]),
+    ),
+    tabNames: Object.fromEntries(
+      Object.entries(s.tabNames)
+        .map(([id, names]) => [id, Object.fromEntries(Object.entries(names).filter(([, v]) => v !== ''))] as const)
+        .filter(([, names]) => Object.keys(names).length > 0),
+    ),
   }
+}
+
+// Why: 다른 기기가 쓴 값이라 renameTab 과 같은 규칙으로 정리해 받는다(글자가 아니거나 빈 값은 버린다)
+function sharedTabNames(value: Record<string, unknown>): UiState['tabNames'] {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter((e): e is [string, Record<string, unknown>] => isRecord(e[1]))
+      .map(([id, names]) => [
+        id,
+        Object.fromEntries(
+          Object.entries(names)
+            .map(([tab, v]) => [tab, typeof v === 'string' ? normalizeNickname(v) : ''] as const)
+            .filter(([, v]) => v !== ''),
+        ),
+      ]),
+  )
 }
 
 export function applySharedUi(value: unknown) {
@@ -52,16 +80,33 @@ export function applySharedUi(value: unknown) {
     }
     if (isRecord(value.panes)) {
       const panes: UiState['panes'] = {}
+      const given = isRecord(value.tabNames) ? sharedTabNames(value.tabNames) : s.tabNames
+      const tabNames: UiState['tabNames'] = {}
       for (const [id, p] of Object.entries(value.panes)) {
         if (!isRecord(p) || typeof p.seq !== 'number') continue
-        const tree = (p.tree ?? null) as PaneNode | null
-        // 이 기기에서 포커스하던 패널이 아직 있으면 그대로 둔다
-        const focused = s.panes[id]?.focused ?? null
+        // Why: 깨진 트리도 받은 그대로 둔다 — 고쳐서 되올리면 다른 기기의 터미널이 꺼진다
+        const tree = (p.tree ?? null) as PaneTree | null
+        const mine = s.panes[id]
+        const focused = mine?.focused ?? null
         // first 는 지금 패널이 아니어도(첫 패널을 닫은 뒤) 그대로 받는다. 없으면(이전 버전 화면) 이 기기의 값을 둔다
-        const first = typeof p.first === 'string' ? p.first : s.panes[id]?.first
-        panes[id] = { tree, seq: p.seq, focused: focused !== null && leafIds(tree).includes(focused) ? focused : null, ...(first !== undefined && { first }) }
+        const first = typeof p.first === 'string' ? p.first : mine?.first
+        const r = reconcileIssuePanes(
+          {
+            tree,
+            // Why: 큰 쪽을 둔다 — 작은 값을 받으면 이 기기가 이미 쓴 패널 id 를 다시 만든다
+            seq: Math.max(p.seq, mine?.seq ?? 0),
+            focused: focused !== null && leafIds(tree).includes(focused) ? focused : null,
+            ...(first !== undefined && { first }),
+            ...(mine?.tab !== undefined && { tab: mine.tab }),
+            ...(typeof p.tabSeq === 'number' && { tabSeq: p.tabSeq }),
+          },
+          given[id],
+        )
+        panes[id] = r.p
+        if (r.names) tabNames[id] = r.names
       }
       next.panes = panes
+      next.tabNames = tabNames
       // 다른 기기가 패널 구성을 지운 이슈(작업 폴더 삭제 등)는 터미널 시작 표시도 지운다 — 지워진 폴더에서 셸을 다시 띄우지 않게
       const started = Object.keys(s.startedTerminals).filter((id) => id in panes)
       if (started.length !== Object.keys(s.startedTerminals).length) next.startedTerminals = Object.fromEntries(started.map((id) => [id, true as const]))

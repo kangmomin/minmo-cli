@@ -10,12 +10,12 @@ import { saveJevKey, useJevKeyStatus, useJevKeyStore } from './jevKey'
 
 export interface SummarySettingsSectionProps {
   tauri: TauriApi
-  /** Why: 입력 중인 키 — 대화상자가 들고 있어 닫으면 사라지고, [저장]도 이 값을 저장한다 */
+  /** Why: 입력 중인 키 — 감싼 화면(설정의 서버·앱)이 들고 있어 분류를 바꾸거나 닫으면 사라진다 */
   draft: string
   onDraftChange(draft: string): void
 }
 
-/** Why: 서버 설정은 provider 밖(서버 시작 화면)에서도 열린다 — react-query·deps 훅을 쓰지 않고 tauri 를 받는다 */
+/** Why: react-query·deps 훅을 쓰지 않고 tauri 를 받는다 — 서버·앱 분류와 같이 이 PC 의 tauri 로 읽고 저장한다 */
 export function SummarySettingsSection({ tauri, draft, onDraftChange }: SummarySettingsSectionProps) {
   const uid = useId()
   const fid = (name: string) => `${uid}-${name}`
@@ -86,7 +86,7 @@ export function SummarySettingsSection({ tauri, draft, onDraftChange }: SummaryS
             spellCheck={false}
             value={draft}
             onChange={(e) => onDraftChange(e.target.value)}
-            // Why: Enter 가 아래의 서버 설정 저장(서버 재시작)을 일으키지 않고 키만 저장하게 한다
+            // Why: Enter 는 키만 저장한다 — 서버 설정 저장(서버 재시작)을 일으키지 않게 한다
             onKeyDown={(e) => {
               if (e.key !== 'Enter') return
               e.preventDefault()

@@ -14,10 +14,10 @@ import type { SettingsInput, SettingsRecord, SettingsScope } from '@minmo/api-cl
 import { useHostsStore } from '../../store/hosts'
 import { LOCAL_OWNER, NICKNAME_MAX, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
-import { apiError, createFakeApi } from '../../test/fakes'
+import { apiError, createFakeApi, createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { SettingsDialog } from './SettingsDialog'
-import type { PreviewIssue } from './SettingsDialog'
+import { ScopeSettings } from './ScopeSettings'
+import type { PreviewIssue } from './ScopeSettings'
 
 const GLOBAL: SettingsRecord = {
   branchTemplate: 'issue/{number}-{slug}',
@@ -51,7 +51,7 @@ function setup(o: { scope: SettingsScope; org?: SettingsRecord; project?: Settin
     putSettings: o.put ?? (async () => EMPTY),
   })
   const user = userEvent.setup()
-  renderWithDeps(<SettingsDialog scope={o.scope} open onOpenChange={() => {}} previewIssue={ISSUE} />, makeDeps({ api, home: '/home/u', platform: 'linux' }))
+  renderWithDeps(<ScopeSettings scope={o.scope} previewIssue={ISSUE} />, makeDeps({ api, home: '/home/u', platform: 'linux' }))
   return { api, user }
 }
 
@@ -82,7 +82,7 @@ describe('저장소 별칭(#73, 이 PC 에 저장)', () => {
     // 입력란은 친 그대로(끝 공백 포함), 저장값은 정리한 값
     expect(input).toHaveValue('my app ')
     expect(useReposStore.getState().nicknames).toEqual({ 'myorg/repo-a': 'my app' })
-    expect(screen.getByRole('dialog', { name: '프로젝트 설정 — my app' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '프로젝트 설정 — my app' })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId('preview-path')).toHaveTextContent('/home/u/w/my app/42'))
     expect(api.putSettings).not.toHaveBeenCalled()
     // 비우면 원래 이름
@@ -533,5 +533,39 @@ describe('AX 오류 안내 연결', () => {
     expect(document.getElementById(hintId)).toHaveTextContent(/worktree 생성 직후 1회 실행/)
     expect(document.getElementById(hintId)).not.toHaveAttribute('role')
     expect(script.getAttribute('aria-describedby')?.split(' ')).toEqual([hintId, alert.id])
+  })
+})
+
+describe('설정 화면 작업 공간 분류(#115)', () => {
+  it('AC-10 [저장] 에 성공하면 폼은 그대로 있고 미리 그려 둔 status 에 저장했습니다, 폼은 저장 값으로 다시 채우고 포커스는 새 [저장] 버튼', async () => {
+    const { api, user } = setup({
+      scope: ORG,
+      put: async (_s, i) => ({ ...EMPTY, ...i, etcBranchName: 'saved-etc', updatedAt: '2026-11-09T00:00:03.000Z' }) as SettingsRecord,
+    })
+    const branch = await field('브랜치 템플릿')
+    await waitFor(() => expect(branch).toHaveAttribute('placeholder', '상속: issue/{number}-{slug}'))
+    // live region 은 저장 전부터 있어야 변화가 읽힌다
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('')
+    await replace(user, branch, 'feat/{number}')
+    // 입력란에서 Enter 로 제출한다 — 클릭과 달리 [저장] 에 포커스를 두지 않는다
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(status).toHaveTextContent('저장했습니다'))
+    expect(status).toBeInTheDocument()
+    // 저장 응답 값으로 다시 채운다(서버가 돌려준 값이 보인다)
+    expect(await field('브랜치 템플릿')).toHaveValue('feat/{number}')
+    expect(await field('기타 브랜치명')).toHaveValue('saved-etc')
+    await waitFor(() => expect(screen.getByRole('button', { name: '저장' })).toHaveFocus())
+  })
+
+  it('AC-09 전역 범위에는 페어링 동기화가 없다(동기화 분류로 옮김)', async () => {
+    const api = createFakeApi({ getSettings: async () => GLOBAL })
+    // 페어링 동기화는 이 PC(native)에서만 그린다 — 기본 fake(mock)로는 원래부터 보이지 않는다
+    const { tauri } = createFakeTauri({ runtime: 'native' })
+    renderWithDeps(<ScopeSettings scope={{ kind: 'global' }} previewIssue={ISSUE} />, makeDeps({ api, tauri, home: '/home/u', platform: 'linux' }))
+    await waitFor(() => expect(screen.getByLabelText('브랜치 템플릿')).toHaveValue('issue/{number}-{slug}'))
+    expect(screen.queryByTestId('pair-sync-section')).toBeNull()
+    expect(screen.queryByText('설정 동기화 (페어링 코드)')).toBeNull()
   })
 })

@@ -778,6 +778,9 @@ pub(crate) fn open_proc(mut cmd: CommandBuilder, cols: u16, rows: u16) -> Result
             pixel_height: 0,
         })
         .map_err(err)?;
+    // ConPTY 를 열면 호스트가 뜬다 — 앱이 닫지 못하고 끝나도 남지 않게
+    #[cfg(windows)]
+    adopt_console_hosts();
     cmd.env("TERM", "xterm-256color");
     let child = pair.slave.spawn_command(cmd).map_err(err)?;
     drop(pair.slave);
@@ -801,6 +804,40 @@ pub(crate) fn open_proc(mut cmd: CommandBuilder, cols: u16, rows: u16) -> Result
         },
         reader,
     })
+}
+
+/// ConPTY 호스트를 넣는 앱 전체 Job — 앱이 어떻게 끝나든(충돌·강제 종료·업데이트 설치) 핸들이 닫히며 OS 가 호스트를 끝낸다.
+/// 일부 OpenConsole 은 부모가 ConPTY 를 닫지 않고 끝나면 끊긴 파이프에서 CPU 한 코어를 계속 쓴다(#100).
+/// 세션의 Job 과 따로 둔다 — 세션의 Job 은 ConPTY 를 닫기 전에 끝내므로(terminate) 호스트가 들면 닫기보다 먼저 끝난다
+#[cfg(windows)]
+static CONSOLE_HOSTS: OnceLock<Option<job::Job>> = OnceLock::new();
+
+/// 이 프로세스의 ConPTY 호스트를 모두 앱 전체 Job 에 넣는다(이미 든 것은 그대로) — ConPTY 를 연 직후에 부른다
+#[cfg(windows)]
+fn adopt_console_hosts() {
+    if let Some(job) = CONSOLE_HOSTS.get_or_init(job::Job::new) {
+        for pid in console_hosts() {
+            job.assign(pid);
+        }
+    }
+}
+
+/// 이 프로세스가 띄운 ConPTY 호스트(OpenConsole·conhost)의 pid. ConPTY 호스트는 이 프로세스의 직접 자식이다 —
+/// 일반 콘솔 프로그램의 conhost 는 그 프로그램의 자식이라 들지 않는다
+#[cfg(windows)]
+fn console_hosts() -> Vec<u32> {
+    let me = std::process::id();
+    // Why: 조회 실패면 넣을 호스트가 없다(이전처럼 빈 목록) — 다음 ConPTY 를 열 때 다시 본다
+    super::procs::snapshot()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, ppid, name)| {
+            *ppid == me
+                && (name.eq_ignore_ascii_case("OpenConsole.exe")
+                    || name.eq_ignore_ascii_case("conhost.exe"))
+        })
+        .map(|(pid, ..)| pid)
+        .collect()
 }
 
 /// 쓰지 않을 새 Proc(재접속 시도 중 세션이 없어짐)를 백그라운드에서 정리한다. 출력을 비우는 리더를 붙여 둔다 —
@@ -1304,8 +1341,8 @@ pub struct WindowsPty {
 
 /// 터미널이 Windows ConPTY 위에서 돌면 그 정보를, 아니면 None 을 돌려준다.
 /// xterm 은 이 값으로 ConPTY 와 같은 방식으로 크기를 바꾼다(행이 늘면 스크롤백을 끌어오지 않고 아래에 빈 행을 둔다).
-/// 원격(ssh) 터미널도 이 PC 의 ConPTY 를 거친다. portable-pty 는 함께 넣은 conpty.dll 이 없으면 OS 의 ConPTY 를 쓰므로
-/// OS 빌드 번호가 곧 ConPTY 의 버전이다
+/// 원격(ssh) 터미널도 이 PC 의 ConPTY 를 거친다. 빌드 번호는 OS 의 것이다 — portable-pty 는 DLL 검색 경로(PATH 포함)에서
+/// conpty.dll 을 찾으면(예: WezTerm 의 것) 그것을 쓰므로, 그때는 실제 ConPTY 의 버전과 다를 수 있다
 #[tauri::command]
 pub fn pty_windows() -> Option<WindowsPty> {
     windows_build().map(|build_number| WindowsPty {
@@ -1426,14 +1463,24 @@ pub fn kill_unkeyed(state: &PtyState) {
 }
 
 pub(crate) fn kill_all_in(hub: &Hub) {
-    // 감독 통로는 세션과 함께 바로 버려진다 — 감독마다 pty-exit 를 한 번 낸다. 원격 tmux 세션은 남는다(EC-08)
-    let procs: Vec<Proc> = match hub.sessions.lock() {
-        Ok(mut s) => s.drain().map(|(_, v)| v.proc).collect(),
-        Err(_) => return,
-    };
+    let procs = drain(hub);
     if !procs.is_empty() {
         std::thread::spawn(move || kill_and_close(procs));
     }
+}
+
+/// 앱이 끝날 때 — 남은 터미널을 모두 끝내고 ConPTY 가 닫힐 때까지(세션마다 마감) 기다린 뒤, 마감 안에 닫힌 수를 돌려준다.
+/// ConPTY 를 닫지 않고 끝나면 일부 OpenConsole 이 끊긴 파이프에서 CPU 한 코어를 계속 쓴다(#100)
+pub fn close_all(state: &PtyState) -> usize {
+    kill_and_close(drain(&state.hub))
+}
+
+/// 모든 세션을 목록에서 뺀다. 감독 통로는 세션과 함께 바로 버려진다 — 감독마다 pty-exit 를 한 번 낸다. 원격 tmux 세션은 남는다(EC-08)
+fn drain(hub: &Hub) -> Vec<Proc> {
+    hub.sessions
+        .lock()
+        .map(|mut s| s.drain().map(|(_, v)| v.proc).collect())
+        .unwrap_or_default()
 }
 
 /// 같은 호스트(None = 이 PC)의 세션이고 cwd 가 path 와 같거나 그 하위인가
@@ -1783,6 +1830,8 @@ mod tests {
                     pixel_height: 0,
                 })
                 .unwrap();
+            // 테스트가 실패해 ConPTY 를 닫지 못하고 끝나도 호스트가 남지 않게(#100)
+            adopt_console_hosts();
             let child = pair.slave.spawn_command(cmd).unwrap();
             drop(pair.slave);
             let job = child
@@ -2049,6 +2098,83 @@ mod tests {
                 "셸이 먼저 끝난 뒤 남은 자손(pid {pid})을 끝내지 못했다"
             );
             assert_eq!(closed, 1, "ConPTY 가 마감 안에 닫히지 않았다");
+        }
+
+        // ── #100 앱이 끝날 때의 ConPTY 호스트 ─────────────────────────────
+
+        /// 앱 종료(RunEvent::Exit): 남은 터미널을 모두 끝내고 ConPTY 가 닫힐 때까지 기다린 뒤 돌아온다
+        #[test]
+        fn close_all_closes_every_terminal_before_returning() {
+            let state = PtyState::default();
+            for _ in 0..2 {
+                spawn_session(
+                    &state.hub,
+                    SpawnReq {
+                        key: None,
+                        cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+                        cols: 80,
+                        rows: ROWS,
+                        remote: None,
+                    },
+                )
+                .unwrap();
+            }
+            assert_eq!(close_all(&state), 2, "마감 안에 모든 ConPTY 가 닫혀야 한다");
+            assert!(state.hub.sessions.lock().unwrap().is_empty());
+        }
+
+        /// console_host_ends_when_the_app_is_killed 가 띄우는 도우미 — 앱처럼 PTY 를 열고, 이 프로세스의 ConPTY 호스트 pid 를
+        /// 알린 뒤 부모가 강제로 끝낼 때까지 기다린다
+        #[test]
+        #[ignore = "console_host_ends_when_the_app_is_killed 가 띄우는 도우미"]
+        fn console_host_helper() {
+            let opened = open_proc(cmd_exe(None), 80, ROWS).unwrap();
+            for pid in console_hosts() {
+                println!("host={pid}=end");
+            }
+            std::thread::sleep(Duration::from_secs(30));
+            // 부모가 끝내지 못했어도 닫지 않고 끝난다 — 시작 질의에 답하지 않은 ConPTY 는 닫기가 멈출 수 있다
+            std::mem::forget(opened);
+        }
+
+        /// 앱이 ConPTY 를 닫지 못하고 끝나도(충돌·강제 종료·업데이트 설치) 호스트가 남지 않는다 —
+        /// 일부 OpenConsole 은 부모가 닫지 않고 끝나면 끊긴 파이프에서 CPU 한 코어를 계속 쓴다
+        #[test]
+        fn console_host_ends_when_the_app_is_killed() {
+            use std::io::{BufRead, BufReader};
+            use std::process::{Command, Stdio};
+            let mut helper = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "commands::pty::tests::conpty::console_host_helper",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let stdout = helper.stdout.take().unwrap();
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    let pid = line
+                        .strip_prefix("host=")
+                        .and_then(|s| s.strip_suffix("=end"));
+                    if let Some(pid) = pid.and_then(|s| s.parse::<u32>().ok()) {
+                        let _ = tx.send(pid);
+                    }
+                }
+            });
+            let host = rx.recv_timeout(Duration::from_secs(15));
+            // 충돌처럼 정리 없이 끝낸다(TerminateProcess)
+            let _ = helper.kill();
+            let _ = helper.wait();
+            let host = host.expect("도우미가 ConPTY 호스트 pid 를 알리지 못했다");
+            assert!(
+                gone_soon(host),
+                "앱이 강제로 끝난 뒤에도 ConPTY 호스트(pid {host})가 남았다"
+            );
         }
 
         // ── #89 재접속의 ConPTY 전제(U3 관문) ─────────────────────────────

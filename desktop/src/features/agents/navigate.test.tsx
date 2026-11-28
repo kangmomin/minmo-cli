@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IssueTarget } from '@minmo/core'
 
 import type { Host } from '../../app/host'
+
 import type { NotifyTarget } from '../../lib/tauri'
 import { parseNotifyTarget } from '../../lib/tauri'
 import { useHostsStore } from '../../store/hosts'
@@ -13,7 +14,7 @@ import { useUiStore } from '../../store/ui'
 import { createFakeTauri, flush } from '../../test/fakes'
 import { makeDeps, renderHookWithDeps } from '../../test/render'
 import type { IssueActions } from '../issue/useWorktree'
-import { leaf, splitPane } from '../terminal/panes'
+import { effectivePane, leaf, splitPane } from '../terminal/panes'
 import { goToPane, openPaneTarget, useNotifyClick } from './navigate'
 import type { OpenPaneOptions } from './navigate'
 
@@ -88,6 +89,38 @@ describe('parseNotifyTarget', () => {
   })
 })
 
+// #120 기본·★기타의 터미널 탭 — 알림·현황을 누르면 그 이슈 → 터미널 → 그 패널이 있는 탭 → 그 패널로 간다(AC-18)
+describe('알림 클릭 — 숨은 터미널 탭 (#120)', () => {
+  const ETC = 'acme/app#etc'
+  const E = (n: number) => `${ETC}::${n}`
+  const TWO = { kind: 'tabs' as const, tabs: [{ id: 't0', no: 1, node: leaf(E(1)) }, { id: 't2', no: 2, node: splitPane(leaf(E(2)), E(2), 'row', E(3)) }] }
+
+  beforeEach(() => {
+    useUiStore.setState({ panes: { [ETC]: { tree: TWO, focused: E(1), seq: 3, tabSeq: 2 } } })
+  })
+
+  it('AC-18 숨은 탭의 패널 알림을 누르면 그 탭으로 바꾸고 그 패널에 포커스한다', async () => {
+    const t = await setup()
+    t.click({ kind: 'local', issueId: ETC, paneId: E(3) })
+    const ui = useUiStore.getState()
+    expect(ui.selectedIssueId).toBe(ETC)
+    expect(ui.tab).toBe('terminal')
+    expect(ui.panes[ETC]).toMatchObject({ tab: 't2', focused: E(3) })
+    expect(ui.focusRequest).toEqual({ paneId: E(3), token: 1 })
+  })
+
+  it('EC-07 누르기 전에 그 패널(탭)이 닫혔으면 그 이슈의 터미널 작업 탭까지만 간다 — 고른 탭·포커스는 그대로', async () => {
+    const t = await setup()
+    t.click({ kind: 'local', issueId: ETC, paneId: E(9) })
+    const ui = useUiStore.getState()
+    expect(ui.selectedIssueId).toBe(ETC)
+    expect(ui.tab).toBe('terminal')
+    expect(ui.panes[ETC].focused).toBe(E(1))
+    expect(ui.panes[ETC]).not.toHaveProperty('tab')
+    expect(ui.focusRequest).toBeNull()
+  })
+})
+
 // #122 답변 모드의 이동 — 그 패널로 갔는지 알려 주고, 이 창에서 열지 않은 이슈는 먼저 연다(Plan §5, U4)
 describe('#122 goToPane · openPaneTarget', () => {
   const TARGET = { owner: 'acme', repo: 'app', key: '1', number: 1, title: '로그인' }
@@ -119,6 +152,19 @@ describe('#122 goToPane · openPaneTarget', () => {
   it('EC-16 goToPane 은 그 패널로 갔으면 true, 그 사이 닫힌 패널이면 false', () => {
     expect(goToPane(ISSUE, P2)).toBe(true)
     expect(goToPane(ISSUE, `${ISSUE}::7`)).toBe(false)
+  })
+
+  it('AC-03 숨은 터미널 탭(#120)의 패널로 가면 그 탭으로 바꾼다 — 그 패널이 지금 보이는 패널이 된다', () => {
+    const ETC = 'acme/app#etc'
+    const E = (n: number) => `${ETC}::${n}`
+    const tree = { kind: 'tabs' as const, tabs: [{ id: 't0', no: 1, node: leaf(E(1)) }, { id: 't2', no: 2, node: leaf(E(2)) }] }
+    useUiStore.setState({ panes: { [ETC]: { tree, focused: E(1), seq: 2, tabSeq: 2 } } })
+    expect(goToPane(ETC, E(2), true)).toBe(true)
+    const ui = useUiStore.getState()
+    expect(ui).toMatchObject({ selectedIssueId: ETC, tab: 'terminal' })
+    expect(ui.panes[ETC]).toMatchObject({ tab: 't2', focused: E(2) })
+    expect(effectivePane(ui.panes[ETC])).toBe(E(2))
+    expect(ui.focusRequest).toMatchObject({ paneId: E(2) })
   })
 
   it('EC-16 이 창에서 열지 않은 이슈: 열기가 끝나기를 기다리지 않고, 준비되면 그 패널로 가서 ok — keyboard 면 그 터미널이 키를 받는다', async () => {

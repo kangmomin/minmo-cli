@@ -1,15 +1,15 @@
-// 서버 설정 "세션 요약" 절(#122) — Claude 답변·Jev 판정 켜기, Jev API 키 저장·지우기(Plan §11, U8)
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+// 설정 화면 서버·앱 분류의 "세션 요약" 절(#122) — Claude 답변·Jev 판정 켜기, Jev API 키 저장·지우기(Plan §11, U8)
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { TooltipProvider } from '../../components/ui/tooltip'
 import type { TauriApi } from '../../lib/tauri'
-import { useServerStore } from '../../store/server'
+import { openSettings, useSettingsPageStore } from '../../store/settingsPage'
 import { useUiStore } from '../../store/ui'
 import { SERVER_SETTINGS, createFakeTauri } from '../../test/fakes'
-import { ServerSettingsDialog } from '../server/ServerSettingsDialog'
-
-const running = { state: 'running' as const, port: 8787, message: null }
+import { makeDeps, renderWithDeps } from '../../test/render'
+import { SettingsPage } from '../settings/SettingsPage'
 
 /** 키체인(Rust 안)을 흉내 낸다 — 화면은 저장 여부만 묻는다 */
 function setup(overrides: Partial<TauriApi> = {}) {
@@ -25,8 +25,13 @@ function setup(overrides: Partial<TauriApi> = {}) {
     },
     ...overrides,
   })
-  useServerStore.setState({ status: running, settingsOpen: true })
-  render(<ServerSettingsDialog tauri={fake.tauri} />)
+  renderWithDeps(
+    <TooltipProvider>
+      <SettingsPage />
+    </TooltipProvider>,
+    makeDeps({ tauri: fake.tauri }),
+  )
+  act(() => openSettings({ section: 'server' }))
   return { tauri: fake.tauri }
 }
 
@@ -34,7 +39,7 @@ const section = async () => screen.findByRole('region', { name: '세션 요약' 
 const keyInput = () => screen.getByLabelText('Jev API 키')
 
 beforeEach(() => {
-  useServerStore.setState(useServerStore.getInitialState(), true)
+  useSettingsPageStore.setState(useSettingsPageStore.getInitialState(), true)
   useUiStore.setState({ summaryClaudeReply: true, summaryJev: false })
   localStorage.clear()
 })
@@ -54,6 +59,17 @@ describe('SummarySettingsSection', () => {
     expect(useUiStore.getState()).toMatchObject({ summaryJev: true, summaryClaudeReply: false })
   })
 
+  it('AC-11 설정 화면의 서버·앱 분류에 있고, 설정 검색 "Jev"·"세션 요약" 으로 찾는다', async () => {
+    setup()
+    const dlg = await screen.findByRole('dialog', { name: '설정' })
+    expect(within(dlg).getByRole('tab', { name: '서버·앱', selected: true })).toBeInTheDocument()
+    await section()
+    for (const query of ['Jev', '세션 요약']) {
+      fireEvent.change(within(dlg).getByRole('searchbox', { name: '설정 검색' }), { target: { value: query } })
+      await waitFor(() => expect(within(dlg).getAllByRole('tab').map((t) => t.textContent)).toEqual(['서버·앱']))
+    }
+  })
+
   it('AC-11 Jev API 키: 키체인에 저장하고 지우며 저장 여부를 보인다 — 키는 화면으로 읽지 않고, Enter 는 서버 설정이 아니라 키를 저장한다', async () => {
     const user = userEvent.setup()
     const { tauri } = setup()
@@ -66,7 +82,7 @@ describe('SummarySettingsSection', () => {
     await waitFor(() => expect(within(sec).getByRole('status')).toHaveTextContent('저장됨'))
     expect(keyInput()).toHaveValue('')
     expect(tauri.serverSettingsSave).not.toHaveBeenCalled()
-    expect(useServerStore.getState().settingsOpen).toBe(true)
+    expect(useSettingsPageStore.getState().open).toBe(true)
     fireEvent.click(within(sec).getByRole('button', { name: 'Jev API 키 지우기' }))
     await waitFor(() => expect(tauri.jevKeyDelete).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(within(sec).getByRole('status')).toHaveTextContent('없음'))
@@ -81,19 +97,10 @@ describe('SummarySettingsSection', () => {
     await waitFor(() => expect(tauri.jevKeySet).toHaveBeenCalledWith('sk-abc'))
   })
 
-  it('AC-11 대화상자의 [저장]: 입력한 키가 있으면 서버 설정보다 먼저 저장하고 닫는다', async () => {
-    const { tauri } = setup()
-    await section()
-    fireEvent.change(keyInput(), { target: { value: 'sk-on-save' } })
-    fireEvent.click(screen.getByRole('button', { name: '저장' }))
-    await waitFor(() => expect(useServerStore.getState().settingsOpen).toBe(false))
-    expect(tauri.jevKeySet).toHaveBeenCalledWith('sk-on-save')
-  })
-
   it.each([
     ['잘못된 키(보이는 ASCII 밖 글자)', '키에-한글', null],
     ['키체인 오류', 'sk-ok', 'jev_keychain'],
-  ])('AC-11 대화상자의 [저장]: %s 면 닫지 않고 서버 설정도 저장하지 않으며 알린다', async (_kind, value, error) => {
+  ])('AC-11 [Jev API 키 저장]: %s 면 알리고 입력한 키를 지우지 않는다', async (_kind, value, error) => {
     const { tauri } = setup(
       error
         ? {
@@ -103,34 +110,32 @@ describe('SummarySettingsSection', () => {
           }
         : {},
     )
-    await section()
-    fireEvent.change(screen.getByLabelText('포트'), { target: { value: '18787' } })
+    const sec = await section()
     fireEvent.change(keyInput(), { target: { value } })
-    fireEvent.click(screen.getByRole('button', { name: '저장' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Jev API 키를 저장하지 못했습니다')
-    expect(useServerStore.getState().settingsOpen).toBe(true)
-    expect(tauri.serverSettingsSave).not.toHaveBeenCalled()
+    fireEvent.click(within(sec).getByRole('button', { name: 'Jev API 키 저장' }))
+    expect(await within(sec).findByRole('alert')).toHaveTextContent('Jev API 키를 저장하지 못했습니다')
+    expect(keyInput()).toHaveValue(value)
     if (!error) expect(tauri.jevKeySet).not.toHaveBeenCalled()
   })
 
-  it('AC-11 대화상자의 [저장]: 키 칸에 공백만 있으면 키는 저장하지 않고 서버 설정을 저장하고 닫는다', async () => {
+  it('AC-11 서버 폼의 [저장] 은 서버 설정만 저장한다 — 입력 중인 키는 저장하지 않고 칸에 남는다', async () => {
     const { tauri } = setup()
     await section()
     fireEvent.change(screen.getByLabelText('포트'), { target: { value: '18787' } })
-    fireEvent.change(keyInput(), { target: { value: '   ' } })
+    fireEvent.change(keyInput(), { target: { value: 'sk-typed' } })
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
-    await waitFor(() => expect(useServerStore.getState().settingsOpen).toBe(false))
-    expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ port: 18787 })
+    await waitFor(() => expect(tauri.serverSettingsSave).toHaveBeenCalledWith({ port: 18787 }))
     expect(tauri.jevKeySet).not.toHaveBeenCalled()
+    expect(keyInput()).toHaveValue('sk-typed')
   })
 
-  it('AC-11 취소한 뒤 다시 열면 키 입력 칸은 비어 있다(취소한 키가 남지 않는다)', async () => {
+  it('AC-11 설정을 닫았다 다시 열면 키 입력 칸은 비어 있다(취소한 키가 남지 않는다)', async () => {
     const { tauri } = setup()
     await section()
     fireEvent.change(keyInput(), { target: { value: 'sk-cancel' } })
-    fireEvent.click(screen.getByRole('button', { name: '취소' }))
-    await waitFor(() => expect(useServerStore.getState().settingsOpen).toBe(false))
-    act(() => useServerStore.setState({ settingsOpen: true }))
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '설정' })).not.toBeInTheDocument())
+    act(() => openSettings({ section: 'server' }))
     await section()
     expect(keyInput()).toHaveValue('')
     expect(tauri.jevKeySet).not.toHaveBeenCalled()

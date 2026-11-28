@@ -12,8 +12,9 @@ import { applySharedHosts, applySharedRepos, applySharedUi, bindSharedStores, pi
 import { useUiStore } from '../../store/ui'
 import { createFakeTauri } from '../../test/fakes'
 import { makeDeps, renderWithDeps } from '../../test/render'
-import { leaf } from '../terminal/panes'
-import { RemoteAccessDialog, shareableAddress } from './RemoteAccessDialog'
+import { leaf, leafIds, selectedTabId, splitPane, tabList } from '../terminal/panes'
+import type { TabsNode, TermTab } from '../terminal/panes'
+import { RemoteAccessSettings, shareableAddress } from './RemoteAccessSettings'
 import { defaultDeviceName, pairErrorMessage, reloadAllowed } from './RemoteGate'
 import { runRemoteCall } from './useRemoteHost'
 
@@ -498,6 +499,88 @@ describe('store 의 함께 쓰는 부분 — 패널 역할 first (#89 D-26)', ()
   })
 })
 
+// #120 터미널 탭: 탭 구조(트리)·tabSeq·이름(tabNames)은 원격 접속 기기와 공유하고, 고른 탭(tab)·포커스는 기기마다 둔다(D-19).
+// 앱을 다시 켜면 호스트 공유 파일이 탭 목록·이름·분할을 되살린다(D-18′)
+describe('store 의 함께 쓰는 부분 — 터미널 탭 (#120)', () => {
+  const ETC = 'a/b#etc'
+  const E = (n: number) => `${ETC}::${n}`
+  const tabsOf = (...tabs: TermTab[]): TabsNode => ({ kind: 'tabs', tabs })
+  const TWO = tabsOf({ id: 't0', no: 1, node: leaf(E(1)) }, { id: 't2', no: 2, node: splitPane(leaf(E(2)), E(2), 'row', E(3)) })
+
+  beforeEach(() => {
+    useUiStore.setState({ panes: {}, tabNames: {}, startedTerminals: {} })
+  })
+
+  it('AC-17 pickSharedUi: 트리·seq·first·tabSeq 와 빈 값이 아닌 이름을 보내고, 고른 탭·포커스는 보내지 않는다', () => {
+    useUiStore.setState({
+      panes: {
+        [ETC]: { tree: TWO, focused: E(3), seq: 3, first: E(1), tab: 't2', tabSeq: 2 },
+        'a/b#1': { tree: leaf('a/b#1::1'), focused: null, seq: 1 },
+      },
+      tabNames: { [ETC]: { t0: '빌드', t2: '' } },
+    })
+    const shared = pickSharedUi(useUiStore.getState())
+    expect(shared.panes[ETC]).toEqual({ tree: TWO, seq: 3, first: E(1), tabSeq: 2 })
+    // 일반 이슈는 지금 모양 그대로(tabSeq 키 없음)
+    expect(shared.panes['a/b#1']).toEqual({ tree: leaf('a/b#1::1'), seq: 1 })
+    expect(shared.tabNames).toEqual({ [ETC]: { t0: '빌드' } })
+  })
+
+  it('AC-17 applySharedUi: 받은 탭 목록·이름을 쓰고 고른 탭·포커스는 이 기기 값 · seq 는 큰 쪽 · 이름은 정리하고 고아 이름은 지운다', () => {
+    useUiStore.setState({
+      panes: { [ETC]: { tree: TWO, focused: E(2), seq: 5, first: E(1), tab: 't2', tabSeq: 2 } },
+      tabNames: { [ETC]: { t2: '옛 이름' }, 'gone#etc': { t0: 'x' } },
+    })
+    const theirs = tabsOf(...TWO.tabs, { id: 't4', no: 3, node: leaf(E(4)) })
+    applySharedUi({
+      panes: { [ETC]: { tree: theirs, seq: 4, first: E(1), tabSeq: 3 } },
+      tabNames: { [ETC]: { t0: '  빌드 ', t2: 5, t4: '  ', t9: '고아' }, 'gone#etc': { t0: 'y' } },
+    })
+    const ui = useUiStore.getState()
+    expect(ui.panes[ETC]).toEqual({ tree: theirs, seq: 5, first: E(1), tabSeq: 3, tab: 't2', focused: E(2) })
+    expect(ui.tabNames).toEqual({ [ETC]: { t0: '빌드' } })
+  })
+
+  it('AC-17 다른 기기가 이 기기의 고른 탭을 닫으면 고른 탭 값을 지운다(= 첫 탭)', () => {
+    useUiStore.setState({ panes: { [ETC]: { tree: TWO, focused: E(2), seq: 3, first: E(1), tab: 't2', tabSeq: 2 } } })
+    // 대조: 고른 탭이 아직 있으면 그대로 둔다
+    applySharedUi({ panes: { [ETC]: { tree: TWO, seq: 3, first: E(1), tabSeq: 2 } } })
+    expect(useUiStore.getState().panes[ETC]).toMatchObject({ tab: 't2', focused: E(2) })
+    const theirs = tabsOf(TWO.tabs[0], { id: 't4', no: 3, node: leaf(E(4)) })
+    applySharedUi({ panes: { [ETC]: { tree: theirs, seq: 4, first: E(1), tabSeq: 3 } } })
+    const p = useUiStore.getState().panes[ETC]
+    expect(p.tree).toEqual(theirs)
+    expect(p).not.toHaveProperty('tab')
+    expect(p.focused).toBeNull()
+  })
+
+  it('AC-15′ 다시 켠 뒤(이 기기 값 없음) 공유 파일의 탭 목록·순서·이름·분할이 되살아나고, 고른 탭은 첫 탭이다', () => {
+    applySharedUi({ panes: { [ETC]: { tree: TWO, seq: 3, first: E(1), tabSeq: 2 } }, tabNames: { [ETC]: { t2: '서버' } } })
+    const ui = useUiStore.getState()
+    expect(ui.panes[ETC]).toEqual({ tree: TWO, seq: 3, first: E(1), tabSeq: 2, focused: null })
+    expect(selectedTabId(ui.panes[ETC].tree, ui.panes[ETC].tab)).toBe('t0')
+    expect(ui.tabNames).toEqual({ [ETC]: { t2: '서버' } })
+  })
+
+  it('AC-08 탭 1개(탭 없는 트리)를 분할한 값과 t0 이름을 받으면 이름이 남는다 — 탭 없는 트리에는 tab·tabSeq 를 두지 않는다', () => {
+    const split = splitPane(leaf(E(1)), E(1), 'row', E(2))
+    applySharedUi({ panes: { [ETC]: { tree: split, seq: 2, first: E(1) } }, tabNames: { [ETC]: { t0: '빌드', t2: '고아' } } })
+    const ui = useUiStore.getState()
+    expect(ui.panes[ETC]).toEqual({ tree: split, seq: 2, first: E(1), focused: null })
+    expect(ui.tabNames).toEqual({ [ETC]: { t0: '빌드' } })
+  })
+
+  it('EC-09′ 받은 트리가 깨졌으면 그대로 두고(되올리지 않음) 읽을 때 "패널 없음"으로 본다 · 이전 버전의 트리(탭 없음)는 탭 "1" 하나', () => {
+    const broken = { kind: 'weird' }
+    applySharedUi({ panes: { [ETC]: { tree: broken, seq: 3 }, 'a/b#etc2': { tree: leaf('a/b#etc2::1'), seq: 1 } } })
+    const ui = useUiStore.getState()
+    expect(ui.panes[ETC].tree).toEqual(broken)
+    expect(leafIds(ui.panes[ETC].tree)).toEqual([])
+    expect(pickSharedUi(ui).panes[ETC].tree).toEqual(broken)
+    expect(tabList(ui.panes['a/b#etc2'].tree)).toEqual([{ id: 't0', no: 1, node: leaf('a/b#etc2::1') }])
+  })
+})
+
 describe('RemoteAccessDialog (호스트의 원격 접속 설정)', () => {
   it('다른 기기에서 열 주소는 Tailscale 을 먼저, 없으면 LAN — 이 PC 전용 주소는 쓰지 않는다', () => {
     const local = { kind: 'local' as const, url: 'http://127.0.0.1:8790' }
@@ -517,7 +600,7 @@ describe('RemoteAccessDialog (호스트의 원격 접속 설정)', () => {
       remotePairStart: async () => ({ code: '482913', expiresInSec: 120 }),
       remoteDeviceRemove: async () => ({ ...on, devices: [] }),
     })
-    renderWithDeps(<RemoteAccessDialog open onOpenChange={() => {}} />, makeDeps({ tauri: fake.tauri }))
+    renderWithDeps(<RemoteAccessSettings />, makeDeps({ tauri: fake.tauri }))
     const user = userEvent.setup()
     const toggle = await screen.findByRole('checkbox', { name: '원격 접속 켜기' })
     expect(toggle).not.toBeChecked()
@@ -541,7 +624,7 @@ describe('RemoteAccessDialog (호스트의 원격 접속 설정)', () => {
     const fake = createFakeTauri()
     const r = render(<div />)
     r.unmount()
-    const view = renderWithDeps(<RemoteAccessDialog open onOpenChange={() => {}} />, makeDeps({ tauri: fake.tauri }))
+    const view = renderWithDeps(<RemoteAccessSettings />, makeDeps({ tauri: fake.tauri }))
     await screen.findByRole('checkbox', { name: '원격 접속 켜기' })
     view.unmount()
     expect(fake.tauri.remotePairCancel).toHaveBeenCalled()

@@ -162,6 +162,8 @@ pub fn run() {
                 mgr.shutdown(app);
             }
             tailscale::shutdown(app);
+            // quit 을 거치지 않은 종료에서도 남은 터미널의 ConPTY 를 닫는다 — 닫지 않고 끝나면 일부 OpenConsole 이 CPU 를 계속 쓴다(#100)
+            pty::close_all(&app.state::<pty::PtyState>());
         }
     });
 }

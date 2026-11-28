@@ -17,10 +17,11 @@ import { useBaseDeps } from '../../app/deps'
 import { windowScope } from '../../lib/windowScope'
 import type { WindowScope } from '../../lib/windowScope'
 import { LOCAL_OWNER, isLocalOwner, splitFullName, useReposStore } from '../../store/repos'
+import { openSettings } from '../../store/settingsPage'
 import { useUiStore } from '../../store/ui'
-import { HostsDialog } from '../hosts/HostsDialog'
-import type { PreviewIssue } from '../settings/SettingsDialog'
+import type { PreviewIssue } from '../settings/ScopeSettings'
 import { AddRepoMenu } from './AddRepoMenu'
+import { DefaultRow } from './DefaultRow'
 import { GroupDialog } from './GroupDialog'
 import { GroupNode } from './GroupNode'
 import { PublishDialog } from './LocalRepoDialogs'
@@ -85,7 +86,6 @@ export function SidebarContent({ connection = LOCAL_ONLY, onOpenSettings }: Side
   const aliases = useHostsStore((s) => s.aliases)
   const peers = usePeersStore((s) => s.peers)
   const { tauri } = useBaseDeps()
-  const [hostsOpen, setHostsOpen] = useState(false)
   const { selected } = connection
   const owners = useOwners()
   const source = useGitHubSource()
@@ -170,12 +170,11 @@ export function SidebarContent({ connection = LOCAL_ONLY, onOpenSettings }: Side
           size="icon-sm"
           aria-label="원격 호스트 관리"
           title="원격 호스트 관리(SSH 프로필)"
-          onClick={() => setHostsOpen(true)}
+          onClick={() => openSettings({ section: 'hosts' })}
         >
           <ServerCogIcon />
         </Button>
       </div>
-      <HostsDialog open={hostsOpen} onOpenChange={setHostsOpen} />
       {/* 버튼이 여럿이라 좁은 사이드바에서 밀려 나가지 않게 줄바꿈을 허용한다 */}
       <div className="flex flex-wrap items-center gap-x-1 gap-y-1 border-b px-3 py-2">
         <span className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">GitHub</span>
@@ -261,6 +260,7 @@ export function SidebarContent({ connection = LOCAL_ONLY, onOpenSettings }: Side
               />
             ) : (
               <>
+                <DefaultRow />
                 {groupIds.map((id) => (
                   <GroupNode key={id} id={id} onOpenSettings={onOpenSettings} />
                 ))}

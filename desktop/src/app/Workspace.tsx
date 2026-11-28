@@ -1,10 +1,7 @@
-import { AppWindowIcon, ListTreeIcon, LogOutIcon, MessagesSquareIcon, MonitorSmartphoneIcon, ServerIcon, SettingsIcon, TerminalSquareIcon } from 'lucide-react'
+import { AppWindowIcon, ListTreeIcon, LogOutIcon, MessagesSquareIcon, SettingsIcon } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
-import type { SettingsScope } from '@minmo/api-client'
-
-import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { AgentsButton, AgentsOverview, useLocalRows } from '../features/agents/AgentsOverview'
@@ -15,38 +12,40 @@ import { useAnswerQueue } from '../features/answer/useAnswerQueue'
 import { useNotifyClick } from '../features/agents/navigate'
 import { useAgentTracker } from '../features/agents/useAgentTracker'
 import { useWindowViewBroadcast } from '../features/agents/windowView'
+import { ensureDefaultOpen, homeOf } from '../features/issue/defaultOpen'
 import { useLegacyE2eCleanup } from '../features/issue/legacyE2eCleanup'
 import { useDeepLinkOpen } from '../features/remote/deepLink'
 import { useAgentPublisher, usePeerAgents } from '../features/remote/peerAgents'
 import { usePeerSync } from '../features/remote/peerSync'
 import { usePairSync } from '../features/pairSync/pairSync'
-import { RemoteAccessDialog } from '../features/remote/RemoteAccessDialog'
 import { useSharedTerminals } from '../features/remote/useRemoteHost'
 import { useBaseDeps } from './deps'
 import { useAuth } from '../features/auth/useAuth'
-import { CliAccessDialog } from '../features/cli/CliAccessDialog'
 import { IssueHeader } from '../features/issue/IssueHeader'
 import { AppVersion } from '../features/update/AppVersion'
 import { WorkTabs } from '../features/issue/WorkTabs'
 import { WorktreeSetupLog } from '../features/issue/WorktreeSetupLog'
-import { SettingsDialog } from '../features/settings/SettingsDialog'
-import type { PreviewIssue } from '../features/settings/SettingsDialog'
+import type { PreviewIssue } from '../features/settings/ScopeSettings'
+import { SettingsPage } from '../features/settings/SettingsPage'
+import { TakerActionsProvider, useIssueTaker } from '../features/taker/useIssueTaker'
 import { Sidebar } from '../features/tree/Sidebar'
+import type { SidebarProps } from '../features/tree/Sidebar'
 import { SidebarFrame } from '../features/tree/SidebarFrame'
 import { UsageBar } from '../features/usage/UsageBar'
 import { NEW_WINDOW_KEY, useNewWindowShortcut, useTerminalOpenShortcut } from '../features/terminal/keys'
 import { useNarrow } from '../features/terminal/TerminalKeyBar'
 import { openWindow } from '../features/tree/openWindow'
+import { isDefaultIssueId, isDefaultTarget } from '../lib/defaultWorkspace'
 import { useFontSizeShortcuts } from '../lib/fontSize'
-import { windowScope } from '../lib/windowScope'
-import { openServerSettings } from '../store/server'
+import { isPrimaryWindow, windowScope } from '../lib/windowScope'
+import { repoAliasOf, useHostsStore } from '../store/hosts'
+import { openSettings } from '../store/settingsPage'
+import type { SettingsTarget } from '../store/settingsPage'
 import { HostStatusNotice } from './HostGate'
 import { HostScope, aliasOfIssue, useHostConnection, useHostStatus } from './host'
 import { useSessionStore } from '../store/session'
 import { useSetupStore } from '../store/setup'
 import { useUiStore } from '../store/ui'
-
-type SettingsTarget = { scope: SettingsScope; preview: PreviewIssue | null }
 
 /** 메인 레이아웃 (D-27): 상단 바 / 좌 트리 / 우 IssueHeader + 탭(터미널·변경·메모). 하단 OfflineBanner 는 App 이 둔다 */
 export function Workspace() {
@@ -56,10 +55,7 @@ export function Workspace() {
   const selectedId = useUiStore((s) => s.selectedIssueId)
   const target = useSetupStore((s) => (selectedId ? s.targets[selectedId] : undefined))
   const openState = useSetupStore((s) => (selectedId ? s.open[selectedId] : undefined))
-  const [settings, setSettings] = useState<SettingsTarget | null>(null)
-  const [cliOpen, setCliOpen] = useState(false)
   const [agentsOpen, setAgentsOpen] = useState(false)
-  const [remoteOpen, setRemoteOpen] = useState(false)
   // 좁은 화면(휴대폰)에서는 트리와 작업 화면을 한 번에 하나만 보인다 — 이슈를 고르면(같은 이슈를 다시 골라도) 작업 화면으로 넘어간다.
   // effect 가 아니라 고른 그 렌더에서 넘긴다: 자식(터미널)의 포커스 요청은 이 컴포넌트의 effect 보다 먼저 처리되므로,
   // effect 로 넘기면 터미널이 아직 가려진 채 포커스를 받지 못한다(#78)
@@ -76,7 +72,6 @@ export function Workspace() {
   const baseTauri = baseDeps.tauri
   const queryClient = useQueryClient()
   useSharedTerminals(baseTauri)
-  // 원격으로 붙은 화면에서는 이 PC 전용 설정(원격 접속·서버·원격 CLI)을 보이지 않는다
   const isHost = baseTauri.runtime !== 'remote'
   // 범위 없는 새 창(#105) — 원격 화면에서는 띄우지 않는다
   const openBlankWindow = useMemo(() => (isHost ? () => openWindow(baseTauri, null, null) : null), [isHost, baseTauri])
@@ -96,6 +91,7 @@ export function Workspace() {
   // 그 알림을 누르면 해당 터미널로 간다
   useNotifyClick()
   const connection = useHostConnection()
+  const takerActions = useIssueTaker()
 
   const answer = useUiStore((s) => s.viewMode === 'answer')
   const setViewMode = useUiStore((s) => s.setViewMode)
@@ -149,19 +145,45 @@ export function Workspace() {
     }
   }, [answer, focusSummary])
 
-  const selectedPreview: PreviewIssue | null = target ?? null
-  const openSettings = (scope: SettingsScope, preview: PreviewIssue | null) => {
+  // Why: 기본은 저장소가 없어 설정 미리보기 기준이 되지 않는다
+  const selectedPreview: PreviewIssue | null = target && !isDefaultTarget(target) ? target : null
+  // Why: 트리와 [새 세션] 대화상자의 트리가 같이 쓴다
+  const openScopeSettings: SidebarProps['onOpenSettings'] = (scope, preview) => {
+    // Why: 트리는 조직·저장소 범위만 넘긴다 — 전역은 상단 ⚙ 로 연다
+    if (scope.kind === 'global') return
     // 선택된 이슈가 같은 저장소면 미리보기 기준으로 쓴다
-    const sameRepo = target && scope.kind !== 'global' && target.owner === scope.owner && (scope.kind === 'org' || target.repo === scope.repo)
-    setSettings({ scope, preview: sameRepo ? selectedPreview : (preview ?? selectedPreview) })
+    const sameRepo = target && target.owner === scope.owner && (scope.kind === 'org' || target.repo === scope.repo)
+    openSettings({ section: 'workspace', target: { context: scope, preview: sameRepo ? selectedPreview : (preview ?? selectedPreview) }, scope })
   }
   const issueAlias = selectedId ? aliasOfIssue(selectedId) : null
   // 고른 이슈의 호스트에 아직 연결하지 않았으면 연결한다(앱을 다시 켠 뒤, 호스트 정보를 고친 뒤 등)
   const issueHost = useHostStatus(issueAlias)
+  // Why: 이슈 테이커가 도는 창(이 PC 의 주 창)은 고른 이슈가 없어도 배경 실행 터미널을 숨겨 둔다
+  const keepTerminals = isHost && isPrimaryWindow()
+  // Why: 다시 켠 뒤·새 창에서는 열기 상태·targets 가 비어 있다 — 기본이 골라져 있으면 호스트가 준비될 때 다시 만든다.
+  // 선택·작업 탭은 바꾸지 않는다(좁은 화면이 다시 연결될 때마다 작업 화면으로 넘어가지 않게)
+  const openPhase = openState?.phase
+  const baseHome = baseDeps.home
+  useEffect(() => {
+    if (!selectedId || !isDefaultIssueId(selectedId) || !issueHost.ready) return
+    if (openPhase === undefined || openPhase === 'error') ensureDefaultOpen(selectedId, homeOf(issueAlias, baseHome))
+  }, [selectedId, issueAlias, issueHost.ready, openPhase, baseHome])
+
+  const topSettingsTarget = (): SettingsTarget | null => {
+    // Why: 기본은 저장소가 없다 — 조직·프로젝트 범위를 만들 수 없어 전역만 보인다
+    if (!target || isDefaultTarget(target)) return null
+    const bound = repoAliasOf(useHostsStore.getState(), target.owner, target.repo)
+    const projectHost = bound === undefined ? (connection.ready ? connection.selected : null) : bound
+    // Why: 프로젝트 범위의 원본 위치·미리보기는 projectHost 기준이다 — 고른 이슈가 다른 호스트에 있으면 조직까지만 준다
+    const context: SettingsTarget['context'] =
+      issueAlias === projectHost ? { kind: 'project', owner: target.owner, repo: target.repo } : { kind: 'org', owner: target.owner }
+    return { context, preview: selectedPreview }
+  }
 
   // 사이드바·설정은 고른 호스트 기준, 오른쪽 이슈 패널은 그 이슈가 있는 호스트 기준이다
   // (사이드바에서 다른 호스트를 보는 동안에도 열어 둔 이슈와 터미널은 그대로 쓴다)
   return (
+    <TakerActionsProvider value={takerActions}>
     <HostScope alias={connection.ready ? connection.selected : null}>
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2 max-md:px-2">
@@ -200,49 +222,19 @@ export function Workspace() {
             <TooltipContent>새 창 ({NEW_WINDOW_KEY})</TooltipContent>
           </Tooltip>
         )}
-        <ThemeToggle />
-        {isHost && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label="원격 접속" onClick={() => setRemoteOpen(true)}>
-                <MonitorSmartphoneIcon />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>원격 접속(다른 PC·휴대폰)</TooltipContent>
-          </Tooltip>
-        )}
-        {isHost && (
-          <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="원격 CLI 접속" onClick={() => setCliOpen(true)}>
-                  <TerminalSquareIcon />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>원격 CLI 접속</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="서버 설정" onClick={openServerSettings}>
-                  <ServerIcon />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>서버 설정</TooltipContent>
-            </Tooltip>
-          </>
-        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="전역 설정"
-              onClick={() => setSettings({ scope: { kind: 'global' }, preview: selectedPreview })}
+              aria-label="설정"
+              data-settings-trigger
+              onClick={() => openSettings({ target: topSettingsTarget(), scope: { kind: 'global' } })}
             >
               <SettingsIcon />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>전역 설정</TooltipContent>
+          <TooltipContent>설정</TooltipContent>
         </Tooltip>
         {/* 로그인·로그아웃은 호스트 PC 에서 한다 */}
         {isHost && (
@@ -264,16 +256,17 @@ export function Workspace() {
       <div className="flex min-h-0 flex-1">
         {/* Why: 답변 모드에도 트리를 내리지 않는다 — 불러온 목록·스크롤을 기본 보기로 돌아왔을 때 그대로 쓴다 */}
         <div hidden={answer} className="contents">
-          <Sidebar className={showTree ? 'max-md:w-full' : 'max-md:hidden'} connection={connection} onOpenSettings={openSettings} />
+          <Sidebar className={showTree ? 'max-md:w-full' : 'max-md:hidden'} connection={connection} onOpenSettings={openScopeSettings} />
         </div>
         {answer && (
           <SidebarFrame label="답변 모드" className={showTree ? 'max-md:w-full' : 'max-md:hidden'}>
             <AnswerSessionList queue={queue} onNewSession={() => setNewSessionOpen(true)} newSessionRef={listNewSessionRef} />
           </SidebarFrame>
         )}
+        <HostScope alias={issueAlias}>
         <main className={`flex min-w-0 flex-1 flex-col ${showTree ? 'max-md:hidden' : ''}`}>
-          {target && selectedId ? (
-            <HostScope alias={issueAlias}>
+          {target && selectedId && (
+            <>
               {/* 연결 전에는 HostScope 가 이 PC 로 바뀌어 id 가 맞지 않고 [다시 열기] 가 이 PC 에서 연다 — 연결 상태를 대신 보인다 */}
               {issueHost.ready ? (
                 <>
@@ -284,38 +277,45 @@ export function Workspace() {
               ) : (
                 <HostStatusNotice alias={issueAlias ?? ''} status={issueHost} className="grid gap-2 border-b p-4 text-sm" testId="issue-host-status" />
               )}
+            </>
+          )}
+          {(target || keepTerminals) && (
+            <>
               {/* 터미널 탭은 모든 이슈의 터미널을 들고 있어 항상 둔다(내리면 다른 호스트의 터미널·에이전트 추적도 끊긴다).
                   연결 전에는 이 이슈의 작업 상태만 감춘다 */}
               {/* Why: WorkTabs 의 자리를 바꾸지 않는다 — 켜고 꺼도 터미널을 다시 만들지 않게 */}
-              {answer && <AnswerSummary queue={queue} whereId={whereId} headingRef={headingRef} onNewSession={() => setNewSessionOpen(true)} />}
+              {answer && target && selectedId && (
+                <AnswerSummary queue={queue} whereId={whereId} headingRef={headingRef} onNewSession={() => setNewSessionOpen(true)} />
+              )}
               <WorkTabs
-                target={target}
-                issueId={selectedId}
+                target={target ?? null}
+                issueId={target && selectedId ? selectedId : undefined}
                 state={issueHost.ready ? openState : undefined}
                 terminalOnly={answer}
                 onExit={focusSummary}
                 describedBy={whereId}
               />
-            </HostScope>
-          ) : answer ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
-              <p>보이는 세션이 없습니다. 목록에서 세션을 고르거나 새 세션을 시작하세요.</p>
-              <Button ref={emptyNewSessionRef} size="sm" variant="secondary" onClick={() => setNewSessionOpen(true)}>
-                새 세션
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              왼쪽 트리에서 이슈(또는 ★기타)를 선택하세요
-            </div>
+            </>
           )}
+          {!(target && selectedId) &&
+            (answer ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
+                <p>보이는 세션이 없습니다. 목록에서 세션을 고르거나 새 세션을 시작하세요.</p>
+                <Button ref={emptyNewSessionRef} size="sm" variant="secondary" onClick={() => setNewSessionOpen(true)}>
+                  새 세션
+                </Button>
+              </div>
+            ) : (
+              <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                왼쪽 트리에서 이슈(또는 ★기타)를 선택하세요
+              </div>
+            ))}
         </main>
+        </HostScope>
       </div>
       {/* 사이드바에서 고른 호스트(바깥 HostScope)의 값을 보인다 */}
       <UsageBar />
 
-      <CliAccessDialog open={cliOpen} onOpenChange={setCliOpen} />
-      <RemoteAccessDialog open={remoteOpen} onOpenChange={setRemoteOpen} />
       <AgentsOverview open={agentsOpen} onOpenChange={setAgentsOpen} />
       {answer && (
         <>
@@ -325,21 +325,12 @@ export function Workspace() {
           <div role="alert" className="sr-only">
             {queue.alert}
           </div>
-          <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} connection={connection} onOpenSettings={openSettings} onCloseFocus={focusSummary} />
+          <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} connection={connection} onOpenSettings={openScopeSettings} onCloseFocus={focusSummary} />
         </>
       )}
-
-      {settings && (
-        <SettingsDialog
-          scope={settings.scope}
-          open
-          onOpenChange={(o) => {
-            if (!o) setSettings(null)
-          }}
-          previewIssue={settings.preview}
-        />
-      )}
+      <SettingsPage />
     </div>
     </HostScope>
+    </TakerActionsProvider>
   )
 }

@@ -13,6 +13,7 @@ import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
 import { IssueAgentDot } from '../agents/AgentBadge'
 import { ASSIGN_OFF_TEXT, ASSIGN_ON_TEXT, useAssignMe } from '../issue/useIssueManage'
+import { TakerRowIcon } from '../taker/TakerStatus'
 import { describeOpenError, useIssueActions } from '../issue/useWorktree'
 import { AssigneeBadge } from './AssigneeBadge'
 import { shrinkBadge } from './badgeClasses'
@@ -144,6 +145,7 @@ export function IssueRow({ owner, repo, issue, issueId, hasWorktree, pathChanged
                 <span className="min-w-10 flex-1 truncate" title={issue.title}>
                   {issue.title}
                 </span>
+                <TakerRowIcon issueId={issueId} />
               </>
             )}
             {/* 색으로만 알리지 않는다 — 스크린 리더는 행 이름 끝에서 읽는다 */}

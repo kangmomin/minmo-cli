@@ -458,6 +458,17 @@ describe('Claude 마지막 답변(AC-09 · EC-10)', () => {
     await waitFor(() => expect(claudeLastReply).toHaveBeenCalledTimes(2), { timeout: 3000 })
   })
 
+  it('AC-09 worktree 기록이 없는 세션(기본 #120)은 열기 상태의 작업 폴더에서 기록을 읽는다', async () => {
+    world({ agents: [done(A1, 300_000)] })
+    useUiStore.setState({ worktreePathMap: {} })
+    const claudeLastReply = vi.fn(async () => ({ tail: `${reply('홈에서 한 답')}\n`, updatedMs: Date.now() - 120_000 }))
+    const { user } = renderApp({ claudeLastReply })
+    await user.click(toggle())
+    const box = await screen.findByTestId('claude-reply')
+    await waitFor(() => expect(box).toHaveTextContent('홈에서 한 답'))
+    expect(claudeLastReply).toHaveBeenCalledWith('/w/1')
+  })
+
   it('AC-09 다시 작업 중이 되면 앞 작업 구간에 읽은 답이 아니라 기록을 다시 읽어 보인다', async () => {
     world({ agents: [busy(A1)] })
     let text = '첫 작업 중의 답'

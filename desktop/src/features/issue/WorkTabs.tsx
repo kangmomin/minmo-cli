@@ -3,6 +3,7 @@ import { useMemo, useRef } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import type { IssueTarget } from '@minmo/core'
 import { aliasOfIssue, useHost } from '../../app/host'
+import { isDefaultIssueId, workTabOf } from '../../lib/defaultWorkspace'
 import { useHostsStore } from '../../store/hosts'
 import { useSetupStore } from '../../store/setup'
 import type { IssueOpenState } from '../../store/setup'
@@ -19,7 +20,7 @@ import { IssueTab } from './IssueTab'
  * 터미널은 이슈 전환에도 세션을 유지하도록 항상 마운트하고 hidden 만 토글한다.
  */
 export interface WorkTabsProps {
-  target: IssueTarget
+  target: IssueTarget | null
   /** 이슈 id(호스트 접두어 포함). 없으면 이 영역의 호스트로 만든다 — 호스트에 연결하기 전에도 맞는 id 를 쓰도록 넘긴다 */
   issueId?: string
   state: IssueOpenState | undefined
@@ -37,8 +38,12 @@ export function WorkTabs({ target, issueId, state, terminalOnly = false, onExit,
   const open = useSetupStore((s) => s.open)
   const probes = useHostsStore((s) => s.probes)
   const useTmux = useHostsStore((s) => s.useTmux)
-  const scopedId = useHost().issueId(target.owner, target.repo, target.key)
+  const host = useHost()
+  const scopedId = target ? host.issueId(target.owner, target.repo, target.key) : ''
   const id = issueId ?? scopedId
+  // Why: 기본은 터미널만 쓴다 — 저장된 작업 탭과 관계없이 터미널을 보이고, 탭 줄은 DOM 을 남긴 채 감춘다(TerminalTab 이 다시 마운트되지 않게)
+  const isDefault = isDefaultIssueId(id)
+  const effectiveTab = workTabOf(id, tab)
   const terminalTrigger = useRef<HTMLButtonElement>(null)
 
   const sessions = useMemo(
@@ -54,9 +59,9 @@ export function WorkTabs({ target, issueId, state, terminalOnly = false, onExit,
   const hasSession = sessions.some((s) => s.issueId === id)
 
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as WorkTab)} className="min-h-0 flex-1 gap-0">
-      {!terminalOnly && (
-        <TabsList className="mx-3 mt-2">
+    <Tabs value={effectiveTab} onValueChange={(v) => setTab(v as WorkTab)} className="min-h-0 flex-1 gap-0" hidden={!target}>
+      {target && !terminalOnly && (
+        <TabsList className="mx-3 mt-2" hidden={isDefault}>
           <TabsTrigger ref={terminalTrigger} value="terminal">
             터미널
           </TabsTrigger>
@@ -70,19 +75,20 @@ export function WorkTabs({ target, issueId, state, terminalOnly = false, onExit,
         {/* forceMount 는 Radix 가 hidden 을 풀어 버리므로 직접 토글한다 */}
         {/* 패널 안에 포커스 가능한 요소가 있으면 패널 자체는 Tab 정지점에서 뺀다 — 보이지 않는 정지점 방지(AX-19).
             세션이 없으면(안내 문구뿐) 0 을 유지하고(AX-37), 터미널 배경이 패널의 inset ring 을 덮으므로 ::after 오버레이로 링을 그린다 */}
-        {/* Why: 답변 모드에는 탭 목록이 없다 — 이름 없는 tabpanel·없는 탭을 가리키는 aria-labelledby 를 남기지 않는다 */}
+        {/* Why: 고른 이슈가 없으면 배경 실행 터미널만 숨겨 두므로 탭 정지점·탭 이름 연결을 두지 않는다.
+            답변 모드에는 탭 목록이 없다 — 이름 없는 tabpanel·없는 탭을 가리키는 aria-labelledby 를 남기지 않는다 */}
         <TabsContent
           value="terminal"
           forceMount
-          hidden={tab !== 'terminal'}
-          tabIndex={terminalOnly || hasSession ? -1 : 0}
-          {...(terminalOnly ? { role: undefined, 'aria-labelledby': undefined } : {})}
+          hidden={effectiveTab !== 'terminal'}
+          tabIndex={target && !terminalOnly && !hasSession ? 0 : -1}
+          {...(terminalOnly ? { role: undefined, 'aria-labelledby': undefined } : target ? null : { 'aria-labelledby': undefined })}
           className="absolute inset-0 after:pointer-events-none after:absolute after:inset-0 focus-visible:after:ring-[3px] focus-visible:after:ring-inset focus-visible:after:ring-ring"
         >
           <TerminalTab
             sessions={sessions}
-            activeId={id}
-            visible={tab === 'terminal'}
+            activeId={target ? id : null}
+            visible={target !== null && effectiveTab === 'terminal'}
             singlePane={terminalOnly}
             describedBy={terminalOnly ? describedBy : undefined}
             // Ctrl+Shift+M: 터미널 밖(탭 목록)으로 포커스 이동 — 화살표로 다른 탭, Tab 으로 다음 영역(AX-02)
@@ -90,7 +96,7 @@ export function WorkTabs({ target, issueId, state, terminalOnly = false, onExit,
           />
         </TabsContent>
         {/* Why: Radix 는 선택 안 된 TabsContent 도 빈 tabpanel 로 남긴다 — 답변 모드에서는 그리지 않는다 */}
-        {!terminalOnly && (
+        {target && !terminalOnly && (
           <>
             {/* 준비 전(안내 문구뿐)에는 포커스 가능한 내용이 없으므로 패널이 tabIndex 0 을 유지한다(tabs.tsx 가 포커스 링을 그린다) */}
             <TabsContent value="changes" tabIndex={state?.phase === 'ready' ? -1 : 0} className="absolute inset-0">

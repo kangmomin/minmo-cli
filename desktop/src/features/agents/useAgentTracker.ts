@@ -3,14 +3,15 @@ import { useEffect } from 'react'
 
 import { useBaseDeps } from '../../app/deps'
 import { aliasOfIssue, hostOf, useHostDeps } from '../../app/host'
+import { isDefaultIssueId, workTabOf } from '../../lib/defaultWorkspace'
 import { useHostsStore } from '../../store/hosts'
 import { repoShortNameOf, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { useUiStore } from '../../store/ui'
-import { effectivePane } from '../terminal/panes'
+import { effectivePane, selectedTabId, tabOfPane } from '../terminal/panes'
 import { readView, viewedInOtherWindow } from './windowView'
 import type { View } from './windowView'
-import { STATUS_LABEL, derive, issueOfPane, useAgentStore } from './agentStore'
+import { PROCESS_POLL_MS, STATUS_LABEL, derive, issueOfPane, shellOnly, useAgentStore } from './agentStore'
 import type { PaneSignals } from './agentStore'
 import { AGENT_LABEL, guessProgram, parseTitle, titleSignal } from './detect'
 import { PtyStreamParser } from './ptyStream'
@@ -21,8 +22,6 @@ export const ECHO_MS = 400
 /** 작업이 끝난 직후의 벨은 "끝났다"는 알림음이다 — 이 시간 안의 벨은 입력 대기로 치지 않는다 */
 export const DONE_BELL_MS = 1500
 const TICK_MS = 1000
-/** 이 PC 의 터미널에서 도는 프로세스를 다시 묻는 간격 */
-const PROCESS_POLL_MS = 3000
 /** Claude Code 의 하위 에이전트 목록을 다시 읽는 간격 */
 const SUBAGENT_POLL_MS = 5000
 const RESIZE_MUTE_MS = 1500
@@ -56,10 +55,11 @@ type Tracked = PaneSignals & {
   subPolling: boolean
   /** 이 패널에서 Claude Code 를 처음 본 시각(없으면 0) — 그 전에 끝난 세션의 기록은 보지 않는다 */
   claudeSince: number
+  shellFirstAt: number
   exited: boolean
 }
 
-const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false, claudeSince: 0, exited: false })
+const fresh = (ptyId: string): Tracked => ({ ptyId, parser: new PtyStreamParser(), title: null, processes: null, lastOutputAt: 0, bell: false, polledAt: 0, polling: false, subPolledAt: 0, subPolling: false, claudeSince: 0, shellFirstAt: 0, exited: false })
 
 /** Why: 그 패널에 사용자가 마지막으로 입력한 시각(없으면 0, #122) */
 export function lastInputAt(paneId: string): number {
@@ -71,13 +71,17 @@ export function notePtySize(ptyId: string, cols: number, rows: number): void {
   ptySizes.set(ptyId, { cols, rows })
 }
 
-/** 사용자가 지금 그 이슈의 터미널을 보고 있는가 — 대화상자가 덮고 있으면 보는 것이 아니다 */
+/** Why: 대화상자가 덮고 있으면 보는 것이 아니다 */
 function isViewed(issueId: string, paneId: string, view: View | null): boolean {
   if (typeof document === 'undefined') return false
-  // 보조 창에서 보고 있어도 본 것이다 — 알림은 주 창이 띄운다(#105)
-  if (viewedInOtherWindow(issueId, paneId, view)) return true
   const ui = useUiStore.getState()
-  if (ui.selectedIssueId !== issueId || ui.tab !== 'terminal') return false
+  const tree = ui.panes[issueId]?.tree ?? null
+  // Why: 트리에 없는 패널은 탭을 모른다(null) — 지금처럼 이슈만 본다
+  const paneTab = tabOfPane(tree, paneId)
+  // Why: 보조 창에서 보고 있어도 본 것이다 — 알림은 주 창이 띄운다(#105)
+  if (viewedInOtherWindow(issueId, paneTab, paneId, view)) return true
+  if (ui.selectedIssueId !== issueId || workTabOf(issueId, ui.tab) !== 'terminal') return false
+  if (paneTab !== null && paneTab !== selectedTabId(tree, ui.panes[issueId]?.tab)) return false
   // Why: 답변 모드는 패널 하나만 보이고 나머지는 가려진다 — 기본 보기는 분할된 패널이 모두 보여 이슈 단위다
   if (ui.viewMode === 'answer' && effectivePane(ui.panes[issueId]) !== paneId) return false
   return document.visibilityState === 'visible' && document.hasFocus() && document.querySelector('[role="dialog"]') === null
@@ -116,11 +120,15 @@ export function useAgentTracker() {
       // 새로 작업을 시작하면 그 전의 벨은 지난 일이다
       if (next?.activity === 'working') t.bell = false
       store.set(paneId, next)
+      const shell = shellOnly(t)
+      if (shell !== true) t.shellFirstAt = 0
+      else if (t.shellFirstAt === 0) t.shellFirstAt = now
+      if (shell !== null) store.setShell(paneId, shell ? Math.max(t.shellFirstAt, t.lastOutputAt, inputAt.get(paneId) ?? 0) : null)
       // 알림은 알려진 에이전트만(빌드·개발 서버 같은 기타 프로그램이 멈출 때마다 알리지 않는다)
       if (event && next && next.agent !== 'other' && useUiStore.getState().agentNotify) {
         const target = useSetupStore.getState().targets[issueId]
         const repo = target && repoShortNameOf(useReposStore.getState(), target.owner, target.repo)
-        const where = target ? `${repo} ${target.number === null ? '기타' : `#${target.number} ${target.title}`}` : issueId
+        const where = isDefaultIssueId(issueId) ? '기본' : target ? `${repo} ${target.number === null ? '기타' : `#${target.number} ${target.title}`}` : issueId
         void tauri.notify(`${AGENT_LABEL[next.agent]} — ${STATUS_LABEL[event]}`, where, { kind: 'local', issueId, paneId }).catch(() => undefined)
       }
     }
@@ -189,7 +197,7 @@ export function useAgentTracker() {
           mutedUntil.delete(paneId)
           resizeMutedUntil.delete(paneId)
           ptySizes.delete(t.ptyId)
-          useAgentStore.getState().set(paneId, null)
+          useAgentStore.getState().clearPane(paneId)
         }
       }
       for (const [paneId, ptyId] of Object.entries(live)) {
@@ -227,7 +235,9 @@ export function useAgentTracker() {
         } else if (alias !== null && !useHostsStore.getState().probes[alias]) {
           // 원격인데 연결 정보가 없다 — 이 PC 의 파일을 대신 읽지 않는다
         } else if (!t.subPolling && now - t.subPolledAt >= SUBAGENT_POLL_MS) {
-          const cwd = useUiStore.getState().worktreePathMap[agent.issueId]?.path
+          // Why: 기본은 worktree 가 없다 — 작업 폴더(홈)는 열기 상태에만 있다
+          const open = useSetupStore.getState().open[agent.issueId]
+          const cwd = useUiStore.getState().worktreePathMap[agent.issueId]?.path ?? (open?.phase === 'ready' ? open.path : undefined)
           if (cwd) {
             t.subPolledAt = now
             t.subPolling = true

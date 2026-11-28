@@ -6,8 +6,10 @@ import type { ReactNode } from 'react'
 import { ApiError, normalizePath } from '@minmo/api-client'
 import type { Platform } from '@minmo/api-client'
 
+import { useBaseDeps, useDeps } from '../../app/deps'
 import { useHost, useHostDeps } from '../../app/host'
 import type { Host } from '../../app/host'
+import { isDefaultTarget } from '../../lib/defaultWorkspace'
 import { fetchEffective } from '../../lib/effective'
 import { GitHubError } from '@minmo/core'
 import { WorktreeError, baseRepoLocalDir, createWorktreeService } from '@minmo/core'
@@ -17,6 +19,7 @@ import { isLocalOwner, repoShortNameOf, useReposStore } from '../../store/repos'
 import { useSetupStore } from '../../store/setup'
 import { fileDrafts } from '../files/fileDrafts'
 import { uiWorktreePathStore, useUiStore } from '../../store/ui'
+import { homeOf, openDefault } from './defaultOpen'
 
 /** main 이 이 호스트에 등록된 기준 저장소 폴더인가 — git 이 돌려준 경로(구분자·대소문자가 다를 수 있다)와도 맞게 비교한다 */
 function isBaseRepo(hostId: string, main: string, platform: Platform): boolean {
@@ -25,14 +28,16 @@ function isBaseRepo(hostId: string, main: string, platform: Platform): boolean {
 }
 
 type ServiceFor = (host: Host) => WorktreeService
+type PendingOpens = Map<string, Promise<void>>
 
-const WorktreeContext = createContext<ServiceFor | null>(null)
+const WorktreeContext = createContext<{ serviceFor: ServiceFor; pending: PendingOpens } | null>(null)
 
 /** 호스트마다 worktree 서비스를 하나씩 둔다(실행 중인 스크립트·잠금이 호스트를 전환해도 유지되게) */
 export function WorktreeProvider({ children }: { children: ReactNode }) {
   const hostDeps = useHostDeps()
   const queryClient = useQueryClient()
   const services = useRef(new Map<string, { deps: unknown; service: WorktreeService }>())
+  const pending = useRef<PendingOpens>(new Map())
   const serviceFor = useMemo<ServiceFor>(
     () => (host) => {
       const deps = hostDeps(host)
@@ -81,15 +86,16 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
     },
     [hostDeps, queryClient],
   )
-  return <WorktreeContext.Provider value={serviceFor}>{children}</WorktreeContext.Provider>
+  const value = useMemo(() => ({ serviceFor, pending: pending.current }), [serviceFor])
+  return <WorktreeContext.Provider value={value}>{children}</WorktreeContext.Provider>
 }
 
 /** 이 영역의 호스트(app/host.tsx HostScope)에서 동작하는 worktree 서비스 */
-function useWorktreeService(): { service: WorktreeService; host: Host } {
-  const serviceFor = useContext(WorktreeContext)
+function useWorktreeService(): { service: WorktreeService; host: Host; pending: PendingOpens } {
+  const ctx = useContext(WorktreeContext)
   const host = useHost()
-  if (!serviceFor) throw new Error('WorktreeProvider 가 없습니다')
-  return useMemo(() => ({ service: serviceFor(host), host }), [serviceFor, host])
+  if (!ctx) throw new Error('WorktreeProvider 가 없습니다')
+  return useMemo(() => ({ service: ctx.serviceFor(host), host, pending: ctx.pending }), [ctx, host])
 }
 
 /** 사용자에게 보여 줄 오류 문구 (UI State: git·스크립트 오류는 stderr 전문) */
@@ -119,16 +125,22 @@ export function describeOpenError(e: unknown): { code: string; message: string; 
   return { code: 'unknown', message: e instanceof Error ? e.message : String(e) }
 }
 
-/** 호스트의 worktree 서비스로 이슈를 다루는 동작들 */
-function issueActionsOf(service: WorktreeService, host: Host) {
+const NO_WORKTREE = '기본 작업 공간은 worktree 가 없습니다'
+
+/** Why: home 은 이 PC 의 홈 — 기본을 열 때 쓴다 */
+function issueActionsOf(service: WorktreeService, host: Host, pending: PendingOpens, home: string) {
   const worktreeId = host.issueId
   return {
-    /** 이슈 선택 + worktree 준비(AC-05~07). 이미 있으면 전환(AC-06) */
-    async open(t: IssueTarget) {
+    /** Why: 기본은 worktree 없이 그 호스트의 홈을 바로 연다 */
+    async open(t: IssueTarget, opts: { select?: boolean } = {}) {
+      if (isDefaultTarget(t)) return openDefault(host, homeOf(host.alias, home))
       const id = worktreeId(t.owner, t.repo, t.key)
       const st = useSetupStore.getState()
       st.setTarget(id, t)
-      useUiStore.getState().selectIssue(id)
+      if (opts.select !== false) useUiStore.getState().selectIssue(id)
+      // Why: ready 가 된 뒤에도 생성 후 스크립트가 끝날 때까지 첫 열기를 기다리게 한다(스크립트 시작 전 틈 포함)
+      const inFlight = pending.get(id)
+      if (inFlight) return inFlight
       const prev = st.open[id]
       if (prev?.phase === 'opening') return
       if (prev?.phase === 'ready') {
@@ -144,15 +156,24 @@ function issueActionsOf(service: WorktreeService, host: Host) {
       }
       st.clearLog(id)
       st.setOpen(id, { phase: 'opening' })
+      const run = (async () => {
+        try {
+          const res = await service.openIssue(t)
+          useSetupStore.getState().setOpen(id, { phase: 'ready', path: res.path, branch: res.branch, pathChanged: res.pathChanged })
+          if (res.script.status !== 'skipped') useSetupStore.getState().setScript(id, res.script)
+        } catch (e) {
+          useSetupStore.getState().setOpen(id, { phase: 'error', ...describeOpenError(e) })
+        }
+      })()
+      pending.set(id, run)
       try {
-        const res = await service.openIssue(t)
-        useSetupStore.getState().setOpen(id, { phase: 'ready', path: res.path, branch: res.branch, pathChanged: res.pathChanged })
-        if (res.script.status !== 'skipped') useSetupStore.getState().setScript(id, res.script)
-      } catch (e) {
-        useSetupStore.getState().setOpen(id, { phase: 'error', ...describeOpenError(e) })
+        await run
+      } finally {
+        if (pending.get(id) === run) pending.delete(id)
       }
     },
     async cancelSetup(t: IssueTarget) {
+      if (isDefaultTarget(t)) return
       try {
         await service.cancelSetup(t)
       } catch (e) {
@@ -161,6 +182,7 @@ function issueActionsOf(service: WorktreeService, host: Host) {
       }
     },
     async rerunScript(t: IssueTarget) {
+      if (isDefaultTarget(t)) return
       const id = worktreeId(t.owner, t.repo, t.key)
       const st = useSetupStore.getState()
       st.setScript(id, { status: 'running' })
@@ -172,9 +194,10 @@ function issueActionsOf(service: WorktreeService, host: Host) {
         st.setScript(id, { status: 'failed', exitCode: null })
       }
     },
-    inspect: (t: IssueTarget) => service.inspect(t),
-    localFilesDir: (t: IssueTarget) => service.localFilesDirFor(t),
+    inspect: (t: IssueTarget) => (isDefaultTarget(t) ? Promise.reject(new Error(NO_WORKTREE)) : service.inspect(t)),
+    localFilesDir: (t: IssueTarget) => (isDefaultTarget(t) ? Promise.reject(new Error(NO_WORKTREE)) : service.localFilesDirFor(t)),
     async remove(t: IssueTarget, confirmed = false): Promise<DeleteResult> {
+      if (isDefaultTarget(t)) throw new Error(NO_WORKTREE)
       const res = await service.deleteWorktree(t, { confirmed })
       if (res.status === 'deleted') {
         const id = worktreeId(t.owner, t.repo, t.key)
@@ -196,13 +219,15 @@ function issueActionsOf(service: WorktreeService, host: Host) {
 export type IssueActions = ReturnType<typeof issueActionsOf>
 
 export function useIssueActions(): IssueActions {
-  const { service, host } = useWorktreeService()
-  return useMemo(() => issueActionsOf(service, host), [service, host])
+  const { service, host, pending } = useWorktreeService()
+  const { home } = useDeps()
+  return useMemo(() => issueActionsOf(service, host, pending, home), [service, host, pending, home])
 }
 
 /** 영역(HostScope) 밖에서 호스트를 골라 쓴다 — 다른 PC 의 링크처럼 열 이슈의 호스트가 그때 정해질 때 */
 export function useIssueActionsFor(): (host: Host) => IssueActions {
-  const serviceFor = useContext(WorktreeContext)
-  if (!serviceFor) throw new Error('WorktreeProvider 가 없습니다')
-  return useCallback((host: Host) => issueActionsOf(serviceFor(host), host), [serviceFor])
+  const ctx = useContext(WorktreeContext)
+  const { home } = useBaseDeps()
+  if (!ctx) throw new Error('WorktreeProvider 가 없습니다')
+  return useCallback((host: Host) => issueActionsOf(ctx.serviceFor(host), host, ctx.pending, home), [ctx, home])
 }

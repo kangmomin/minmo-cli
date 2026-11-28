@@ -103,6 +103,20 @@ describe('NewSessionDialog', () => {
     await waitFor(() => expect(onCloseFocus).toHaveBeenCalled())
   })
 
+  it('EC-15 트리 안의 설정을 누르면 대화상자를 먼저 닫고, 포커스를 옮긴 뒤에 설정을 연다 — 설정을 닫으면 그 자리로 돌아오게', async () => {
+    const order: string[] = []
+    const { user, onOpenSettings, onCloseFocus } = setup()
+    onCloseFocus.mockImplementation(() => order.push('focus'))
+    onOpenSettings.mockImplementation(() => order.push('settings'))
+    const dialog = await screen.findByRole('dialog', { name: '새 세션' })
+    await user.click(await within(dialog).findByTestId('org-node-my-org'))
+    await user.pointer({ keys: '[MouseRight]', target: await within(dialog).findByTestId('repo-node-my-org/widgets') })
+    await user.click(await screen.findByRole('menuitem', { name: '프로젝트 설정' }))
+    await waitFor(() => expect(onOpenSettings).toHaveBeenCalledWith({ kind: 'project', owner: 'my-org', repo: 'widgets' }, expect.anything()))
+    expect(order).toEqual(['focus', 'settings'])
+    expect(screen.queryByRole('dialog', { name: '새 세션' })).toBeNull()
+  })
+
   it('EC-14 고른 이슈의 준비가 실패해도 그 이슈에 머문다(머리줄의 오류·[다시 열기]로 다룬다)', async () => {
     const { user } = setup({
       effective: async () => {

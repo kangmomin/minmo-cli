@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
-import { expandWidgets, json, login, openTerminal, routeGitHub, routeServer } from './fixtures'
+import { expandWidgets, json, login, openSettings, openTerminal, routeGitHub, routeServer } from './fixtures'
 
 const title = (t: string) => `\x1b]0;${t}\x07`
 const emit = (page: Page, n: number, data: string) => page.evaluate(([i, d]) => window.__MINMO_MOCK__!.emitPty(i as number, d as string), [n, data] as const)
@@ -209,20 +209,19 @@ test('EC-15 Ctrl+Shift+M 은 카드 제목으로 · 누른 자리가 사라지�
   await list(page).getByTestId('answer-new-session').click()
   await dialog.getByTestId('repo-node-my-org/widgets').click({ button: 'right' })
   await page.getByRole('menuitem', { name: '프로젝트 설정' }).click()
-  const settings = page.getByRole('dialog').filter({ hasText: '비워 두면 상위 설정을 상속합니다' })
+  const settings = page.getByRole('dialog', { name: '설정', exact: true })
   await expect(settings).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(settings).toBeHidden()
   await expect(heading(page)).toBeFocused()
 })
 
-test('AC-10 AC-11 EC-15 EC-18 Jev: 서버 설정에서 켜고 키를 저장·지우면 키 상태가 따른다, [Jev 판정] → 칩 3개(PTY 크기 그대로) · 키가 없어져 버튼이 사라지면 포커스는 카드 제목', async ({ page }) => {
+test('AC-10 AC-11 EC-15 EC-18 Jev: 설정 서버·앱 에서 켜고 키를 저장·지우면 키 상태가 따른다, [Jev 판정] → 칩 3개(PTY 크기 그대로) · 키가 없어져 버튼이 사라지면 포커스는 카드 제목', async ({ page }) => {
   await login(page)
   await expandWidgets(page)
   await claudeSession(page, 'issue-row-42', 1, '로그인 수정')
 
-  await page.getByRole('button', { name: '서버 설정' }).click()
-  const server = page.getByRole('dialog', { name: '서버 설정' })
+  const server = await openSettings(page, '서버·앱')
   await server.getByRole('checkbox', { name: 'Jev 판정 버튼 보이기' }).check()
   const key = server.getByLabel('Jev API 키', { exact: true })
   await key.fill('tsk-e2e')

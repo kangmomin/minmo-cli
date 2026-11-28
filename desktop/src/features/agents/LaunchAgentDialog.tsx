@@ -14,8 +14,8 @@ import { Label } from '../../components/ui/label'
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 import { Textarea } from '../../components/ui/textarea'
 import { useUiStore } from '../../store/ui'
-import { DEFAULT_AGENT_COMMANDS, LAUNCH_KINDS, LAUNCH_LABEL, PROMPT_SLOT, buildCommand, defaultPrompt } from './launch'
-import type { LaunchKind, ShellKind } from './launch'
+import { DEFAULT_AGENT_COMMANDS, LAUNCH_KINDS, LAUNCH_LABEL, PROMPT_SLOT, buildCommand, defaultPrompt, shellFor } from './launch'
+import type { LaunchKind } from './launch'
 import { queueLaunch } from './launchQueue'
 
 export interface LaunchAgentDialogProps {
@@ -44,7 +44,7 @@ function LaunchBody({ issueId, target, onDone }: { issueId: string; target: Issu
   const host = useHost()
   const { platform } = useDeps()
   // 이 PC(Windows)의 터미널은 PowerShell, 원격 호스트와 macOS·Linux 는 POSIX 셸이다
-  const shell: ShellKind = host.alias === null && platform === 'win32' ? 'powershell' : 'posix'
+  const shell = shellFor(host.alias, platform)
   const commands = useUiStore((s) => s.agentCommands)
   const [kind, setKind] = useState<LaunchKind>(() => useUiStore.getState().lastLaunchKind)
   const [template, setTemplate] = useState(() => commands[kind])

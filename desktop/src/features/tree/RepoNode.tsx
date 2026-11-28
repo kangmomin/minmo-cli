@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderInputIcon, MoreHorizontalIcon, PlusIcon, SettingsIcon } from 'lucide-react'
+import { BotIcon, ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderInputIcon, MoreHorizontalIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -21,13 +21,16 @@ import { cn } from '../../lib/utils'
 import { issueBranchContext, issuePaths, lacksOrigin } from '@minmo/core'
 import { useHost } from '../../app/host'
 import { baseDirOf, baseRepoOf, repoAliasOf, useHostsStore, useOriginFolder } from '../../store/hosts'
-import { isLocalOwner, useRepoFullNameIfNicknamed, useRepoShortName, useReposStore } from '../../store/repos'
+import { isLocalOwner, repoKey, useRepoFullNameIfNicknamed, useRepoShortName, useReposStore } from '../../store/repos'
 import { useSessionStore } from '../../store/session'
 import { useUiStore } from '../../store/ui'
-import type { PreviewIssue } from '../settings/SettingsDialog'
+import type { PreviewIssue } from '../settings/ScopeSettings'
 import { shrinkBadge } from './badgeClasses'
 import { BaseRepoDialog } from './BaseRepoDialog'
 import { issueStatuses, statusRank, useAgentStore } from '../agents/agentStore'
+import { IssueTakerDialog } from '../taker/IssueTakerDialog'
+import { useTakerStore } from '../taker/takerStore'
+import { useTakerActions } from '../taker/useIssueTaker'
 import { IssueRow } from './IssueRow'
 import { ISSUE_SEARCH_MIN, matchesIssue } from './issueSearch'
 import { NewTaskDialog } from './LocalRepoDialogs'
@@ -128,7 +131,9 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
   // 별칭이 있으면 별칭, 없으면 폴더명(로컬)·저장소 이름 — 경로 템플릿 {alias} 의 값이기도 하다
   const label = useRepoShortName(repo.owner, repo.name)
   const fullName = useRepoFullNameIfNicknamed(repo.owner, repo.name)
-  const [dialog, setDialog] = useState<null | 'task' | 'remove' | 'issue'>(null)
+  const [dialog, setDialog] = useState<null | 'task' | 'remove' | 'issue' | 'taker'>(null)
+  const taker = useTakerActions() !== null && !local
+  const takerOn = useTakerStore((s) => s.repos[repoKey(repo.owner, repo.name)]?.enabled === true)
   const openPublish = useOpenPublish()
   const nodeId = `repo:${repo.owner}/${repo.name}`
   const open = useOpenWindow()
@@ -273,12 +278,18 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
                   기준 저장소
                 </Badge>
               )}
+              {taker && takerOn && (
+                <Badge variant="outline" className={cn('ml-1 px-1 py-0 text-[10px]', shrinkBadge)} title="이슈 테이커 켜짐">
+                  테이커
+                </Badge>
+              )}
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent>
             <ContextMenuItem onSelect={openSettings}>프로젝트 설정</ContextMenuItem>
             {openInWindow && <ContextMenuItem onSelect={openInWindow}>새 창으로 열기</ContextMenuItem>}
             {!local && <ContextMenuItem onSelect={() => setDialog('issue')}>이슈 등록…</ContextMenuItem>}
+            {taker && <ContextMenuItem onSelect={() => setDialog('taker')}>이슈 테이커…</ContextMenuItem>}
             {!local && <ContextMenuItem onSelect={() => setBaseOpen(true)}>기준 저장소 폴더…</ContextMenuItem>}
             {local && <ContextMenuItem onSelect={() => setDialog('task')}>작업 추가…</ContextMenuItem>}
             {canPublish && <ContextMenuItem onSelect={() => openPublish(repo.name)}>GitHub 에 올리기…</ContextMenuItem>}
@@ -320,6 +331,18 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
             <FolderInputIcon className="size-3.5" />
           </Button>
         )}
+        {taker && (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`${label} 이슈 테이커`}
+            title={`${label} 이슈 테이커`}
+            onClick={() => setDialog('taker')}
+            className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+          >
+            <BotIcon className="size-3.5" />
+          </Button>
+        )}
         {(local || added) && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -354,6 +377,7 @@ function RepoNodeBody({ repo, hidden = false, onOpenSettings, bound = false }: R
       </div>
       {!local && <BaseRepoDialog owner={repo.owner} repo={repo.name} open={baseOpen} onOpenChange={setBaseOpen} />}
       {!local && <NewIssueDialog owner={repo.owner} repo={repo.name} open={dialog === 'issue'} onOpenChange={(o) => setDialog(o ? 'issue' : null)} />}
+      {taker && <IssueTakerDialog owner={repo.owner} repo={repo.name} open={dialog === 'taker'} onOpenChange={(o) => setDialog(o ? 'taker' : null)} />}
       {local && (
         <>
           <NewTaskDialog id={repo.name} open={dialog === 'task'} onOpenChange={(o) => setDialog(o ? 'task' : null)} />
