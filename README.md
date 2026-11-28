@@ -348,7 +348,9 @@ worktree 를 새로 만들면 `.gitignore` 로 빠진 파일(`.env` 등)을 원�
 
 ## 설정 동기화 (페어링 코드)
 
-별도 동기화 서버(`server-sync/`)를 거쳐 다른 PC 와 메모·브랜치 이름 설정·저장소 목록을 맞춥니다. 스크립트·경로·에이전트 명령·로그인 정보는 보내지 않습니다.
+동기화 서버를 거쳐 다른 PC 와 메모·브랜치 이름 설정·저장소 목록을 맞춥니다. 스크립트·경로·에이전트 명령·로그인 정보는 보내지 않습니다.
+
+메인 서버(`server/`)도 같은 경로(`/pairs…`, `server/internal/pairsync`)를 냅니다. 그래서 배포된 서버 주소(`https://minmo-cli-production.up.railway.app`)를 그대로 넣어도 됩니다. 페어 정보는 메인 DB(`minmo.db`)에 저장합니다. 별도 동기화 서버(`server-sync/`)를 쓸 때는 아래처럼 실행합니다.
 
 ```bash
 cd server-sync
