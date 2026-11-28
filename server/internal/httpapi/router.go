@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kangmomin/minmo-cli/server/internal/auth"
+	"github.com/kangmomin/minmo-cli/server/internal/pairsync"
 	"github.com/kangmomin/minmo-cli/server/internal/settings"
 )
 
@@ -89,6 +90,9 @@ func NewHandler(cfg Config, db *sql.DB, now func() time.Time) http.Handler {
 	// PC 사이 동기화(데스크톱의 "다른 PC") — 설정·메모를 통째로 내보내고, 더 새로운 것만 넣는다
 	mux.HandleFunc("GET /me/sync", a.authed(a.syncExport))
 	mux.HandleFunc("PUT /me/sync", a.authed(a.syncImport))
+
+	// 설정 페어링 동기화(데스크톱의 "설정 동기화 (페어링 코드)") — server-sync 와 같은 경로. 페어 토큰으로 인증한다
+	pairsync.Register(mux, pairsync.NewStore(db), now)
 
 	mux.HandleFunc("POST /me/cli-codes", a.authed(a.issueCLICode))
 	mux.HandleFunc("POST /auth/cli/exchange", a.exchangeCLICode)
